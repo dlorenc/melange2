@@ -63,14 +63,19 @@ pipeline:
 
   - name: test-strip-components
     runs: |
-      # Test tar extraction with --strip-components
-      mkdir -p /tmp/fetch-test/stripped
-      tar -xzf /tmp/fetch-test/test-archive.tar.gz -C /tmp/fetch-test/stripped --strip-components=1
+      # Create a tarball with a top-level directory to test strip-components
+      mkdir -p /tmp/fetch-test/to-strip/myproject/src
+      echo "root file" > /tmp/fetch-test/to-strip/myproject/README.txt
+      echo "source file" > /tmp/fetch-test/to-strip/myproject/src/main.txt
+      cd /tmp/fetch-test/to-strip && tar -czf stripped-archive.tar.gz myproject
 
-      # With strip-components=1, subdir contents should be at root
-      # (subdir/file2.txt becomes file2.txt)
-      test -f /tmp/fetch-test/stripped/file2.txt || exit 1
-      test -f /tmp/fetch-test/stripped/file3.txt || exit 1
+      # Extract with strip-components=1 to remove the myproject directory
+      mkdir -p /tmp/fetch-test/stripped
+      tar -xzf /tmp/fetch-test/to-strip/stripped-archive.tar.gz -C /tmp/fetch-test/stripped --strip-components=1
+
+      # With strip-components=1, myproject/README.txt becomes README.txt
+      test -f /tmp/fetch-test/stripped/README.txt || exit 1
+      test -f /tmp/fetch-test/stripped/src/main.txt || exit 1
 
       echo "strip-components successful" > ${{targets.destdir}}/usr/share/fetch-test/strip-test.txt
 
