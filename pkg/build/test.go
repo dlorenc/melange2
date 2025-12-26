@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -60,54 +59,6 @@ func runAsUID(accts apko_types.ImageAccounts) string {
 		}
 	}
 	panic(fmt.Sprintf("unable to find user with username %s", accts.RunAs))
-}
-
-// runAs returns the username to run as for the given accounts configuration.
-func runAs(accts apko_types.ImageAccounts) string {
-	switch accts.RunAs {
-	case "":
-		return "" // Runner defaults
-	case "root", "0":
-		return "root"
-	default:
-	}
-	parsed, err := strconv.ParseUint(accts.RunAs, 10, 32)
-	if err != nil || parsed > math.MaxInt32 {
-		return accts.RunAs
-	}
-	uid := uint32(parsed)
-	for _, u := range accts.Users {
-		if u.UID == uid {
-			return u.UserName
-		}
-	}
-	panic(fmt.Sprintf("unable to find user with UID %d", uid))
-}
-
-// runAsGID returns the GID to run as for the given accounts configuration.
-func runAsGID(accts apko_types.ImageAccounts) string {
-	switch accts.RunAs {
-	case "":
-		return "" // Runner defaults
-	case "root", "0":
-		return "0"
-	default:
-	}
-	if parsed, err := strconv.ParseUint(accts.RunAs, 10, 32); err == nil {
-		uid := uint32(parsed)
-		for _, u := range accts.Users {
-			if u.UID == uid && u.GID != nil {
-				return fmt.Sprint(*u.GID)
-			}
-		}
-	} else {
-		for _, u := range accts.Users {
-			if accts.RunAs == u.UserName && u.GID != nil {
-				return fmt.Sprint(*u.GID)
-			}
-		}
-	}
-	return ""
 }
 
 type Test struct {
@@ -525,15 +476,12 @@ func (t *Test) buildWorkspaceConfig(ctx context.Context, imgRef, pkgName string,
 		CacheDir:     t.CacheDir,
 		Environment:  map[string]string{},
 		RunAsUID:     runAsUID(imgcfg.Accounts),
-		RunAs:        runAs(imgcfg.Accounts),
-		RunAsGID:     runAsGID(imgcfg.Accounts),
 	}
 
 	if t.Configuration.Package.Resources != nil {
 		cfg.CPU = t.Configuration.Package.Resources.CPU
 		cfg.CPUModel = t.Configuration.Package.Resources.CPUModel
 		cfg.Memory = t.Configuration.Package.Resources.Memory
-		cfg.Disk = t.Configuration.Package.Resources.Disk
 	}
 	if t.Configuration.Capabilities.Add != nil {
 		cfg.Capabilities.Add = t.Configuration.Capabilities.Add
