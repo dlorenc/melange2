@@ -42,14 +42,36 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out ./...
+      - name: Run unit tests
+        run: go test -v -race -short -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
-          name: coverage
+          name: coverage-unit
           path: coverage.out
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run e2e tests
+        run: go test -v -coverprofile=e2e-coverage.out -run "TestE2E_|TestBuildKit|TestSimpleLLB|TestLocalFilesystem|TestWorkspaceExport|TestDeterministicLLB|TestPipelineSimulation" ./pkg/buildkit/...
+
+      - name: Upload e2e coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-e2e
+          path: e2e-coverage.out
 
   lint:
     name: Lint
