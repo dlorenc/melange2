@@ -1,0 +1,23 @@
+package:
+  name: cache-test
+  version: 1.0.0
+  epoch: 0
+  description: Test cache mount persistence
+
+environment:
+  contents:
+    packages:
+      - busybox
+
+pipeline:
+  - name: Write to cache
+    runs: |
+      # Write a marker file to the cache directory
+      mkdir -p /cache
+      echo "build-$BUILD_ID" >> /cache/builds.txt
+      wc -l < /cache/builds.txt > /cache/count.txt
+
+      # Copy cache contents to output for verification
+      mkdir -p ${{targets.destdir}}/usr/share/cache-test
+      cp /cache/builds.txt ${{targets.destdir}}/usr/share/cache-test/
+      cp /cache/count.txt ${{targets.destdir}}/usr/share/cache-test/

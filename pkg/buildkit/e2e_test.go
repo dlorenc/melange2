@@ -618,3 +618,151 @@ func TestE2E_MultipleSubpackages(t *testing.T) {
 	verifyFileExists(t, outDir, "multi-subpkg-doc/usr/share/doc-marker.txt")
 	verifyFileExists(t, outDir, "multi-subpkg-libs/usr/lib/libs-marker.txt")
 }
+
+// buildConfigWithCacheMounts executes a build with cache mounts and custom env
+func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, cacheMounts []CacheMount, extraEnv map[string]string) (string, error) {
+	// Create unique output directory for each build
+	outDir, err := os.MkdirTemp(e.workingDir, "output-"+cfg.Package.Name+"-")
+	if err != nil {
+		return "", err
+	}
+
+	// Build the LLB graph using alpine as base
+	pipeline := NewPipelineBuilder()
+
+	// Set up base environment from config
+	pipeline.BaseEnv["HOME"] = DefaultWorkDir
+	for k, v := range cfg.Environment.Environment {
+		pipeline.BaseEnv[k] = v
+	}
+	for k, v := range extraEnv {
+		pipeline.BaseEnv[k] = v
+	}
+
+	// Set cache mounts
+	pipeline.CacheMounts = cacheMounts
+
+	// Start with alpine base image
+	state := llb.Image("alpine:latest")
+
+	// Prepare workspace
+	state = PrepareWorkspace(state, cfg.Package.Name)
+
+	// Perform variable substitution on pipelines
+	pipelines := substituteVariables(cfg, cfg.Pipeline)
+
+	// Build the pipelines
+	state, err = pipeline.BuildPipelines(state, pipelines)
+	if err != nil {
+		return "", err
+	}
+
+	// Export the workspace
+	export := ExportWorkspace(state)
+	def, err := export.Marshal(e.ctx, llb.LinuxAmd64)
+	if err != nil {
+		return "", err
+	}
+
+	// Connect to BuildKit and solve
+	c, err := New(e.ctx, e.bk.Addr)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+
+	_, err = c.Client().Solve(e.ctx, def, client.SolveOpt{
+		Exports: []client.ExportEntry{{
+			Type:      client.ExporterLocal,
+			OutputDir: outDir,
+		}},
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return outDir, nil
+}
+
+// TestE2E_CacheMountPersistence verifies that cache mounts persist across builds
+func TestE2E_CacheMountPersistence(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "16-cache-mounts.yaml")
+
+	// Define a cache mount for testing
+	cacheMounts := []CacheMount{
+		{
+			ID:     "e2e-test-cache-persistence",
+			Target: "/cache",
+			Mode:   llb.CacheMountShared,
+		},
+	}
+
+	// First build - writes "build-1" to cache
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
+		"BUILD_ID": "1",
+	})
+	require.NoError(t, err, "first build should succeed")
+
+	// Verify first build output
+	verifyFileExists(t, outDir1, "cache-test/usr/share/cache-test/builds.txt")
+	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/count.txt", "1")
+
+	// Second build - should see "build-1" in cache and add "build-2"
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
+		"BUILD_ID": "2",
+	})
+	require.NoError(t, err, "second build should succeed")
+
+	// Verify second build output shows cache was reused
+	verifyFileExists(t, outDir2, "cache-test/usr/share/cache-test/builds.txt")
+	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/count.txt", "2")
+
+	// Third build - should see all previous builds
+	outDir3, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
+		"BUILD_ID": "3",
+	})
+	require.NoError(t, err, "third build should succeed")
+
+	// Verify third build output shows all cached data
+	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-2")
+	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-3")
+	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/count.txt", "3")
+}
+
+// TestE2E_CacheMountIsolation verifies that different cache IDs are isolated
+func TestE2E_CacheMountIsolation(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "16-cache-mounts.yaml")
+
+	// First build with cache ID "cache-a"
+	cacheMountsA := []CacheMount{
+		{ID: "e2e-test-cache-isolation-a", Target: "/cache", Mode: llb.CacheMountShared},
+	}
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMountsA, map[string]string{
+		"BUILD_ID": "from-cache-a",
+	})
+	require.NoError(t, err, "build with cache-a should succeed")
+	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/builds.txt", "from-cache-a")
+	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/count.txt", "1")
+
+	// Second build with different cache ID "cache-b" - should NOT see cache-a data
+	cacheMountsB := []CacheMount{
+		{ID: "e2e-test-cache-isolation-b", Target: "/cache", Mode: llb.CacheMountShared},
+	}
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMountsB, map[string]string{
+		"BUILD_ID": "from-cache-b",
+	})
+	require.NoError(t, err, "build with cache-b should succeed")
+
+	// Verify cache-b does NOT contain cache-a data (isolation works)
+	content, err := os.ReadFile(filepath.Join(outDir2, "cache-test/usr/share/cache-test/builds.txt"))
+	require.NoError(t, err)
+	require.NotContains(t, string(content), "from-cache-a", "cache-b should not contain cache-a data")
+	require.Contains(t, string(content), "from-cache-b", "cache-b should contain its own data")
+	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/count.txt", "1")
+}
