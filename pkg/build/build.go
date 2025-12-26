@@ -97,19 +97,12 @@ type Build struct {
 	ApkCacheDir           string
 	CacheSource           string
 	StripOriginName bool
-	EnvFile         string
-	VarsFile        string
-	BuildKitAddr    string // BuildKit daemon address
-	Debug           bool
-	DebugRunner           bool
-	Interactive           bool
+	EnvFile               string
+	VarsFile              string
+	BuildKitAddr          string // BuildKit daemon address
+	Debug                 bool
 	Remove                bool
 	LintRequire, LintWarn []string
-	DefaultCPU            string
-	DefaultCPUModel       string
-	DefaultDisk           string
-	DefaultMemory         string
-	DefaultTimeout        time.Duration
 	Auth                  map[string]options.Auth
 	IgnoreSignatures      bool
 
@@ -208,11 +201,6 @@ func New(ctx context.Context, opts ...Option) (*Build, error) {
 			b.ConfigFile,
 			config.WithEnvFileForParsing(b.EnvFile),
 			config.WithVarsFileForParsing(b.VarsFile),
-			config.WithDefaultCPU(b.DefaultCPU),
-			config.WithDefaultCPUModel(b.DefaultCPUModel),
-			config.WithDefaultDisk(b.DefaultDisk),
-			config.WithDefaultMemory(b.DefaultMemory),
-			config.WithDefaultTimeout(b.DefaultTimeout),
 			config.WithCommit(b.ConfigFileRepositoryCommit),
 		)
 		if err != nil {

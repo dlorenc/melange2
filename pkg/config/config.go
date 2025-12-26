@@ -1101,13 +1101,10 @@ type Dependencies struct {
 type ConfigurationParsingOption func(*configOptions)
 
 type configOptions struct {
-	filesystem                  fs.FS
-	envFilePath                 string
-	cpu, cpumodel, memory, disk string
-	timeout                     time.Duration
-	commit                      string
-
+	filesystem   fs.FS
+	envFilePath  string
 	varsFilePath string
+	commit       string
 }
 
 // include reconciles all given opts into the receiver variable, such that it is
@@ -1115,36 +1112,6 @@ type configOptions struct {
 func (options *configOptions) include(opts ...ConfigurationParsingOption) {
 	for _, fn := range opts {
 		fn(options)
-	}
-}
-
-func WithDefaultTimeout(timeout time.Duration) ConfigurationParsingOption {
-	return func(options *configOptions) {
-		options.timeout = timeout
-	}
-}
-
-func WithDefaultCPU(cpu string) ConfigurationParsingOption {
-	return func(options *configOptions) {
-		options.cpu = cpu
-	}
-}
-
-func WithDefaultCPUModel(cpumodel string) ConfigurationParsingOption {
-	return func(options *configOptions) {
-		options.cpumodel = cpumodel
-	}
-}
-
-func WithDefaultDisk(disk string) ConfigurationParsingOption {
-	return func(options *configOptions) {
-		options.disk = disk
-	}
-}
-
-func WithDefaultMemory(memory string) ConfigurationParsingOption {
-	return func(options *configOptions) {
-		options.memory = memory
 	}
 }
 
@@ -1656,23 +1623,9 @@ func ParseConfiguration(ctx context.Context, configurationFilePath string, opts 
 	// Propagate all child pipelines
 	cfg.propagatePipelines()
 
+	// Ensure Resources is always non-nil for convenient field access
 	if cfg.Package.Resources == nil {
 		cfg.Package.Resources = &Resources{}
-	}
-	if options.timeout != 0 {
-		cfg.Package.Timeout = options.timeout
-	}
-	if options.cpu != "" {
-		cfg.Package.Resources.CPU = options.cpu
-	}
-	if options.cpumodel != "" {
-		cfg.Package.Resources.CPUModel = options.cpumodel
-	}
-	if options.memory != "" {
-		cfg.Package.Resources.Memory = options.memory
-	}
-	if options.disk != "" {
-		cfg.Package.Resources.Disk = options.disk
 	}
 
 	// Finally, validate the configuration we ended up with before returning it for use downstream.

@@ -315,22 +315,6 @@ func WithDebug(debug bool) Option {
 	}
 }
 
-// WithDebugRunner indicates whether the runner should leave the build environment up on failures
-func WithDebugRunner(debug bool) Option {
-	return func(b *Build) error {
-		b.DebugRunner = debug
-		return nil
-	}
-}
-
-// WithInteractive indicates whether to attach stdin and a tty to the runner on failures
-func WithInteractive(interactive bool) Option {
-	return func(b *Build) error {
-		b.Interactive = interactive
-		return nil
-	}
-}
-
 // WithRemove indicates whether the the build will clean up after itself.
 // This includes deleting any intermediate artifacts like container images and temp workspace and guest dirs.
 func WithRemove(remove bool) Option {
@@ -343,41 +327,6 @@ func WithRemove(remove bool) Option {
 func WithPackageCacheDir(apkCacheDir string) Option {
 	return func(b *Build) error {
 		b.ApkCacheDir = apkCacheDir
-		return nil
-	}
-}
-
-func WithCPU(cpu string) Option {
-	return func(b *Build) error {
-		b.DefaultCPU = cpu
-		return nil
-	}
-}
-
-func WithCPUModel(cpumodel string) Option {
-	return func(b *Build) error {
-		b.DefaultCPUModel = cpumodel
-		return nil
-	}
-}
-
-func WithDisk(disk string) Option {
-	return func(b *Build) error {
-		b.DefaultDisk = disk
-		return nil
-	}
-}
-
-func WithMemory(memory string) Option {
-	return func(b *Build) error {
-		b.DefaultMemory = memory
-		return nil
-	}
-}
-
-func WithTimeout(dur time.Duration) Option {
-	return func(b *Build) error {
-		b.DefaultTimeout = dur
 		return nil
 	}
 }

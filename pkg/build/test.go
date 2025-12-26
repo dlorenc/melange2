@@ -133,14 +133,29 @@ func NewTest(ctx context.Context, opts ...TestOption) (*Test, error) {
 
 	parsedCfg, err := config.ParseConfiguration(ctx, t.ConfigFile,
 		config.WithEnvFileForParsing(t.EnvFile),
-		config.WithDefaultCPU(t.DefaultCPU),
-		config.WithDefaultCPUModel(t.DefaultCPUModel),
-		config.WithDefaultDisk(t.DefaultDisk),
-		config.WithDefaultMemory(t.DefaultMemory),
-		config.WithDefaultTimeout(t.DefaultTimeout),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Apply CLI defaults for resource settings
+	if t.DefaultTimeout != 0 {
+		parsedCfg.Package.Timeout = t.DefaultTimeout
+	}
+	if parsedCfg.Package.Resources == nil {
+		parsedCfg.Package.Resources = &config.Resources{}
+	}
+	if t.DefaultCPU != "" {
+		parsedCfg.Package.Resources.CPU = t.DefaultCPU
+	}
+	if t.DefaultCPUModel != "" {
+		parsedCfg.Package.Resources.CPUModel = t.DefaultCPUModel
+	}
+	if t.DefaultMemory != "" {
+		parsedCfg.Package.Resources.Memory = t.DefaultMemory
+	}
+	if t.DefaultDisk != "" {
+		parsedCfg.Package.Resources.Disk = t.DefaultDisk
 	}
 
 	t.Configuration = *parsedCfg
