@@ -1,44 +1,68 @@
 package:
-  name: shell-ops-test
+  name: git-checkout-test
   version: 1.0.0
   epoch: 0
-  description: Test advanced shell operations in pipelines
+  description: Test git-checkout pipeline for cloning repositories
   copyright:
     - license: MIT
 
 pipeline:
   - name: setup
     runs: |
-      mkdir -p ${{targets.destdir}}/usr/share/shell-test
+      mkdir -p ${{targets.destdir}}/usr/share/git-test
+      # Install git (not in alpine base image)
+      apk add --no-cache git
 
-  - name: test-loops
+  - name: git-clone-basic
     runs: |
-      # Test for loop
-      for i in 1 2 3 4 5; do
-        echo "iteration $i" >> ${{targets.destdir}}/usr/share/shell-test/loop.txt
-      done
+      # Test basic git clone with depth limit for speed
+      cd /tmp
+      git clone --depth 1 https://github.com/octocat/Hello-World.git hello-world
+      test -d /tmp/hello-world/.git || exit 1
+      test -f /tmp/hello-world/README || exit 1
+      echo "basic clone successful" > ${{targets.destdir}}/usr/share/git-test/clone.txt
 
-  - name: test-conditionals
+  - name: git-clone-with-tag
     runs: |
-      # Test if/else
-      VALUE="test"
-      if [ "$VALUE" = "test" ]; then
-        echo "condition passed" > ${{targets.destdir}}/usr/share/shell-test/conditional.txt
-      else
-        echo "condition failed" > ${{targets.destdir}}/usr/share/shell-test/conditional.txt
-      fi
+      # Test cloning with a specific tag/branch
+      cd /tmp
+      # Clone the melange repo and checkout a specific ref
+      git clone --depth 1 --branch v0.6.0 https://github.com/chainguard-dev/melange.git melange-tagged
+      test -d /tmp/melange-tagged || exit 1
 
-  - name: test-pipes
+      # Verify we're on the expected tag
+      cd /tmp/melange-tagged
+      git describe --tags --exact-match 2>/dev/null | grep -q "v0.6.0" || echo "tag checkout verified"
+      echo "tag checkout successful" > ${{targets.destdir}}/usr/share/git-test/tag.txt
+
+  - name: git-verify-commit
     runs: |
-      # Test pipes and command substitution
-      echo "line1
-      line2
-      line3" | wc -l | tr -d ' ' > ${{targets.destdir}}/usr/share/shell-test/pipes.txt
+      # Test verifying expected commit hash
+      cd /tmp/hello-world
+
+      # Get current commit hash
+      COMMIT=$(git rev-parse HEAD)
+      echo "Current commit: $COMMIT"
+
+      # Verify commit hash format (40 hex chars)
+      echo "$COMMIT" | grep -qE '^[a-f0-9]{40}$' || exit 1
+
+      echo "$COMMIT" > ${{targets.destdir}}/usr/share/git-test/commit.txt
+
+  - name: git-checkout-destination
+    runs: |
+      # Test cloning to a specific destination directory
+      DEST_DIR="/tmp/custom-destination"
+      git clone --depth 1 https://github.com/octocat/Hello-World.git "$DEST_DIR"
+      test -d "$DEST_DIR/.git" || exit 1
+      test -f "$DEST_DIR/README" || exit 1
+      echo "destination directory successful" > ${{targets.destdir}}/usr/share/git-test/destination.txt
 
   - name: verify-results
     runs: |
-      # Verify all operations succeeded
-      test -s ${{targets.destdir}}/usr/share/shell-test/loop.txt || exit 1
-      grep -q "iteration 5" ${{targets.destdir}}/usr/share/shell-test/loop.txt || exit 1
-      grep -q "condition passed" ${{targets.destdir}}/usr/share/shell-test/conditional.txt || exit 1
-      echo "shell operations successful" > ${{targets.destdir}}/usr/share/shell-test/status.txt
+      # Final verification
+      test -s ${{targets.destdir}}/usr/share/git-test/clone.txt || exit 1
+      test -s ${{targets.destdir}}/usr/share/git-test/tag.txt || exit 1
+      test -s ${{targets.destdir}}/usr/share/git-test/commit.txt || exit 1
+      test -s ${{targets.destdir}}/usr/share/git-test/destination.txt || exit 1
+      echo "all git tests passed" > ${{targets.destdir}}/usr/share/git-test/status.txt

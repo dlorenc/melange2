@@ -553,7 +553,7 @@ func TestE2E_Permissions(t *testing.T) {
 	verifyFileContains(t, outDir, "permissions-test/etc/perms.txt", "permissions verified")
 }
 
-// TestE2E_FetchSource tests fetching sources via HTTP
+// TestE2E_FetchSource tests fetching sources with checksum validation and archive extraction
 func TestE2E_FetchSource(t *testing.T) {
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "13-fetch-source.yaml")
@@ -561,24 +561,43 @@ func TestE2E_FetchSource(t *testing.T) {
 	outDir, err := e.buildConfig(cfg)
 	require.NoError(t, err, "build should succeed")
 
-	// Verify fetch succeeded
+	// Verify HTTP fetch with checksum succeeded
 	verifyFileExists(t, outDir, "fetch-test/usr/share/fetch-test/fetched.txt")
-	verifyFileContains(t, outDir, "fetch-test/usr/share/fetch-test/status.txt", "fetch successful")
+	verifyFileExists(t, outDir, "fetch-test/usr/share/fetch-test/checksum.txt")
+
+	// Verify archive extraction succeeded
+	verifyFileExists(t, outDir, "fetch-test/usr/share/fetch-test/file1.txt")
+	verifyFileContains(t, outDir, "fetch-test/usr/share/fetch-test/file1.txt", "file1 content")
+
+	// Verify strip-components worked
+	verifyFileContains(t, outDir, "fetch-test/usr/share/fetch-test/strip-test.txt", "strip-components successful")
+
+	// Verify all tests passed
+	verifyFileContains(t, outDir, "fetch-test/usr/share/fetch-test/status.txt", "all fetch tests passed")
 }
 
-// TestE2E_ShellOperations tests advanced shell operations in pipelines
-func TestE2E_ShellOperations(t *testing.T) {
+// TestE2E_GitCheckout tests git clone and checkout operations
+func TestE2E_GitCheckout(t *testing.T) {
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "14-git-operations.yaml")
 
 	outDir, err := e.buildConfig(cfg)
 	require.NoError(t, err, "build should succeed")
 
-	// Verify shell operations succeeded
-	verifyFileExists(t, outDir, "shell-ops-test/usr/share/shell-test/loop.txt")
-	verifyFileContains(t, outDir, "shell-ops-test/usr/share/shell-test/loop.txt", "iteration 5")
-	verifyFileContains(t, outDir, "shell-ops-test/usr/share/shell-test/conditional.txt", "condition passed")
-	verifyFileContains(t, outDir, "shell-ops-test/usr/share/shell-test/status.txt", "shell operations successful")
+	// Verify basic clone succeeded
+	verifyFileContains(t, outDir, "git-checkout-test/usr/share/git-test/clone.txt", "basic clone successful")
+
+	// Verify tag checkout succeeded
+	verifyFileContains(t, outDir, "git-checkout-test/usr/share/git-test/tag.txt", "tag checkout successful")
+
+	// Verify commit hash was captured
+	verifyFileExists(t, outDir, "git-checkout-test/usr/share/git-test/commit.txt")
+
+	// Verify destination directory checkout succeeded
+	verifyFileContains(t, outDir, "git-checkout-test/usr/share/git-test/destination.txt", "destination directory successful")
+
+	// Verify all git tests passed
+	verifyFileContains(t, outDir, "git-checkout-test/usr/share/git-test/status.txt", "all git tests passed")
 }
 
 // TestE2E_MultipleSubpackages tests multiple subpackage handling
