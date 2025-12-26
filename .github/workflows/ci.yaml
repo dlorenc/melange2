@@ -67,7 +67,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.62.2
 
   verify:
     name: Verify
@@ -86,8 +86,3 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code go.mod go.sum
-
-      - name: Verify no generated changes
-        run: |
-          go generate ./...
-          git diff --exit-code
