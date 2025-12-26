@@ -160,6 +160,15 @@ func substituteVariables(cfg *config.Configuration, pipelines []config.Pipeline)
 
 			result[i].Runs = runs
 		}
+
+		// Substitute in if field
+		if p.If != "" {
+			ifCond := p.If
+			for k, v := range cfg.Vars {
+				ifCond = strings.ReplaceAll(ifCond, "${{vars."+k+"}}", v)
+			}
+			result[i].If = ifCond
+		}
 	}
 
 	return result
