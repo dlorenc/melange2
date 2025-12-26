@@ -1,0 +1,26 @@
+package:
+  name: fetch-test
+  version: 1.0.0
+  epoch: 0
+  description: Test fetch pipeline for downloading sources
+  copyright:
+    - license: MIT
+
+pipeline:
+  - name: setup
+    runs: |
+      mkdir -p ${{targets.destdir}}/usr/share/fetch-test
+
+  - name: fetch-with-wget
+    runs: |
+      # Test basic HTTP fetch using wget (available in alpine by default)
+      # Use a reliable, small file
+      wget -q -O /tmp/robots.txt https://www.google.com/robots.txt
+      test -f /tmp/robots.txt || exit 1
+      cp /tmp/robots.txt ${{targets.destdir}}/usr/share/fetch-test/fetched.txt
+
+  - name: verify-fetch
+    runs: |
+      # Verify the file was fetched and has content
+      test -s ${{targets.destdir}}/usr/share/fetch-test/fetched.txt || exit 1
+      echo "fetch successful" > ${{targets.destdir}}/usr/share/fetch-test/status.txt
