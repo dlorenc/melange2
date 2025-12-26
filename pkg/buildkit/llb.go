@@ -28,6 +28,9 @@ const (
 	// DefaultWorkDir is the default working directory for pipeline steps.
 	DefaultWorkDir = "/home/build"
 
+	// MelangeOutDir is the output directory name for melange packages.
+	MelangeOutDir = "melange-out"
+
 	// DefaultPath is the default PATH for pipeline execution.
 	DefaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
@@ -40,6 +43,10 @@ type PipelineBuilder struct {
 	// BaseEnv is the base environment for all pipeline steps.
 	// Pipeline-specific environment variables override these.
 	BaseEnv map[string]string
+
+	// CacheMounts specifies cache mounts to use for build steps.
+	// These are applied to all pipeline steps.
+	CacheMounts []CacheMount
 }
 
 // NewPipelineBuilder creates a new PipelineBuilder with default configuration.
@@ -108,6 +115,9 @@ func (b *PipelineBuilder) BuildPipeline(base llb.State, p *config.Pipeline) (llb
 		// Add sorted environment variables for determinism
 		opts = append(opts, SortedEnvOpts(env)...)
 
+		// Add cache mounts
+		opts = append(opts, CacheMountOptions(b.CacheMounts)...)
+
 		// Add custom name for better logging
 		if name := pipelineName(p); name != "" {
 			opts = append(opts, llb.WithCustomName(name))
@@ -120,8 +130,9 @@ func (b *PipelineBuilder) BuildPipeline(base llb.State, p *config.Pipeline) (llb
 	if len(p.Pipeline) > 0 {
 		// Create a child builder with merged environment
 		childBuilder := &PipelineBuilder{
-			Debug:   b.Debug,
-			BaseEnv: MergeEnv(b.BaseEnv, p.Environment),
+			Debug:       b.Debug,
+			BaseEnv:     MergeEnv(b.BaseEnv, p.Environment),
+			CacheMounts: b.CacheMounts,
 		}
 
 		for i := range p.Pipeline {
@@ -164,14 +175,19 @@ func pipelineName(p *config.Pipeline) string {
 	return ""
 }
 
+// WorkspaceOutputDir returns the full path to the package output directory.
+func WorkspaceOutputDir(pkgName string) string {
+	return filepath.Join(DefaultWorkDir, MelangeOutDir, pkgName)
+}
+
 // PrepareWorkspace creates the initial workspace structure.
-// Returns a state with /home/build and melange-out directories created.
+// Returns a state with workspace and melange-out directories created.
 func PrepareWorkspace(base llb.State, pkgName string) llb.State {
 	return base.File(
-		llb.Mkdir("/home/build", 0755, llb.WithParents(true)),
+		llb.Mkdir(DefaultWorkDir, 0755, llb.WithParents(true)),
 		llb.WithCustomName("create workspace"),
 	).File(
-		llb.Mkdir(fmt.Sprintf("/home/build/melange-out/%s", pkgName), 0755, llb.WithParents(true)),
+		llb.Mkdir(WorkspaceOutputDir(pkgName), 0755, llb.WithParents(true)),
 		llb.WithCustomName("create output directory"),
 	)
 }
@@ -179,7 +195,7 @@ func PrepareWorkspace(base llb.State, pkgName string) llb.State {
 // CopySourceToWorkspace copies source files from a Local mount to the workspace.
 func CopySourceToWorkspace(base llb.State, localName string) llb.State {
 	return base.File(
-		llb.Copy(llb.Local(localName), "/", "/home/build/", &llb.CopyInfo{
+		llb.Copy(llb.Local(localName), "/", DefaultWorkDir+"/", &llb.CopyInfo{
 			CopyDirContentsOnly: true,
 		}),
 		llb.WithCustomName("copy source to workspace"),
@@ -187,10 +203,11 @@ func CopySourceToWorkspace(base llb.State, localName string) llb.State {
 }
 
 // ExportWorkspace creates a state suitable for exporting the workspace output.
-// This extracts /home/build/melange-out to the root for export.
+// This extracts the melange-out directory to the root for export.
 func ExportWorkspace(state llb.State) llb.State {
+	melangeOutPath := filepath.Join(DefaultWorkDir, MelangeOutDir)
 	return llb.Scratch().File(
-		llb.Copy(state, "/home/build/melange-out", "/", &llb.CopyInfo{
+		llb.Copy(state, melangeOutPath, "/", &llb.CopyInfo{
 			CopyDirContentsOnly: true,
 		}),
 		llb.WithCustomName("export workspace"),

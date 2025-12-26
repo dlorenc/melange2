@@ -71,6 +71,19 @@ func (b *Builder) WithShowLogs(show bool) *Builder {
 	return b
 }
 
+// WithCacheMounts sets the cache mounts to use for build steps.
+func (b *Builder) WithCacheMounts(mounts []CacheMount) *Builder {
+	b.pipeline.CacheMounts = mounts
+	return b
+}
+
+// WithDefaultCacheMounts enables the default cache mounts for common
+// package managers (Go, Python, Rust, Node.js, etc.).
+func (b *Builder) WithDefaultCacheMounts() *Builder {
+	b.pipeline.CacheMounts = DefaultCacheMounts()
+	return b
+}
+
 // Close closes the BuildKit connection.
 func (b *Builder) Close() error {
 	return b.client.Close()
@@ -144,7 +157,7 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 	// Create subpackage output directories
 	for _, sp := range cfg.Subpackages {
 		state = state.File(
-			llb.Mkdir(fmt.Sprintf("/home/build/melange-out/%s", sp.Name), 0755, llb.WithParents(true)),
+			llb.Mkdir(WorkspaceOutputDir(sp.Name), 0755, llb.WithParents(true)),
 			llb.WithCustomName(fmt.Sprintf("create output directory for %s", sp.Name)),
 		)
 	}
