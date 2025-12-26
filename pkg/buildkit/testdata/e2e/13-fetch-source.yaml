@@ -11,11 +11,11 @@ pipeline:
     runs: |
       mkdir -p ${{targets.destdir}}/usr/share/fetch-test
 
-  - name: fetch-with-curl
+  - name: fetch-with-wget
     runs: |
-      # Test basic HTTP fetch using curl (available in alpine)
+      # Test basic HTTP fetch using wget (available in alpine by default)
       # Use a reliable, small file
-      curl -sSL -o /tmp/robots.txt https://www.google.com/robots.txt
+      wget -q -O /tmp/robots.txt https://www.google.com/robots.txt
       test -f /tmp/robots.txt || exit 1
       cp /tmp/robots.txt ${{targets.destdir}}/usr/share/fetch-test/fetched.txt
 

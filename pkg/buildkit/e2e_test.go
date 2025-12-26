@@ -561,18 +561,19 @@ func TestE2E_FetchSource(t *testing.T) {
 	verifyFileContains(t, outDir, "fetch-test/usr/share/fetch-test/status.txt", "fetch successful")
 }
 
-// TestE2E_GitOperations tests git operations in pipelines
-func TestE2E_GitOperations(t *testing.T) {
+// TestE2E_ShellOperations tests advanced shell operations in pipelines
+func TestE2E_ShellOperations(t *testing.T) {
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "14-git-operations.yaml")
 
 	outDir, err := e.buildConfig(cfg)
 	require.NoError(t, err, "build should succeed")
 
-	// Verify git operations succeeded
-	verifyFileExists(t, outDir, "git-test/usr/share/git-test/head.txt")
-	verifyFileContains(t, outDir, "git-test/usr/share/git-test/log.txt", "Initial commit")
-	verifyFileContains(t, outDir, "git-test/usr/share/git-test/status.txt", "git operations successful")
+	// Verify shell operations succeeded
+	verifyFileExists(t, outDir, "shell-ops-test/usr/share/shell-test/loop.txt")
+	verifyFileContains(t, outDir, "shell-ops-test/usr/share/shell-test/loop.txt", "iteration 5")
+	verifyFileContains(t, outDir, "shell-ops-test/usr/share/shell-test/conditional.txt", "condition passed")
+	verifyFileContains(t, outDir, "shell-ops-test/usr/share/shell-test/status.txt", "shell operations successful")
 }
 
 // TestE2E_MultipleSubpackages tests multiple subpackage handling
