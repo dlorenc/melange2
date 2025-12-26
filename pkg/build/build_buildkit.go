@@ -135,6 +135,11 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 	}
 	defer builder.Close()
 
+	// Enable verbose output in debug mode
+	if b.Debug {
+		builder.WithShowLogs(true)
+	}
+
 	// Build base environment from apko configuration
 	baseEnv := map[string]string{
 		"SOURCE_DATE_EPOCH": fmt.Sprintf("%d", b.SourceDateEpoch.Unix()),

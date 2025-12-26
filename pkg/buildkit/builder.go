@@ -26,6 +26,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"golang.org/x/sync/errgroup"
 
 	"chainguard.dev/melange/pkg/config"
 )
@@ -36,6 +37,11 @@ type Builder struct {
 	loader     *ImageLoader
 	pipeline   *PipelineBuilder
 	extractDir string
+
+	// ProgressMode controls how build progress is displayed.
+	ProgressMode ProgressMode
+	// ShowLogs enables display of stdout/stderr from build steps.
+	ShowLogs bool
 }
 
 // NewBuilder creates a new BuildKit builder.
@@ -46,10 +52,24 @@ func NewBuilder(addr string) (*Builder, error) {
 	}
 
 	return &Builder{
-		client:   c,
-		loader:   NewImageLoader(""),
-		pipeline: NewPipelineBuilder(),
+		client:       c,
+		loader:       NewImageLoader(""),
+		pipeline:     NewPipelineBuilder(),
+		ProgressMode: ProgressModeAuto,
+		ShowLogs:     false,
 	}, nil
+}
+
+// WithProgressMode sets the progress display mode.
+func (b *Builder) WithProgressMode(mode ProgressMode) *Builder {
+	b.ProgressMode = mode
+	return b
+}
+
+// WithShowLogs enables or disables log output from build steps.
+func (b *Builder) WithShowLogs(show bool) *Builder {
+	b.ShowLogs = show
+	return b
 }
 
 // Close closes the BuildKit connection.
@@ -174,16 +194,33 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 		return fmt.Errorf("creating melange-out dir: %w", err)
 	}
 
-	// Solve and export
+	// Create progress writer
+	progress := NewProgressWriter(os.Stderr, b.ProgressMode, b.ShowLogs)
+
+	// Solve and export with progress tracking
 	log.Info("solving build graph")
-	_, err = b.client.Client().Solve(ctx, def, client.SolveOpt{
-		LocalDirs: localDirs,
-		Exports: []client.ExportEntry{{
-			Type:      client.ExporterLocal,
-			OutputDir: melangeOutDir,
-		}},
-	}, nil)
-	if err != nil {
+
+	statusCh := make(chan *client.SolveStatus)
+	eg, egCtx := errgroup.WithContext(ctx)
+
+	// Progress display goroutine
+	eg.Go(func() error {
+		return progress.Write(egCtx, statusCh)
+	})
+
+	// Solve goroutine
+	eg.Go(func() error {
+		_, err := b.client.Client().Solve(ctx, def, client.SolveOpt{
+			LocalDirs: localDirs,
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterLocal,
+				OutputDir: melangeOutDir,
+			}},
+		}, statusCh)
+		return err
+	})
+
+	if err := eg.Wait(); err != nil {
 		return fmt.Errorf("solving build: %w", err)
 	}
 
