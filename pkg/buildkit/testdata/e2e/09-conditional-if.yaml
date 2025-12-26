@@ -6,10 +6,6 @@ package:
   copyright:
     - license: MIT
 
-vars:
-  enable-feature: "true"
-  disable-feature: "false"
-
 pipeline:
   - name: setup
     runs: |
@@ -20,11 +16,11 @@ pipeline:
       echo "always" > /home/build/melange-out/conditional-test/usr/share/conditional-test/always.txt
 
   - name: enabled-feature
-    if: ${{vars.enable-feature}} == "true"
+    if: "enabled" == "enabled"
     runs: |
       echo "enabled" > /home/build/melange-out/conditional-test/usr/share/conditional-test/enabled.txt
 
   - name: disabled-feature
-    if: ${{vars.disable-feature}} == "true"
+    if: "enabled" == "disabled"
     runs: |
       echo "disabled" > /home/build/melange-out/conditional-test/usr/share/conditional-test/disabled.txt
