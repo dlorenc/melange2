@@ -1,0 +1,24 @@
+package:
+  name: python-cache-test
+  version: 1.0.0
+  epoch: 0
+  description: Test Python pip cache mount path
+
+environment:
+  contents:
+    packages:
+      - busybox
+
+pipeline:
+  - name: Test Python cache path
+    runs: |
+      # Verify pip cache directory is writable and persists
+      mkdir -p /root/.cache/pip
+
+      # Write build marker
+      echo "build-$BUILD_ID" >> /root/.cache/pip/.build-marker.txt
+
+      # Copy results to output
+      mkdir -p ${{targets.destdir}}/usr/share/python-cache-test
+      cp /root/.cache/pip/.build-marker.txt ${{targets.destdir}}/usr/share/python-cache-test/builds.txt
+      wc -l < /root/.cache/pip/.build-marker.txt > ${{targets.destdir}}/usr/share/python-cache-test/count.txt
