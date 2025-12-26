@@ -2,6 +2,47 @@
 
 This document helps AI agents work effectively on the melange2 codebase.
 
+## Important: Git Workflow
+
+**Always use branches and pull requests for changes.** Do not push directly to main.
+
+```bash
+# Create a feature branch
+git checkout -b descriptive-branch-name
+
+# Make changes and commit
+git add -A
+git commit -m "type: description
+
+Details here.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+
+# Push and create PR
+git push -u origin descriptive-branch-name
+gh pr create --title "type: description" --body "## Summary
+..."
+```
+
+### Branch Protection
+
+The `main` branch has protection rules:
+- Changes must be made through pull requests
+- Required status checks must pass (Build, Test, Lint)
+- PRs should be reviewed before merging
+
+### Commit Message Format
+
+Use conventional commit prefixes:
+- `feat:` - New features
+- `fix:` - Bug fixes
+- `test:` - Adding or updating tests
+- `docs:` - Documentation changes
+- `ci:` - CI/CD changes
+- `refactor:` - Code refactoring
+
 ## Project Overview
 
 melange2 is an experimental fork of [melange](https://github.com/chainguard-dev/melange) that uses BuildKit as the execution backend for building APK packages. It converts declarative YAML pipelines into BuildKit LLB operations.
@@ -187,6 +228,57 @@ export := llb.Scratch().File(llb.Copy(state, "/output", "/"))
 ```
 
 ## Common Tasks
+
+### Submitting Changes
+
+1. **Create a branch:**
+   ```bash
+   git checkout -b feature-name
+   ```
+
+2. **Make changes and test locally:**
+   ```bash
+   go build ./...
+   go test -short ./...
+   go vet ./...
+   ```
+
+3. **Commit and push:**
+   ```bash
+   git add -A
+   git commit -m "type: description"
+   git push -u origin feature-name
+   ```
+
+4. **Create PR:**
+   ```bash
+   gh pr create --title "type: description" --body "## Summary
+   - What changed
+   - Why
+
+   ## Test Plan
+   - How it was tested
+   "
+   ```
+
+5. **Monitor CI and iterate:**
+   ```bash
+   # Watch CI status
+   gh run list --repo dlorenc/melange2 --limit 1
+
+   # View run details
+   gh run view <run-id> --repo dlorenc/melange2
+
+   # Get failure logs
+   gh run view <run-id> --repo dlorenc/melange2 --log-failed
+   ```
+
+6. **Fix any CI failures, commit, and push again.** CI will re-run automatically.
+
+7. **Merge when CI passes:**
+   ```bash
+   gh pr merge <pr-number> --repo dlorenc/melange2 --squash
+   ```
 
 ### Adding a New E2E Test
 
