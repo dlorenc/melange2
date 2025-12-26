@@ -16,11 +16,11 @@ pipeline:
       echo "always" > /home/build/melange-out/conditional-test/usr/share/conditional-test/always.txt
 
   - name: enabled-feature
-    if: "enabled" == "enabled"
+    if: '"enabled" == "enabled"'
     runs: |
       echo "enabled" > /home/build/melange-out/conditional-test/usr/share/conditional-test/enabled.txt
 
   - name: disabled-feature
-    if: "enabled" == "disabled"
+    if: '"enabled" == "disabled"'
     runs: |
       echo "disabled" > /home/build/melange-out/conditional-test/usr/share/conditional-test/disabled.txt
