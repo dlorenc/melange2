@@ -1,0 +1,33 @@
+package:
+  name: nested-test
+  version: 1.0.0
+  epoch: 0
+  description: Test nested pipeline execution
+  copyright:
+    - license: MIT
+
+pipeline:
+  - name: setup
+    runs: |
+      mkdir -p ${{targets.destdir}}/usr/share/nested-test
+
+  - name: outer-pipeline
+    runs: |
+      echo "outer-start" >> ${{targets.destdir}}/usr/share/nested-test/order.txt
+    pipeline:
+      - name: inner-1
+        runs: |
+          echo "inner-1" >> ${{targets.destdir}}/usr/share/nested-test/order.txt
+        pipeline:
+          - name: deeply-nested
+            runs: |
+              echo "deeply-nested" >> ${{targets.destdir}}/usr/share/nested-test/order.txt
+      - name: inner-2
+        runs: |
+          echo "inner-2" >> ${{targets.destdir}}/usr/share/nested-test/order.txt
+
+  - name: after-nested
+    runs: |
+      echo "after-nested" >> ${{targets.destdir}}/usr/share/nested-test/order.txt
+      # Count total lines to verify all ran
+      wc -l < ${{targets.destdir}}/usr/share/nested-test/order.txt > ${{targets.destdir}}/usr/share/nested-test/count.txt

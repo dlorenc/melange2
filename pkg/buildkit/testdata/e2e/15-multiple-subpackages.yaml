@@ -1,0 +1,59 @@
+package:
+  name: multi-subpkg
+  version: 2.0.0
+  epoch: 1
+  description: Test multiple subpackages with different pipeline types
+  copyright:
+    - license: Apache-2.0
+
+pipeline:
+  - name: build-main
+    runs: |
+      mkdir -p ${{targets.destdir}}/usr/bin
+      mkdir -p ${{targets.destdir}}/usr/lib
+      mkdir -p ${{targets.destdir}}/usr/include
+      mkdir -p ${{targets.destdir}}/usr/share/doc/${{package.name}}
+      mkdir -p ${{targets.destdir}}/usr/share/man/man1
+
+      # Main binary
+      echo '#!/bin/sh' > ${{targets.destdir}}/usr/bin/multi-app
+      echo 'echo "multi-app v${{package.version}}"' >> ${{targets.destdir}}/usr/bin/multi-app
+      chmod +x ${{targets.destdir}}/usr/bin/multi-app
+
+      # Library
+      echo "library code" > ${{targets.destdir}}/usr/lib/libmulti.so.2.0.0
+      ln -s libmulti.so.2.0.0 ${{targets.destdir}}/usr/lib/libmulti.so.2
+      ln -s libmulti.so.2 ${{targets.destdir}}/usr/lib/libmulti.so
+
+      # Headers
+      echo "#ifndef MULTI_H" > ${{targets.destdir}}/usr/include/multi.h
+      echo "#define MULTI_H" >> ${{targets.destdir}}/usr/include/multi.h
+      echo "void multi_func(void);" >> ${{targets.destdir}}/usr/include/multi.h
+      echo "#endif" >> ${{targets.destdir}}/usr/include/multi.h
+
+      # Documentation
+      echo "# Multi-app Documentation" > ${{targets.destdir}}/usr/share/doc/${{package.name}}/README.md
+      echo ".TH MULTI-APP 1" > ${{targets.destdir}}/usr/share/man/man1/multi-app.1
+
+subpackages:
+  - name: multi-subpkg-dev
+    description: Development files for multi-subpkg
+    pipeline:
+      - runs: |
+          mkdir -p ${{targets.subpkgdir}}/usr
+          # In a real build, this would move files from destdir to subpkgdir
+          echo "dev package marker" > ${{targets.subpkgdir}}/usr/dev-marker.txt
+
+  - name: multi-subpkg-doc
+    description: Documentation for multi-subpkg
+    pipeline:
+      - runs: |
+          mkdir -p ${{targets.subpkgdir}}/usr/share
+          echo "doc package marker" > ${{targets.subpkgdir}}/usr/share/doc-marker.txt
+
+  - name: multi-subpkg-libs
+    description: Shared libraries for multi-subpkg
+    pipeline:
+      - runs: |
+          mkdir -p ${{targets.subpkgdir}}/usr/lib
+          echo "libs package marker" > ${{targets.subpkgdir}}/usr/lib/libs-marker.txt

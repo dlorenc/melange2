@@ -467,3 +467,129 @@ dd if=/dev/zero bs=1024 count=100 2>/dev/null | tr '\0' 'x' > /output/large.bin
 	require.NoError(t, err)
 	require.Equal(t, int64(102400), info.Size(), "large file should be 100KB")
 }
+
+// TestE2E_ConditionalPipelines tests if: conditions on pipelines
+func TestE2E_ConditionalPipelines(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "09-conditional-if.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "build should succeed")
+
+	// Verify always-running pipelines
+	verifyFileExists(t, outDir, "conditional-test/usr/share/conditional-test/always.txt")
+	verifyFileExists(t, outDir, "conditional-test/usr/share/conditional-test/true.txt")
+
+	// Verify enabled feature ran
+	verifyFileExists(t, outDir, "conditional-test/usr/share/conditional-test/enabled.txt")
+
+	// Verify disabled features did NOT run
+	_, err = os.Stat(filepath.Join(outDir, "conditional-test/usr/share/conditional-test/disabled.txt"))
+	require.True(t, os.IsNotExist(err), "disabled.txt should not exist")
+
+	_, err = os.Stat(filepath.Join(outDir, "conditional-test/usr/share/conditional-test/false.txt"))
+	require.True(t, os.IsNotExist(err), "false.txt should not exist")
+}
+
+// TestE2E_ScriptAssertions tests script assertions and command chaining
+func TestE2E_ScriptAssertions(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "10-script-assertions.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "build should succeed")
+
+	// Verify all assertion files exist
+	verifyFileExists(t, outDir, "assertion-test/usr/share/assertion-test/test.txt")
+	verifyFileExists(t, outDir, "assertion-test/usr/share/assertion-test/chain1.txt")
+	verifyFileExists(t, outDir, "assertion-test/usr/share/assertion-test/chain2.txt")
+	verifyFileExists(t, outDir, "assertion-test/usr/share/assertion-test/chain3.txt")
+	verifyFileExists(t, outDir, "assertion-test/usr/share/assertion-test/var.txt")
+	verifyFileExists(t, outDir, "assertion-test/usr/share/assertion-test/passed.txt")
+
+	// Verify variable substitution in script
+	verifyFileContains(t, outDir, "assertion-test/usr/share/assertion-test/var.txt", "my-value")
+}
+
+// TestE2E_NestedPipelines tests deeply nested pipeline execution
+func TestE2E_NestedPipelines(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "11-nested-pipelines.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "build should succeed")
+
+	// Verify execution order
+	verifyFileContains(t, outDir, "nested-test/usr/share/nested-test/order.txt", "outer-start")
+	verifyFileContains(t, outDir, "nested-test/usr/share/nested-test/order.txt", "inner-1")
+	verifyFileContains(t, outDir, "nested-test/usr/share/nested-test/order.txt", "deeply-nested")
+	verifyFileContains(t, outDir, "nested-test/usr/share/nested-test/order.txt", "inner-2")
+	verifyFileContains(t, outDir, "nested-test/usr/share/nested-test/order.txt", "after-nested")
+
+	// Verify all 5 steps ran
+	verifyFileContains(t, outDir, "nested-test/usr/share/nested-test/count.txt", "5")
+}
+
+// TestE2E_Permissions tests file permissions and symlinks
+func TestE2E_Permissions(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "12-permissions.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "build should succeed")
+
+	// Verify executable was created
+	verifyFileExists(t, outDir, "permissions-test/usr/bin/myapp")
+
+	// Verify library and symlinks
+	verifyFileExists(t, outDir, "permissions-test/usr/lib/libtest.so.1.0.0")
+
+	// Verify permissions were verified
+	verifyFileContains(t, outDir, "permissions-test/etc/perms.txt", "permissions verified")
+}
+
+// TestE2E_FetchSource tests fetching sources via HTTP
+func TestE2E_FetchSource(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "13-fetch-source.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "build should succeed")
+
+	// Verify fetch succeeded
+	verifyFileExists(t, outDir, "fetch-test/usr/share/fetch-test/fetched.txt")
+	verifyFileContains(t, outDir, "fetch-test/usr/share/fetch-test/status.txt", "fetch successful")
+}
+
+// TestE2E_GitOperations tests git operations in pipelines
+func TestE2E_GitOperations(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "14-git-operations.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "build should succeed")
+
+	// Verify git operations succeeded
+	verifyFileExists(t, outDir, "git-test/usr/share/git-test/head.txt")
+	verifyFileContains(t, outDir, "git-test/usr/share/git-test/log.txt", "Initial commit")
+	verifyFileContains(t, outDir, "git-test/usr/share/git-test/status.txt", "git operations successful")
+}
+
+// TestE2E_MultipleSubpackages tests multiple subpackage handling
+func TestE2E_MultipleSubpackages(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "15-multiple-subpackages.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "build should succeed")
+
+	// Verify main package
+	verifyFileExists(t, outDir, "multi-subpkg/usr/bin/multi-app")
+	verifyFileExists(t, outDir, "multi-subpkg/usr/lib/libmulti.so.2.0.0")
+	verifyFileExists(t, outDir, "multi-subpkg/usr/include/multi.h")
+
+	// Verify subpackage markers (shows pipelines ran)
+	verifyFileExists(t, outDir, "multi-subpkg-dev/usr/dev-marker.txt")
+	verifyFileExists(t, outDir, "multi-subpkg-doc/usr/share/doc-marker.txt")
+	verifyFileExists(t, outDir, "multi-subpkg-libs/usr/lib/libs-marker.txt")
+}

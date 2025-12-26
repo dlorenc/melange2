@@ -1,0 +1,36 @@
+package:
+  name: git-test
+  version: 1.0.0
+  epoch: 0
+  description: Test git operations in pipelines
+  copyright:
+    - license: MIT
+
+pipeline:
+  - name: setup
+    runs: |
+      mkdir -p ${{targets.destdir}}/usr/share/git-test
+
+  - name: git-init-and-commit
+    runs: |
+      # Test git operations in a local repo
+      cd /tmp
+      mkdir test-repo && cd test-repo
+      git init
+      git config user.email "test@test.com"
+      git config user.name "Test User"
+
+      echo "initial content" > file.txt
+      git add file.txt
+      git commit -m "Initial commit"
+
+      # Verify git history
+      git log --oneline > ${{targets.destdir}}/usr/share/git-test/log.txt
+      git rev-parse HEAD > ${{targets.destdir}}/usr/share/git-test/head.txt
+
+  - name: verify-git
+    runs: |
+      # Verify git operations succeeded
+      test -s ${{targets.destdir}}/usr/share/git-test/head.txt || exit 1
+      grep -q "Initial commit" ${{targets.destdir}}/usr/share/git-test/log.txt || exit 1
+      echo "git operations successful" > ${{targets.destdir}}/usr/share/git-test/status.txt
