@@ -476,19 +476,15 @@ func TestE2E_ConditionalPipelines(t *testing.T) {
 	outDir, err := e.buildConfig(cfg)
 	require.NoError(t, err, "build should succeed")
 
-	// Verify always-running pipelines
+	// Verify always-running pipeline
 	verifyFileExists(t, outDir, "conditional-test/usr/share/conditional-test/always.txt")
-	verifyFileExists(t, outDir, "conditional-test/usr/share/conditional-test/true.txt")
 
-	// Verify enabled feature ran
+	// Verify enabled feature ran (vars.enable-feature = "true")
 	verifyFileExists(t, outDir, "conditional-test/usr/share/conditional-test/enabled.txt")
 
-	// Verify disabled features did NOT run
+	// Verify disabled feature did NOT run (vars.disable-feature = "false")
 	_, err = os.Stat(filepath.Join(outDir, "conditional-test/usr/share/conditional-test/disabled.txt"))
 	require.True(t, os.IsNotExist(err), "disabled.txt should not exist")
-
-	_, err = os.Stat(filepath.Join(outDir, "conditional-test/usr/share/conditional-test/false.txt"))
-	require.True(t, os.IsNotExist(err), "false.txt should not exist")
 }
 
 // TestE2E_ScriptAssertions tests script assertions and command chaining

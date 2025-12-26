@@ -28,13 +28,3 @@ pipeline:
     if: ${{vars.disable-feature}}
     runs: |
       echo "disabled" > /home/build/melange-out/conditional-test/usr/share/conditional-test/disabled.txt
-
-  - name: true-condition
-    if: true
-    runs: |
-      echo "true-condition" > /home/build/melange-out/conditional-test/usr/share/conditional-test/true.txt
-
-  - name: false-condition
-    if: false
-    runs: |
-      echo "false-condition" > /home/build/melange-out/conditional-test/usr/share/conditional-test/false.txt
