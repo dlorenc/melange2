@@ -17,36 +17,17 @@ package cli
 import (
 	"context"
 	"fmt"
-	"runtime"
 
 	"github.com/dlorenc/melange2/pkg/container"
 	"github.com/dlorenc/melange2/pkg/container/docker"
 )
 
-// getRunner returns a container runner for the test and rebuild commands.
-// These commands still use the legacy runner pattern.
+// getRunner returns a container runner for the test command.
+// Only Docker is supported as a runner.
 // The build command uses BuildKit instead.
-func getRunner(ctx context.Context, runner string, remove bool) (container.Runner, error) {
-	if runner != "" {
-		switch runner {
-		case "bubblewrap":
-			return container.BubblewrapRunner(remove), nil
-		case "qemu":
-			return container.QemuRunner(), nil
-		case "docker":
-			return docker.NewRunner(ctx)
-		default:
-			return nil, fmt.Errorf("unknown runner: %s", runner)
-		}
+func getRunner(ctx context.Context, runner string, _ bool) (container.Runner, error) {
+	if runner != "" && runner != "docker" {
+		return nil, fmt.Errorf("unknown runner: %s (only 'docker' is supported)", runner)
 	}
-
-	switch runtime.GOOS {
-	case "linux":
-		return container.BubblewrapRunner(remove), nil
-	case "darwin":
-		// darwin is the same as default, but we want to keep it explicit
-		fallthrough
-	default:
-		return docker.NewRunner(ctx)
-	}
+	return docker.NewRunner(ctx)
 }
