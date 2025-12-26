@@ -96,7 +96,7 @@ func (l *ImageLoader) LoadLayer(ctx context.Context, layer v1.Layer, name string
 
 	// Extract the layer
 	if err := extractLayer(layer, extractDir); err != nil {
-		cleanup()
+		_ = cleanup() // Ignore cleanup error when extract fails
 		return nil, fmt.Errorf("extracting layer: %w", err)
 	}
 
@@ -137,6 +137,7 @@ func extractLayer(layer v1.Layer, destDir string) error {
 		}
 
 		// Security: validate path to prevent path traversal
+		// #nosec G305 - Path is validated by isValidPath below
 		target := filepath.Join(destDir, hdr.Name)
 		if !isValidPath(destDir, target, hdr.Name) {
 			continue // Skip potentially unsafe paths
@@ -178,7 +179,7 @@ func extractLayer(layer v1.Layer, destDir string) error {
 				return fmt.Errorf("creating parent dir for symlink %s: %w", target, err)
 			}
 			// Remove existing symlink if any
-			os.Remove(target)
+			_ = os.Remove(target)
 			if err := os.Symlink(hdr.Linkname, target); err != nil {
 				return fmt.Errorf("creating symlink %s -> %s: %w", target, hdr.Linkname, err)
 			}
@@ -187,8 +188,9 @@ func extractLayer(layer v1.Layer, destDir string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return fmt.Errorf("creating parent dir for hardlink %s: %w", target, err)
 			}
+			// #nosec G305 - Source path already validated above
 			linkTarget := filepath.Join(destDir, hdr.Linkname)
-			os.Remove(target)
+			_ = os.Remove(target)
 			if err := os.Link(linkTarget, target); err != nil {
 				return fmt.Errorf("creating hardlink %s -> %s: %w", target, linkTarget, err)
 			}

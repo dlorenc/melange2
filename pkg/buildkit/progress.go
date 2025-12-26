@@ -276,7 +276,7 @@ func (p *ProgressWriter) GetSummary() Summary {
 	defer p.mu.Unlock()
 
 	errors := 0
-	var steps []StepSummary
+	steps := make([]StepSummary, 0, len(p.vertexOrder))
 
 	// Sort by order of appearance
 	for _, d := range p.vertexOrder {

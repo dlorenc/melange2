@@ -33,10 +33,9 @@ import (
 
 // Builder executes melange builds using BuildKit.
 type Builder struct {
-	client     *Client
-	loader     *ImageLoader
-	pipeline   *PipelineBuilder
-	extractDir string
+	client   *Client
+	loader   *ImageLoader
+	pipeline *PipelineBuilder
 
 	// ProgressMode controls how build progress is displayed.
 	ProgressMode ProgressMode
@@ -115,7 +114,11 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 	if err != nil {
 		return fmt.Errorf("loading apko layer: %w", err)
 	}
-	defer loadResult.Cleanup()
+	defer func() {
+		if err := loadResult.Cleanup(); err != nil {
+			log.Warnf("cleanup failed: %v", err)
+		}
+	}()
 
 	// Start from scratch and copy the apko rootfs
 	log.Info("building LLB graph")

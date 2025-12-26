@@ -162,7 +162,7 @@ func comparePackage(t *testing.T, pkg string, baseDir string) *CompareResult {
 	oldCmd.Dir = *wolfiRepo
 	oldOutput, err := oldCmd.CombinedOutput()
 	if err != nil {
-		result.OldBuildError = fmt.Errorf("old build failed: %v\n%s", err, string(oldOutput))
+		result.OldBuildError = fmt.Errorf("old build failed: %w\n%s", err, string(oldOutput))
 		t.Logf("Old build failed for %s: %v", pkg, err)
 	}
 
@@ -179,7 +179,7 @@ func comparePackage(t *testing.T, pkg string, baseDir string) *CompareResult {
 	newCmd.Dir = *wolfiRepo
 	newOutput, err := newCmd.CombinedOutput()
 	if err != nil {
-		result.NewBuildError = fmt.Errorf("new build failed: %v\n%s", err, string(newOutput))
+		result.NewBuildError = fmt.Errorf("new build failed: %w\n%s", err, string(newOutput))
 		t.Logf("New build failed for %s: %v", pkg, err)
 	}
 
@@ -390,18 +390,19 @@ func printSummary(t *testing.T, results map[string]*CompareResult) {
 
 	for _, pkg := range packages {
 		result := results[pkg]
-		status := "?"
+		var status string
 
-		if result.OldBuildError != nil {
+		switch {
+		case result.OldBuildError != nil:
 			oldFailed++
 			status = "OLD_FAILED"
-		} else if result.NewBuildError != nil {
+		case result.NewBuildError != nil:
 			newFailed++
 			status = "NEW_FAILED"
-		} else if result.Identical {
+		case result.Identical:
 			identical++
 			status = "IDENTICAL"
-		} else {
+		default:
 			different++
 			status = "DIFFERENT"
 		}
