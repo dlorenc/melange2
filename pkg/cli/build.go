@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -35,8 +34,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"chainguard.dev/melange/pkg/build"
-	"chainguard.dev/melange/pkg/container"
-	"chainguard.dev/melange/pkg/container/docker"
+	"chainguard.dev/melange/pkg/buildkit"
 	"chainguard.dev/melange/pkg/linter"
 )
 
@@ -63,8 +61,7 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.StringSliceVar(&flags.Archstrs, "arch", nil, "architectures to build for (e.g., x86_64,ppc64le,arm64) -- default is all, unless specified in config")
 	fs.StringVar(&flags.Libc, "override-host-triplet-libc-substitution-flavor", "gnu", "override the flavor of libc for ${{host.triplet.*}} substitutions (e.g. gnu,musl) -- default is gnu")
 	fs.StringSliceVar(&flags.BuildOption, "build-option", []string{}, "build options to enable")
-	fs.StringVar(&flags.Runner, "runner", "", fmt.Sprintf("which runner to use to enable running commands, default is based on your platform. Options are %q", build.GetAllRunners()))
-	fs.StringVar(&flags.BuildKitAddr, "buildkit-addr", "", "BuildKit daemon address (e.g., tcp://localhost:1234). When set, uses BuildKit instead of runner")
+	fs.StringVar(&flags.BuildKitAddr, "buildkit-addr", buildkit.DefaultAddr, "BuildKit daemon address (e.g., tcp://localhost:1234)")
 	fs.StringSliceVarP(&flags.ExtraKeys, "keyring-append", "k", []string{}, "path to extra keys to include in the build environment keyring")
 	fs.StringSliceVarP(&flags.ExtraRepos, "repository-append", "r", []string{}, "path to extra repositories to include in the build environment")
 	fs.StringSliceVar(&flags.ExtraPackages, "package-append", []string{}, "extra packages to install for each of the build environments")
@@ -119,10 +116,9 @@ type BuildFlags struct {
 	PersistLintResults   bool
 	Debug                bool
 	DebugRunner          bool
-	Interactive          bool
-	Remove               bool
-	Runner               string
-	BuildKitAddr         string
+	Interactive  bool
+	Remove       bool
+	BuildKitAddr string
 	CPU                  string
 	CPUModel             string
 	Memory               string
@@ -160,16 +156,6 @@ func ParseBuildFlags(args []string) (*BuildFlags, []string, error) {
 func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]build.Option, error) {
 	log := clog.FromContext(ctx)
 
-	// Determine the runner to use (unless BuildKit is configured)
-	var runner container.Runner
-	var err error
-	if flags.BuildKitAddr == "" {
-		runner, err = getRunner(context.Background(), flags.Runner, flags.Remove)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get runner: %w", err)
-		}
-	}
-
 	// Favor explicit, user-provided information for the git provenance of the
 	// melange build definition. As a fallback, detect this from local git state.
 	// Git auto-detection should be "best effort" and not fail the build if it
@@ -203,7 +189,6 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 		build.WithCacheDir(flags.CacheDir),
 		build.WithCacheSource(flags.CacheSource),
 		build.WithPackageCacheDir(flags.ApkCacheDir),
-		build.WithRunner(runner),
 		build.WithSigningKey(flags.SigningKey),
 		build.WithGenerateIndex(flags.GenerateIndex),
 		build.WithEmptyWorkspace(flags.EmptyWorkspace),
@@ -304,11 +289,7 @@ func buildCmd() *cobra.Command {
 			}
 
 			archs := apko_types.ParseArchitectures(flags.Archstrs)
-			backend := flags.Runner
-			if flags.BuildKitAddr != "" {
-				backend = fmt.Sprintf("buildkit@%s", flags.BuildKitAddr)
-			}
-			log.Infof("melange version %s with %s building %s at commit %s for arches %s", cmd.Version, backend, args, flags.ConfigFileGitCommit, archs)
+			log.Infof("melange version %s with buildkit@%s building %s at commit %s for arches %s", cmd.Version, flags.BuildKitAddr, args, flags.ConfigFileGitCommit, archs)
 			options, err := flags.BuildOptions(ctx, args...)
 			if err != nil {
 				return fmt.Errorf("getting build options from flags: %w", err)
@@ -340,31 +321,6 @@ func detectGitHead(ctx context.Context, buildConfigFilePath string) (string, err
 	}
 	commit := head.Hash().String()
 	return commit, nil
-}
-
-func getRunner(ctx context.Context, runner string, remove bool) (container.Runner, error) {
-	if runner != "" {
-		switch runner {
-		case "bubblewrap":
-			return container.BubblewrapRunner(remove), nil
-		case "qemu":
-			return container.QemuRunner(), nil
-		case "docker":
-			return docker.NewRunner(ctx)
-		default:
-			return nil, fmt.Errorf("unknown runner: %s", runner)
-		}
-	}
-
-	switch runtime.GOOS {
-	case "linux":
-		return container.BubblewrapRunner(remove), nil
-	case "darwin":
-		// darwin is the same as default, but we want to keep it explicit
-		fallthrough
-	default:
-		return docker.NewRunner(ctx)
-	}
 }
 
 func BuildCmd(ctx context.Context, archs []apko_types.Architecture, baseOpts ...build.Option) error {

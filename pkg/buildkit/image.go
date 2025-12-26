@@ -153,8 +153,15 @@ func extractLayer(layer v1.Layer, destDir string) error {
 				return fmt.Errorf("creating parent dir for %s: %w", target, err)
 			}
 
+			// Ensure file is at least readable (BuildKit needs to read xattrs)
+			// This is needed because files like /etc/shadow have restrictive modes
+			mode := os.FileMode(hdr.Mode)
+			if mode&0400 == 0 {
+				mode |= 0400 // Add owner read permission
+			}
+
 			// #nosec G304 - Extracting trusted container image
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 			if err != nil {
 				return fmt.Errorf("creating file %s: %w", target, err)
 			}

@@ -122,10 +122,11 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 
 	// Build the guest environment with apko and get the layer
 	log.Info("building guest environment with apko")
-	layer, releaseData, err := b.buildGuestLayer(ctx)
+	layer, releaseData, layerCleanup, err := b.buildGuestLayer(ctx)
 	if err != nil {
 		return fmt.Errorf("building guest layer: %w", err)
 	}
+	defer layerCleanup()
 
 	// Create BuildKit builder
 	builder, err := buildkit.NewBuilder(b.BuildKitAddr)
@@ -292,16 +293,17 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 }
 
 // buildGuestLayer builds the apko image and returns the layer for BuildKit.
-func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.ReleaseData, error) {
+// The returned cleanup function should be called after the layer has been loaded.
+func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.ReleaseData, func(), error) {
 	log := clog.FromContext(ctx)
 	ctx, span := otel.Tracer("melange").Start(ctx, "buildGuestLayer")
 	defer span.End()
 
 	tmp, err := os.MkdirTemp(os.TempDir(), "apko-temp-*")
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating apko tempdir: %w", err)
+		return nil, nil, nil, fmt.Errorf("creating apko tempdir: %w", err)
 	}
-	defer os.RemoveAll(tmp)
+	cleanup := func() { os.RemoveAll(tmp) }
 
 	imgConfig := b.Configuration.Environment
 	imgConfig.Archs = []apko_types.Architecture{b.Arch}
@@ -319,7 +321,8 @@ func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.Rele
 
 	configs, warn, err := apko_build.LockImageConfiguration(ctx, imgConfig, opts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to lock image configuration: %w", err)
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("unable to lock image configuration: %w", err)
 	}
 
 	for k, v := range warn {
@@ -328,7 +331,8 @@ func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.Rele
 
 	locked, ok := configs["index"]
 	if !ok {
-		return nil, nil, errors.New("missing locked config")
+		cleanup()
+		return nil, nil, nil, errors.New("missing locked config")
 	}
 
 	b.Configuration.Environment = *locked
@@ -337,13 +341,15 @@ func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.Rele
 	guestFS := tarfs.New()
 	bc, err := apko_build.New(ctx, guestFS, opts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to create build context: %w", err)
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("unable to create build context: %w", err)
 	}
 
 	// Get the APK associated with our build, and then get a Resolver
 	namedIndexes, err := bc.APK().GetRepositoryIndexes(ctx, false)
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to obtain repository indexes: %w", err)
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("unable to obtain repository indexes: %w", err)
 	}
 	b.PkgResolver = apk.NewPkgResolver(ctx, namedIndexes)
 
@@ -352,17 +358,18 @@ func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.Rele
 
 	// Build the image
 	if err := bc.BuildImage(ctx); err != nil {
-		return nil, nil, fmt.Errorf("unable to generate image: %w", err)
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("unable to generate image: %w", err)
 	}
 
 	// Get the layer
-	layerTarGZ, layer, err := bc.ImageLayoutToLayer(ctx)
+	// Note: The cleanup function should be called by the caller after the layer
+	// has been loaded into BuildKit (via ImageLoader.LoadLayer).
+	_, layer, err := bc.ImageLayoutToLayer(ctx)
 	if err != nil {
-		return nil, nil, err
+		cleanup()
+		return nil, nil, nil, err
 	}
-	defer os.Remove(layerTarGZ)
-
-	log.Debugf("using %s for image layer", layerTarGZ)
 
 	// Get release data
 	releaseData := &apko_build.ReleaseData{
@@ -373,5 +380,5 @@ func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.Rele
 	// Note: In BuildKit mode, we can't easily extract release data from the container
 	// This is a limitation that can be addressed in a future update
 
-	return layer, releaseData, nil
+	return layer, releaseData, cleanup, nil
 }

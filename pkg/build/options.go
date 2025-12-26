@@ -24,7 +24,6 @@ import (
 
 	"chainguard.dev/melange/pkg/build/sbom"
 	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/container"
 )
 
 type Option func(*Build) error
@@ -337,15 +336,6 @@ func WithInteractive(interactive bool) Option {
 func WithRemove(remove bool) Option {
 	return func(b *Build) error {
 		b.Remove = remove
-		return nil
-	}
-}
-
-// WithRunner specifies what runner to use to wrap
-// the build environment.
-func WithRunner(runner container.Runner) Option {
-	return func(b *Build) error {
-		b.Runner = runner
 		return nil
 	}
 }

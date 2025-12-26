@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"time"
 
 	"chainguard.dev/apko/pkg/apk/apk"
@@ -39,6 +41,74 @@ import (
 	"chainguard.dev/melange/pkg/config"
 	"chainguard.dev/melange/pkg/container"
 )
+
+// runAsUID returns the UID to run as for the given accounts configuration.
+func runAsUID(accts apko_types.ImageAccounts) string {
+	switch accts.RunAs {
+	case "":
+		return "" // Runner defaults
+	case "root", "0":
+		return "0"
+	default:
+	}
+	if _, err := strconv.Atoi(accts.RunAs); err == nil {
+		return accts.RunAs
+	}
+	for _, u := range accts.Users {
+		if accts.RunAs == u.UserName {
+			return fmt.Sprint(u.UID)
+		}
+	}
+	panic(fmt.Sprintf("unable to find user with username %s", accts.RunAs))
+}
+
+// runAs returns the username to run as for the given accounts configuration.
+func runAs(accts apko_types.ImageAccounts) string {
+	switch accts.RunAs {
+	case "":
+		return "" // Runner defaults
+	case "root", "0":
+		return "root"
+	default:
+	}
+	parsed, err := strconv.ParseUint(accts.RunAs, 10, 32)
+	if err != nil || parsed > math.MaxInt32 {
+		return accts.RunAs
+	}
+	uid := uint32(parsed)
+	for _, u := range accts.Users {
+		if u.UID == uid {
+			return u.UserName
+		}
+	}
+	panic(fmt.Sprintf("unable to find user with UID %d", uid))
+}
+
+// runAsGID returns the GID to run as for the given accounts configuration.
+func runAsGID(accts apko_types.ImageAccounts) string {
+	switch accts.RunAs {
+	case "":
+		return "" // Runner defaults
+	case "root", "0":
+		return "0"
+	default:
+	}
+	if parsed, err := strconv.ParseUint(accts.RunAs, 10, 32); err == nil {
+		uid := uint32(parsed)
+		for _, u := range accts.Users {
+			if u.UID == uid && u.GID != nil {
+				return fmt.Sprint(*u.GID)
+			}
+		}
+	} else {
+		for _, u := range accts.Users {
+			if accts.RunAs == u.UserName && u.GID != nil {
+				return fmt.Sprint(*u.GID)
+			}
+		}
+	}
+	return ""
+}
 
 type Test struct {
 	// Package to test.

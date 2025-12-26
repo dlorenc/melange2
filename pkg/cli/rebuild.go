@@ -27,12 +27,13 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"chainguard.dev/melange/pkg/build"
+	"chainguard.dev/melange/pkg/buildkit"
 	"chainguard.dev/melange/pkg/config"
 )
 
 // addRebuildFlags registers all rebuild command flags to the provided FlagSet using the RebuildFlags struct
 func addRebuildFlags(fs *pflag.FlagSet, flags *RebuildFlags) {
-	fs.StringVar(&flags.Runner, "runner", "", fmt.Sprintf("which runner to use to enable running commands, default is based on your platform. Options are %q", build.GetAllRunners()))
+	fs.StringVar(&flags.BuildKitAddr, "buildkit-addr", buildkit.DefaultAddr, "BuildKit daemon address (e.g., tcp://localhost:1234)")
 	fs.BoolVar(&flags.Diff, "diff", true, "fail and show differences between the original and rebuilt packages")
 	fs.StringVar(&flags.OutDir, "out-dir", "./rebuilt-packages/", "directory where packages will be output")
 	fs.StringVar(&flags.SourceDir, "source-dir", "", "directory where source code is located")
@@ -41,11 +42,11 @@ func addRebuildFlags(fs *pflag.FlagSet, flags *RebuildFlags) {
 
 // RebuildFlags holds all parsed rebuild command flags
 type RebuildFlags struct {
-	Runner     string
-	OutDir     string
-	SourceDir  string
-	SigningKey string
-	Diff       bool
+	BuildKitAddr string
+	OutDir       string
+	SourceDir    string
+	SigningKey   string
+	Diff         bool
 }
 
 // ParseRebuildFlags parses rebuild flags from the provided args and returns a RebuildFlags struct
@@ -65,18 +66,13 @@ func ParseRebuildFlags(args []string) (*RebuildFlags, []string, error) {
 // RebuildOptions converts RebuildFlags into a slice of build.Option
 // This includes all options needed for rebuilding a package from its embedded metadata.
 func (flags *RebuildFlags) RebuildOptions(ctx context.Context, pkginfo *goapk.PackageInfo, cfg *config.Configuration, cfgpkg *spdx.Package, cfgpurl purl.PackageURL) ([]build.Option, error) {
-	runner, err := getRunner(ctx, flags.Runner, true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create runner: %w", err)
-	}
-
 	opts := []build.Option{
 		build.WithConfigFileRepositoryURL(fmt.Sprintf("https://github.com/%s/%s", cfgpurl.Namespace, cfgpurl.Name)),
 		build.WithNamespace(strings.ToLower(strings.TrimPrefix(cfgpkg.Originator, "Organization: "))),
 		build.WithConfigFileRepositoryCommit(cfgpkg.Version),
 		build.WithConfigFileLicense(cfgpkg.LicenseDeclared),
 		build.WithBuildDate(time.Unix(pkginfo.BuildDate, 0).UTC().Format(time.RFC3339)),
-		build.WithRunner(runner),
+		build.WithBuildKitAddr(flags.BuildKitAddr),
 		build.WithOutDir(flags.OutDir),
 		build.WithConfiguration(cfg, cfgpurl.Subpath),
 		build.WithSigningKey(flags.SigningKey),
