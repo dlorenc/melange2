@@ -188,7 +188,7 @@ func (p *ProgressWriter) printVertexCompleted(log *clog.Logger, state *vertexSta
 	}
 }
 
-func (p *ProgressWriter) printLog(log *clog.Logger, state *vertexState, data []byte) {
+func (p *ProgressWriter) printLog(log *clog.Logger, _ *vertexState, data []byte) {
 	if p.mode == ProgressModeQuiet {
 		return
 	}

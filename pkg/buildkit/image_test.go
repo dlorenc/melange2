@@ -21,6 +21,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client"
@@ -126,7 +127,7 @@ func TestImageLoaderWithCustomDir(t *testing.T) {
 	defer result.Cleanup()
 
 	// Should be in custom directory
-	require.True(t, filepath.HasPrefix(result.ExtractDir, customDir))
+	require.True(t, strings.HasPrefix(result.ExtractDir, customDir))
 }
 
 func TestImageLoaderCleanup(t *testing.T) {

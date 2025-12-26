@@ -251,7 +251,7 @@ func compareAPKs(oldPath, newPath string) ([]string, error) {
 		allFiles[name] = true
 	}
 
-	var sortedFiles []string
+	sortedFiles := make([]string, 0, len(allFiles))
 	for name := range allFiles {
 		sortedFiles = append(sortedFiles, name)
 	}
@@ -382,7 +382,7 @@ func printSummary(t *testing.T, results map[string]*CompareResult) {
 
 	t.Log("\n=== COMPARISON SUMMARY ===")
 
-	var packages []string
+	packages := make([]string, 0, len(results))
 	for pkg := range results {
 		packages = append(packages, pkg)
 	}
