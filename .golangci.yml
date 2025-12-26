@@ -1,5 +1,3 @@
-version: "2"
-
 run:
   timeout: 5m
 
@@ -16,11 +14,12 @@ linters:
     - unconvert
     - unparam
     - whitespace
-  settings:
-    gosec:
-      excludes:
-        - G115  # Integer overflow conversions - handled where needed
-        - G301  # Directory permissions (0o755)
+
+linters-settings:
+  gosec:
+    excludes:
+      - G115
+      - G301
 
 issues:
   max-issues-per-linter: 0
