@@ -13,28 +13,28 @@ vars:
 pipeline:
   - name: setup
     runs: |
-      mkdir -p ${{targets.destdir}}/usr/share/conditional-test
+      mkdir -p /home/build/melange-out/conditional-test/usr/share/conditional-test
 
   - name: always-runs
     runs: |
-      echo "always" > ${{targets.destdir}}/usr/share/conditional-test/always.txt
+      echo "always" > /home/build/melange-out/conditional-test/usr/share/conditional-test/always.txt
 
   - name: enabled-feature
     if: ${{vars.enable-feature}}
     runs: |
-      echo "enabled" > ${{targets.destdir}}/usr/share/conditional-test/enabled.txt
+      echo "enabled" > /home/build/melange-out/conditional-test/usr/share/conditional-test/enabled.txt
 
   - name: disabled-feature
     if: ${{vars.disable-feature}}
     runs: |
-      echo "disabled" > ${{targets.destdir}}/usr/share/conditional-test/disabled.txt
+      echo "disabled" > /home/build/melange-out/conditional-test/usr/share/conditional-test/disabled.txt
 
   - name: true-condition
     if: true
     runs: |
-      echo "true-condition" > ${{targets.destdir}}/usr/share/conditional-test/true.txt
+      echo "true-condition" > /home/build/melange-out/conditional-test/usr/share/conditional-test/true.txt
 
   - name: false-condition
     if: false
     runs: |
-      echo "false-condition" > ${{targets.destdir}}/usr/share/conditional-test/false.txt
+      echo "false-condition" > /home/build/melange-out/conditional-test/usr/share/conditional-test/false.txt
