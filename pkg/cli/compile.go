@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
@@ -55,13 +54,7 @@ func compile() *cobra.Command {
 	var logPolicy []string
 	var createBuildLog bool
 	var debug bool
-	var debugRunner bool
-	var interactive bool
 	var remove bool
-	var runner string
-	var failOnLintWarning bool
-	var cpu, memory string
-	var timeout time.Duration
 	var extraPackages []string
 	var configFileGitCommit string
 	var configFileGitRepoURL string
@@ -129,12 +122,7 @@ func compile() *cobra.Command {
 				build.WithEnabledBuildOptions(buildOption),
 				build.WithCreateBuildLog(createBuildLog),
 				build.WithDebug(debug),
-				build.WithDebugRunner(debugRunner),
-				build.WithInteractive(interactive),
 				build.WithRemove(remove),
-				build.WithCPU(cpu),
-				build.WithMemory(memory),
-				build.WithTimeout(timeout),
 				build.WithConfigFileRepositoryCommit(configFileGitCommit),
 				build.WithConfigFileRepositoryURL(configFileGitRepoURL),
 				build.WithConfigFileLicense(configFileLicense),
@@ -191,19 +179,12 @@ func compile() *cobra.Command {
 	cmd.Flags().StringVar(&purlNamespace, "namespace", "unknown", "namespace to use in package URLs in SBOM (eg wolfi, alpine)")
 	cmd.Flags().StringSliceVar(&buildOption, "build-option", []string{}, "build options to enable")
 	cmd.Flags().StringSliceVar(&logPolicy, "log-policy", []string{"builtin:stderr"}, "logging policy to use")
-	cmd.Flags().StringVar(&runner, "runner", "", fmt.Sprintf("which runner to use to enable running commands, default is based on your platform. Options are %q", build.GetAllRunners()))
 	cmd.Flags().StringSliceVarP(&extraKeys, "keyring-append", "k", []string{}, "path to extra keys to include in the build environment keyring")
 	cmd.Flags().StringSliceVarP(&extraRepos, "repository-append", "r", []string{}, "path to extra repositories to include in the build environment")
 	cmd.Flags().StringSliceVar(&extraPackages, "package-append", []string{}, "extra packages to install for each of the build environments")
 	cmd.Flags().BoolVar(&createBuildLog, "create-build-log", false, "creates a package.log file containing a list of packages that were built by the command")
 	cmd.Flags().BoolVar(&debug, "debug", false, "enables debug logging of build pipelines")
-	cmd.Flags().BoolVar(&debugRunner, "debug-runner", false, "when enabled, the builder pod will persist after the build succeeds or fails")
-	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "when enabled, attaches stdin with a tty to the pod on failure")
 	cmd.Flags().BoolVar(&remove, "rm", false, "clean up intermediate artifacts (e.g. container images)")
-	cmd.Flags().BoolVar(&failOnLintWarning, "fail-on-lint-warning", false, "turns linter warnings into failures")
-	cmd.Flags().StringVar(&cpu, "cpu", "", "default CPU resources to use for builds")
-	cmd.Flags().StringVar(&memory, "memory", "", "default memory resources to use for builds")
-	cmd.Flags().DurationVar(&timeout, "timeout", 0, "default timeout for builds")
 	cmd.Flags().BoolVar(&generateProvenance, "generate-provenance", false, "generate SLSA provenance for builds (included in a separate .attest.tar.gz file next to the APK)")
 
 	cmd.Flags().StringVar(&configFileGitCommit, "git-commit", "", "commit hash of the git repository containing the build config file (defaults to detecting HEAD)")

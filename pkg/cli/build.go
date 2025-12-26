@@ -21,7 +21,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
@@ -68,14 +67,7 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.BoolVar(&flags.CreateBuildLog, "create-build-log", false, "creates a package.log file containing a list of packages that were built by the command")
 	fs.BoolVar(&flags.PersistLintResults, "persist-lint-results", false, "persist lint results to JSON files in packages/{arch}/ directory")
 	fs.BoolVar(&flags.Debug, "debug", false, "enables debug logging of build pipelines")
-	fs.BoolVar(&flags.DebugRunner, "debug-runner", false, "when enabled, the builder pod will persist after the build succeeds or fails")
-	fs.BoolVarP(&flags.Interactive, "interactive", "i", false, "when enabled, attaches stdin with a tty to the pod on failure")
 	fs.BoolVar(&flags.Remove, "rm", true, "clean up intermediate artifacts (e.g. container images, temp dirs)")
-	fs.StringVar(&flags.CPU, "cpu", "", "default CPU resources to use for builds")
-	fs.StringVar(&flags.CPUModel, "cpumodel", "", "default memory resources to use for builds")
-	fs.StringVar(&flags.Disk, "disk", "", "disk size to use for builds")
-	fs.StringVar(&flags.Memory, "memory", "", "default memory resources to use for builds")
-	fs.DurationVar(&flags.Timeout, "timeout", 0, "default timeout for builds")
 	fs.StringVar(&flags.TraceFile, "trace", "", "where to write trace output")
 	fs.StringSliceVar(&flags.LintRequire, "lint-require", linter.DefaultRequiredLinters(), "linters that must pass")
 	fs.StringSliceVar(&flags.LintWarn, "lint-warn", linter.DefaultWarnLinters(), "linters that will generate warnings")
@@ -113,18 +105,11 @@ type BuildFlags struct {
 	PurlNamespace        string
 	BuildOption          []string
 	CreateBuildLog       bool
-	PersistLintResults   bool
-	Debug                bool
-	DebugRunner          bool
-	Interactive  bool
-	Remove       bool
-	BuildKitAddr string
-	CPU                  string
-	CPUModel             string
-	Memory               string
-	Disk                 string
-	Timeout              time.Duration
-	ExtraPackages        []string
+	PersistLintResults bool
+	Debug              bool
+	Remove             bool
+	BuildKitAddr       string
+	ExtraPackages      []string
 	Libc                 string
 	LintRequire          []string
 	LintWarn             []string
@@ -205,16 +190,9 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 		build.WithCreateBuildLog(flags.CreateBuildLog),
 		build.WithPersistLintResults(flags.PersistLintResults),
 		build.WithDebug(flags.Debug),
-		build.WithDebugRunner(flags.DebugRunner),
-		build.WithInteractive(flags.Interactive),
 		build.WithRemove(flags.Remove),
 		build.WithLintRequire(flags.LintRequire),
 		build.WithLintWarn(flags.LintWarn),
-		build.WithCPU(flags.CPU),
-		build.WithCPUModel(flags.CPUModel),
-		build.WithDisk(flags.Disk),
-		build.WithMemory(flags.Memory),
-		build.WithTimeout(flags.Timeout),
 		build.WithLibcFlavorOverride(flags.Libc),
 		build.WithIgnoreSignatures(flags.IgnoreSignatures),
 		build.WithConfigFileRepositoryCommit(flags.ConfigFileGitCommit),
@@ -362,11 +340,6 @@ func BuildCmd(ctx context.Context, archs []apko_types.Architecture, baseOpts ...
 	}
 
 	var errg errgroup.Group
-
-	if bcs[0].Interactive {
-		// Concurrent interactive debugging will break your terminal.
-		errg.SetLimit(1)
-	}
 
 	for _, bc := range bcs {
 		errg.Go(func() error {
