@@ -1,6 +1,7 @@
+version: "2"
+
 run:
   timeout: 5m
-  issues-exit-code: 1
 
 linters:
   enable:
@@ -15,12 +16,11 @@ linters:
     - unconvert
     - unparam
     - whitespace
-
-linters-settings:
-  gosec:
-    excludes:
-      - G115  # Integer overflow conversions - handled where needed
-      - G301  # Directory permissions (0o755)
+  settings:
+    gosec:
+      excludes:
+        - G115  # Integer overflow conversions - handled where needed
+        - G301  # Directory permissions (0o755)
 
 issues:
   max-issues-per-linter: 0
