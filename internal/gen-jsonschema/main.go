@@ -9,7 +9,7 @@ import (
 
 	"github.com/invopop/jsonschema"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 var outputFlag = flag.String("o", "", "output path")
@@ -22,7 +22,7 @@ func main() {
 	}
 
 	r := new(jsonschema.Reflector)
-	if err := r.AddGoComments("chainguard.dev/melange/pkg/build", "../../pkg/config"); err != nil {
+	if err := r.AddGoComments("github.com/dlorenc/melange2/pkg/build", "../../pkg/config"); err != nil {
 		log.Fatal(err)
 	}
 	schema := r.Reflect(config.Configuration{})

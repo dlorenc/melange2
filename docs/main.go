@@ -25,7 +25,7 @@ import (
 
 	"github.com/spf13/cobra/doc"
 
-	"chainguard.dev/melange/pkg/cli"
+	"github.com/dlorenc/melange2/pkg/cli"
 )
 
 const fmTemplate = `---

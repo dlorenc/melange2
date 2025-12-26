@@ -22,8 +22,8 @@ import (
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"chainguard.dev/apko/pkg/options"
 
-	"chainguard.dev/melange/pkg/build/sbom"
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/build/sbom"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 type Option func(*Build) error

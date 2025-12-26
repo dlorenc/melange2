@@ -22,7 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func query() *cobra.Command {

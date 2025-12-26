@@ -27,8 +27,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/yookoala/realpath"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/container"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/container"
 )
 
 const (

@@ -19,7 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"chainguard.dev/melange/pkg/index"
+	"github.com/dlorenc/melange2/pkg/index"
 )
 
 func indexCmd() *cobra.Command {

@@ -23,11 +23,11 @@ import (
 
 	apkofs "chainguard.dev/apko/pkg/apk/fs"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/license"
-	"chainguard.dev/melange/pkg/renovate"
-	"chainguard.dev/melange/pkg/renovate/copyright"
-	"chainguard.dev/melange/pkg/source"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/license"
+	"github.com/dlorenc/melange2/pkg/renovate"
+	"github.com/dlorenc/melange2/pkg/renovate/copyright"
+	"github.com/dlorenc/melange2/pkg/source"
 )
 
 func licenseCheck() *cobra.Command {

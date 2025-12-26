@@ -33,12 +33,12 @@ import (
 	"go.opentelemetry.io/otel"
 	"sigs.k8s.io/release-utils/version"
 
-	"chainguard.dev/melange/pkg/build/sbom"
-	"chainguard.dev/melange/pkg/buildkit"
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/index"
-	"chainguard.dev/melange/pkg/license"
-	"chainguard.dev/melange/pkg/linter"
+	"github.com/dlorenc/melange2/pkg/build/sbom"
+	"github.com/dlorenc/melange2/pkg/buildkit"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/index"
+	"github.com/dlorenc/melange2/pkg/license"
+	"github.com/dlorenc/melange2/pkg/linter"
 )
 
 // buildPackageBuildKit implements package building using BuildKit.

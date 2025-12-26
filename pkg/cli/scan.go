@@ -34,9 +34,9 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 
-	"chainguard.dev/melange/pkg/build"
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/sca"
+	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/sca"
 )
 
 type scanConfig struct {

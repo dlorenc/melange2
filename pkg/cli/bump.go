@@ -17,8 +17,8 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"chainguard.dev/melange/pkg/renovate"
-	"chainguard.dev/melange/pkg/renovate/bump"
+	"github.com/dlorenc/melange2/pkg/renovate"
+	"github.com/dlorenc/melange2/pkg/renovate/bump"
 )
 
 func bumpCmd() *cobra.Command {

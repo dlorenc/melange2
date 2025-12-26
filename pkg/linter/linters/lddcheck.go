@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"io/fs"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func LddcheckTestLinter(ctx context.Context, cfg *config.Configuration, pkgname string, fsys fs.FS) error {

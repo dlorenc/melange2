@@ -23,8 +23,8 @@ import (
 
 	"golang.org/x/exp/maps"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/linters"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/linters"
 )
 
 type linterFunc func(ctx context.Context, cfg *config.Configuration, pkgname string, fsys fs.FS) error

@@ -23,8 +23,8 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 func StrippedLinter(ctx context.Context, _ *config.Configuration, pkgname string, fsys fs.FS) error {

@@ -28,7 +28,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 
-	"chainguard.dev/melange/pkg/build"
+	"github.com/dlorenc/melange2/pkg/build"
 )
 
 func compile() *cobra.Command {

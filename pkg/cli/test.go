@@ -29,7 +29,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/errgroup"
 
-	"chainguard.dev/melange/pkg/build"
+	"github.com/dlorenc/melange2/pkg/build"
 )
 
 // addTestFlags registers all test command flags to the provided FlagSet using the TestFlags struct

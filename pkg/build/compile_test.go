@@ -21,7 +21,7 @@ import (
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func TestCompileEmpty(t *testing.T) {

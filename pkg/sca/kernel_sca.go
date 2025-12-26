@@ -28,7 +28,7 @@ import (
 	"regexp"
 	"strings"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 
 	"github.com/chainguard-dev/clog"
 	"github.com/klauspost/compress/zstd"

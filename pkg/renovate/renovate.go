@@ -24,7 +24,7 @@ import (
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 // Context contains the default settings for renovations.

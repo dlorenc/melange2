@@ -40,9 +40,9 @@ import (
 	"github.com/zealic/xignore"
 	"go.opentelemetry.io/otel"
 
-	"chainguard.dev/melange/pkg/build/sbom"
-	"chainguard.dev/melange/pkg/build/sbom/spdx"
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/build/sbom"
+	"github.com/dlorenc/melange2/pkg/build/sbom/spdx"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 const melangeOutputDirName = "melange-out"

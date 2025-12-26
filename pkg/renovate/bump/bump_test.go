@@ -11,11 +11,11 @@ import (
 	"github.com/chainguard-dev/clog/slogtest"
 	"github.com/stretchr/testify/require"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 
 	"github.com/stretchr/testify/assert"
 
-	"chainguard.dev/melange/pkg/renovate"
+	"github.com/dlorenc/melange2/pkg/renovate"
 )
 
 func TestBump_versions(t *testing.T) {

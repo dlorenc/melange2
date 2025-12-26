@@ -32,8 +32,8 @@ import (
 	"go.yaml.in/yaml/v2"
 	"gopkg.in/ini.v1"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 // Lint the given APK at the given path

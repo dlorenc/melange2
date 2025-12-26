@@ -38,8 +38,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"sigs.k8s.io/release-utils/version"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/container"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/container"
 )
 
 // runAsUID returns the UID to run as for the given accounts configuration.

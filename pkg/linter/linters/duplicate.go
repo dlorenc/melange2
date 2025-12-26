@@ -27,9 +27,9 @@ import (
 
 	"github.com/dustin/go-humanize"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/license"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/license"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 type duplicateInfo struct {

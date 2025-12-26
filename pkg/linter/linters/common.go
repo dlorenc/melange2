@@ -20,7 +20,7 @@ import (
 	"regexp"
 	"strings"
 
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 var (

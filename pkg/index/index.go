@@ -28,7 +28,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"golang.org/x/sync/errgroup"
 
-	"chainguard.dev/melange/pkg/sign"
+	"github.com/dlorenc/melange2/pkg/sign"
 )
 
 type Index struct {

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 
 	"github.com/stretchr/testify/require"
 )

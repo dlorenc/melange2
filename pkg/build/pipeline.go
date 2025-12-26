@@ -29,10 +29,10 @@ import (
 	apkoTypes "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
 
-	"chainguard.dev/melange/pkg/cond"
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/container"
-	"chainguard.dev/melange/pkg/util"
+	"github.com/dlorenc/melange2/pkg/cond"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/container"
+	"github.com/dlorenc/melange2/pkg/util"
 )
 
 const WorkDir = "/home/build"

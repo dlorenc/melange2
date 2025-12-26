@@ -32,7 +32,7 @@ import (
 
 	"chainguard.dev/apko/pkg/apk/signature"
 
-	"chainguard.dev/melange/pkg/tarball"
+	"github.com/dlorenc/melange2/pkg/tarball"
 )
 
 func SignIndex(ctx context.Context, signingKey string, indexFile string) error {

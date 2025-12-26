@@ -37,10 +37,10 @@ import (
 	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/pgzip"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/sca"
-	"chainguard.dev/melange/pkg/sign"
-	"chainguard.dev/melange/pkg/tarball"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/sca"
+	"github.com/dlorenc/melange2/pkg/sign"
+	"github.com/dlorenc/melange2/pkg/tarball"
 
 	"github.com/chainguard-dev/clog"
 	"github.com/psanford/memfs"

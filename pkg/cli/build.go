@@ -33,9 +33,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	"golang.org/x/sync/errgroup"
 
-	"chainguard.dev/melange/pkg/build"
-	"chainguard.dev/melange/pkg/buildkit"
-	"chainguard.dev/melange/pkg/linter"
+	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/buildkit"
+	"github.com/dlorenc/melange2/pkg/linter"
 )
 
 const BuiltinPipelineDir = "/usr/share/melange/pipelines"

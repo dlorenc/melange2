@@ -12,7 +12,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 
 	_ "embed"
 )

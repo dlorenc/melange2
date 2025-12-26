@@ -11,7 +11,7 @@ import (
 	"github.com/chainguard-dev/yam/pkg/yam/formatted"
 	"gopkg.in/yaml.v3"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 type GeneratedMelangeConfig struct {

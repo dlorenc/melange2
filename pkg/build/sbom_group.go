@@ -1,7 +1,7 @@
 package build
 
 import (
-	"chainguard.dev/melange/pkg/build/sbom/spdx"
+	"github.com/dlorenc/melange2/pkg/build/sbom/spdx"
 )
 
 // An SBOMGroup stores SBOMs corresponding to each package (or subpackage)

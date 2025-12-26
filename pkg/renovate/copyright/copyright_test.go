@@ -23,8 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"chainguard.dev/melange/pkg/license"
-	"chainguard.dev/melange/pkg/renovate"
+	"github.com/dlorenc/melange2/pkg/license"
+	"github.com/dlorenc/melange2/pkg/renovate"
 )
 
 func TestCopyright_update(t *testing.T) {

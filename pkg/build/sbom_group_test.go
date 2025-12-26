@@ -7,7 +7,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	purl "github.com/package-url/packageurl-go"
 
-	"chainguard.dev/melange/pkg/sbom"
+	"github.com/dlorenc/melange2/pkg/sbom"
 )
 
 func TestSBOMGroup_SubpackageUpstreamSource(t *testing.T) {

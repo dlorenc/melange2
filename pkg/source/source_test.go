@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 // Helper function to create a mock .apk file with a .melange.yaml file inside

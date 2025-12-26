@@ -21,8 +21,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/util"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/util"
 
 	"github.com/chainguard-dev/clog/slogtest"
 	"github.com/stretchr/testify/require"

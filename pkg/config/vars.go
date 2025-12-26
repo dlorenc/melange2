@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"chainguard.dev/melange/pkg/util"
+	"github.com/dlorenc/melange2/pkg/util"
 )
 
 const (

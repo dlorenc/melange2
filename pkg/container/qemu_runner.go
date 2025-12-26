@@ -56,8 +56,8 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/term"
 
-	"chainguard.dev/melange/internal/logwriter"
-	"chainguard.dev/melange/pkg/license"
+	"github.com/dlorenc/melange2/internal/logwriter"
+	"github.com/dlorenc/melange2/pkg/license"
 )
 
 var _ Debugger = (*qemu)(nil)

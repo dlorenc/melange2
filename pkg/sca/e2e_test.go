@@ -22,7 +22,7 @@ import (
 	"github.com/chainguard-dev/clog/slogtest"
 	"github.com/google/go-cmp/cmp"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func TestGoFipsBinDeps(t *testing.T) {

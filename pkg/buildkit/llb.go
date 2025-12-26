@@ -20,8 +20,8 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 
-	"chainguard.dev/melange/pkg/cond"
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/cond"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 const (

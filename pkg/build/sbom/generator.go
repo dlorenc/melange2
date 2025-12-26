@@ -23,7 +23,7 @@ import (
 	apko_build "chainguard.dev/apko/pkg/build"
 	purl "github.com/package-url/packageurl-go"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 const (

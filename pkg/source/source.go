@@ -29,8 +29,8 @@ import (
 	apkofs "chainguard.dev/apko/pkg/apk/fs"
 	"github.com/chainguard-dev/clog"
 
-	"chainguard.dev/melange/pkg/build"
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 // Variable to allow mocking the runCommand function in tests.

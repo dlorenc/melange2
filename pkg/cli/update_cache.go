@@ -17,8 +17,8 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"chainguard.dev/melange/pkg/renovate"
-	"chainguard.dev/melange/pkg/renovate/cache"
+	"github.com/dlorenc/melange2/pkg/renovate"
+	"github.com/dlorenc/melange2/pkg/renovate/cache"
 )
 
 func updateCache() *cobra.Command {

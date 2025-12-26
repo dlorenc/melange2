@@ -28,9 +28,9 @@ import (
 	"gopkg.in/yaml.v3"
 	"mvdan.cc/sh/v3/syntax"
 
-	"chainguard.dev/melange/pkg/cond"
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/util"
+	"github.com/dlorenc/melange2/pkg/cond"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/util"
 )
 
 const unidentifiablePipeline = "???"

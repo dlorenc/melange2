@@ -39,7 +39,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"gopkg.in/ini.v1"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 type testHandle struct {

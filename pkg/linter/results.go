@@ -23,8 +23,8 @@ import (
 
 	"github.com/chainguard-dev/clog"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 // saveLintResults saves the lint results to JSON files in the packages directory

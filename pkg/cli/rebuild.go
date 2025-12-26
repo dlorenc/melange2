@@ -26,9 +26,9 @@ import (
 	"gopkg.in/ini.v1"
 	"gopkg.in/yaml.v3"
 
-	"chainguard.dev/melange/pkg/build"
-	"chainguard.dev/melange/pkg/buildkit"
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/buildkit"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 // addRebuildFlags registers all rebuild command flags to the provided FlagSet using the RebuildFlags struct

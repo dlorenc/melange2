@@ -26,7 +26,7 @@ import (
 	apkofs "chainguard.dev/apko/pkg/apk/fs"
 	"github.com/chainguard-dev/clog"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func TestFindLicenseFiles(t *testing.T) {

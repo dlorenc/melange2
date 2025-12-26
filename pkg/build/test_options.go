@@ -20,7 +20,7 @@ import (
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"chainguard.dev/apko/pkg/options"
 
-	"chainguard.dev/melange/pkg/container"
+	"github.com/dlorenc/melange2/pkg/container"
 )
 
 type TestOption func(*Test) error

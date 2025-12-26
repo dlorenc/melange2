@@ -29,8 +29,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 	purl "github.com/package-url/packageurl-go"
 
-	build "chainguard.dev/melange/pkg/build/sbom"
-	"chainguard.dev/melange/pkg/config"
+	build "github.com/dlorenc/melange2/pkg/build/sbom"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func TestSBOMGeneration(t *testing.T) {

@@ -24,7 +24,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	"github.com/stretchr/testify/require"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func TestPipelineBuilderSimple(t *testing.T) {

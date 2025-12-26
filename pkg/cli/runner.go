@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"chainguard.dev/melange/pkg/container"
-	"chainguard.dev/melange/pkg/container/docker"
+	"github.com/dlorenc/melange2/pkg/container"
+	"github.com/dlorenc/melange2/pkg/container/docker"
 )
 
 // getRunner returns a container runner for the test and rebuild commands.

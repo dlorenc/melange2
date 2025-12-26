@@ -21,7 +21,7 @@ import (
 
 	"github.com/chainguard-dev/clog"
 
-	"chainguard.dev/melange/pkg/cli"
+	"github.com/dlorenc/melange2/pkg/cli"
 )
 
 func main() {

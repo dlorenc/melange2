@@ -29,7 +29,7 @@ import (
 	licenseclassifier "github.com/google/licenseclassifier/v2"
 	"github.com/google/licenseclassifier/v2/assets"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 // NOTE: the detection logic is done via a Classifier type as this is how it was

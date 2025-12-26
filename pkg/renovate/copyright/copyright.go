@@ -25,8 +25,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"chainguard.dev/melange/pkg/license"
-	"chainguard.dev/melange/pkg/renovate"
+	"github.com/dlorenc/melange2/pkg/license"
+	"github.com/dlorenc/melange2/pkg/renovate"
 )
 
 // CopyrightConfig contains the configuration data for a copyright update

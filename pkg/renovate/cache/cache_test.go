@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"chainguard.dev/melange/pkg/renovate"
+	"github.com/dlorenc/melange2/pkg/renovate"
 )
 
 func TestCache(t *testing.T) {

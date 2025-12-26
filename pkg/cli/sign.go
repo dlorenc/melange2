@@ -27,7 +27,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 
-	"chainguard.dev/melange/pkg/sign"
+	"github.com/dlorenc/melange2/pkg/sign"
 )
 
 type signIndexOpts struct {

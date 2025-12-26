@@ -38,13 +38,13 @@ import (
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	purl "github.com/package-url/packageurl-go"
 
-	"chainguard.dev/melange/pkg/sbom"
+	"github.com/dlorenc/melange2/pkg/sbom"
 
 	"github.com/chainguard-dev/clog"
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 
-	"chainguard.dev/melange/pkg/util"
+	"github.com/dlorenc/melange2/pkg/util"
 )
 
 const (

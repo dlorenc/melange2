@@ -20,7 +20,7 @@ import (
 
 	"github.com/chainguard-dev/clog"
 
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 // logStructuredDetails displays itemized details for structured errors

@@ -39,9 +39,9 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	image_spec "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"chainguard.dev/melange/internal/contextreader"
-	"chainguard.dev/melange/internal/logwriter"
-	mcontainer "chainguard.dev/melange/pkg/container"
+	"github.com/dlorenc/melange2/internal/contextreader"
+	"github.com/dlorenc/melange2/internal/logwriter"
+	mcontainer "github.com/dlorenc/melange2/pkg/container"
 )
 
 var _ mcontainer.Debugger = (*docker)(nil)

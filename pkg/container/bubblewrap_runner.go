@@ -28,7 +28,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"chainguard.dev/melange/internal/logwriter"
+	"github.com/dlorenc/melange2/internal/logwriter"
 
 	apko_build "chainguard.dev/apko/pkg/build"
 	apko_types "chainguard.dev/apko/pkg/build/types"

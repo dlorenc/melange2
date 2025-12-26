@@ -17,8 +17,8 @@ import (
 	"chainguard.dev/apko/pkg/sbom/generator/spdx"
 	"github.com/google/go-cmp/cmp"
 
-	"chainguard.dev/melange/pkg/container"
-	"chainguard.dev/melange/pkg/container/docker"
+	"github.com/dlorenc/melange2/pkg/container"
+	"github.com/dlorenc/melange2/pkg/container/docker"
 )
 
 func TestBuild_BuildPackage(t *testing.T) {

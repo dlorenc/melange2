@@ -24,7 +24,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"chainguard.dev/melange/pkg/linter"
+	"github.com/dlorenc/melange2/pkg/linter"
 )
 
 func lint() *cobra.Command {

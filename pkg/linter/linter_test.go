@@ -27,8 +27,8 @@ import (
 	"github.com/chainguard-dev/clog/slogtest"
 	"github.com/stretchr/testify/assert"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 func TestLinters(t *testing.T) {

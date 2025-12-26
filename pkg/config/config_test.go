@@ -12,7 +12,7 @@ import (
 	purl "github.com/package-url/packageurl-go"
 	"github.com/stretchr/testify/require"
 
-	"chainguard.dev/melange/pkg/sbom"
+	"github.com/dlorenc/melange2/pkg/sbom"
 )
 
 func Test_validateCPE(t *testing.T) {

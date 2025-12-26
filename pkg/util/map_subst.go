@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"chainguard.dev/melange/pkg/cond"
+	"github.com/dlorenc/melange2/pkg/cond"
 )
 
 // Given a string and a map, replace the variables in the string with values in the map

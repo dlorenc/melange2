@@ -23,8 +23,8 @@ import (
 
 	"github.com/chainguard-dev/clog"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 func lintPackageFS(ctx context.Context, cfg *config.Configuration, pkgname string, fsys fs.FS, linters []string, results map[string]*types.PackageLintResults, fullPackageName string) error {

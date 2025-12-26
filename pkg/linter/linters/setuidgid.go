@@ -21,8 +21,8 @@ import (
 	"os"
 	"strconv"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 func modeToOctal(mode os.FileMode) string {

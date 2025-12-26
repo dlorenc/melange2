@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"chainguard.dev/melange/pkg/config"
-	"chainguard.dev/melange/pkg/linter/types"
+	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter/types"
 )
 
 func NonLinuxLinter(_ context.Context, _ *config.Configuration, pkgname string, fsys fs.FS) error {

@@ -27,8 +27,8 @@ import (
 	"chainguard.dev/apko/pkg/sbom/generator/spdx"
 	"github.com/spdx/tools-golang/spdx/v2/common"
 
-	build "chainguard.dev/melange/pkg/build/sbom"
-	"chainguard.dev/melange/pkg/sbom"
+	build "github.com/dlorenc/melange2/pkg/build/sbom"
+	"github.com/dlorenc/melange2/pkg/sbom"
 )
 
 // An SBOMGroup stores SBOMs corresponding to each package (or subpackage)

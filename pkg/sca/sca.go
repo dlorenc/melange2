@@ -35,7 +35,7 @@ import (
 	"github.com/chainguard-dev/clog"
 	"github.com/chainguard-dev/go-pkgconfig"
 
-	"chainguard.dev/melange/pkg/config"
+	"github.com/dlorenc/melange2/pkg/config"
 )
 
 // LibDirs is the list of library directories to search for shared objects.
