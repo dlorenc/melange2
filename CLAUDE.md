@@ -349,6 +349,32 @@ Key dependencies:
 - `github.com/testcontainers/testcontainers-go` - E2E test infrastructure
 - `github.com/stretchr/testify` - Test assertions
 
+## Comparison Testing
+
+The comparison test harness validates melange2 against upstream melange by building the same packages and comparing results. See [docs/COMPARISON-TESTING.md](docs/COMPARISON-TESTING.md) for full documentation.
+
+### Quick Start
+
+```bash
+# Start BuildKit (correct command - don't double 'buildkitd')
+docker run -d --name buildkitd --privileged -p 8372:8372 \
+  moby/buildkit:latest --addr tcp://0.0.0.0:8372
+
+# Run comparison (use aarch64 on ARM Macs for speed)
+go test -v -tags=compare ./test/compare/... \
+  -wolfi-repo="/tmp/melange-compare/os" \
+  -baseline-melange="/tmp/melange-compare/melange-upstream" \
+  -buildkit-addr="tcp://localhost:8372" \
+  -arch="aarch64" \
+  -packages="pkgconf,scdoc,jq"
+```
+
+Key files:
+- `test/compare/compare_test.go` - Comparison test implementation
+- `docs/COMPARISON-TESTING.md` - Full documentation
+
+Progress tracking: [GitHub Issue #32](https://github.com/dlorenc/melange2/issues/32)
+
 ## Open Issues
 
 Check GitHub issues for current work:
@@ -359,3 +385,4 @@ gh issue list --repo dlorenc/melange2 --state open
 Key tracking issues:
 - #4 - Test coverage improvements
 - #8-12 - Specific test additions needed
+- #32 - Comparison testing validation
