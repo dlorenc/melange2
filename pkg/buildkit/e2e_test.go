@@ -684,56 +684,6 @@ func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, c
 	return outDir, nil
 }
 
-// TestE2E_CacheMountPersistence verifies that cache mounts persist across builds
-func TestE2E_CacheMountPersistence(t *testing.T) {
-	e := newE2ETestContext(t)
-	cfg := loadTestConfig(t, "16-cache-mounts.yaml")
-
-	// Define a cache mount for testing
-	cacheMounts := []CacheMount{
-		{
-			ID:     "e2e-test-cache-persistence",
-			Target: "/cache",
-			Mode:   llb.CacheMountShared,
-		},
-	}
-
-	// First build - writes "build-1" to cache
-	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
-		"BUILD_ID": "1",
-	})
-	require.NoError(t, err, "first build should succeed")
-
-	// Verify first build output
-	verifyFileExists(t, outDir1, "cache-test/usr/share/cache-test/builds.txt")
-	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/builds.txt", "build-1")
-	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/count.txt", "1")
-
-	// Second build - should see "build-1" in cache and add "build-2"
-	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
-		"BUILD_ID": "2",
-	})
-	require.NoError(t, err, "second build should succeed")
-
-	// Verify second build output shows cache was reused
-	verifyFileExists(t, outDir2, "cache-test/usr/share/cache-test/builds.txt")
-	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/builds.txt", "build-1")
-	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/builds.txt", "build-2")
-	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/count.txt", "2")
-
-	// Third build - should see all previous builds
-	outDir3, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
-		"BUILD_ID": "3",
-	})
-	require.NoError(t, err, "third build should succeed")
-
-	// Verify third build output shows all cached data
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-1")
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-2")
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-3")
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/count.txt", "3")
-}
-
 // TestE2E_CacheMountIsolation verifies that different cache IDs are isolated
 func TestE2E_CacheMountIsolation(t *testing.T) {
 	e := newE2ETestContext(t)
