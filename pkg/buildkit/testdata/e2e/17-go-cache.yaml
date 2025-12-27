@@ -1,0 +1,32 @@
+package:
+  name: go-cache-test
+  version: 1.0.0
+  epoch: 0
+  description: Test Go cache mount paths
+
+environment:
+  contents:
+    packages:
+      - busybox
+
+pipeline:
+  - name: Test Go cache paths
+    runs: |
+      # Verify Go cache directories are writable and persist
+      mkdir -p /go/pkg/mod
+      mkdir -p /root/.cache/go-build
+
+      # Write build marker to Go mod cache
+      echo "build-$BUILD_ID" >> /go/pkg/mod/.build-marker.txt
+
+      # Write build marker to Go build cache
+      echo "build-$BUILD_ID" >> /root/.cache/go-build/.build-marker.txt
+
+      # Copy results to output
+      mkdir -p ${{targets.destdir}}/usr/share/go-cache-test
+      cp /go/pkg/mod/.build-marker.txt ${{targets.destdir}}/usr/share/go-cache-test/mod-cache-builds.txt
+      cp /root/.cache/go-build/.build-marker.txt ${{targets.destdir}}/usr/share/go-cache-test/build-cache-builds.txt
+
+      # Count builds
+      wc -l < /go/pkg/mod/.build-marker.txt > ${{targets.destdir}}/usr/share/go-cache-test/mod-count.txt
+      wc -l < /root/.cache/go-build/.build-marker.txt > ${{targets.destdir}}/usr/share/go-cache-test/build-count.txt

@@ -684,56 +684,6 @@ func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, c
 	return outDir, nil
 }
 
-// TestE2E_CacheMountPersistence verifies that cache mounts persist across builds
-func TestE2E_CacheMountPersistence(t *testing.T) {
-	e := newE2ETestContext(t)
-	cfg := loadTestConfig(t, "16-cache-mounts.yaml")
-
-	// Define a cache mount for testing
-	cacheMounts := []CacheMount{
-		{
-			ID:     "e2e-test-cache-persistence",
-			Target: "/cache",
-			Mode:   llb.CacheMountShared,
-		},
-	}
-
-	// First build - writes "build-1" to cache
-	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
-		"BUILD_ID": "1",
-	})
-	require.NoError(t, err, "first build should succeed")
-
-	// Verify first build output
-	verifyFileExists(t, outDir1, "cache-test/usr/share/cache-test/builds.txt")
-	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/builds.txt", "build-1")
-	verifyFileContains(t, outDir1, "cache-test/usr/share/cache-test/count.txt", "1")
-
-	// Second build - should see "build-1" in cache and add "build-2"
-	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
-		"BUILD_ID": "2",
-	})
-	require.NoError(t, err, "second build should succeed")
-
-	// Verify second build output shows cache was reused
-	verifyFileExists(t, outDir2, "cache-test/usr/share/cache-test/builds.txt")
-	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/builds.txt", "build-1")
-	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/builds.txt", "build-2")
-	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/count.txt", "2")
-
-	// Third build - should see all previous builds
-	outDir3, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{
-		"BUILD_ID": "3",
-	})
-	require.NoError(t, err, "third build should succeed")
-
-	// Verify third build output shows all cached data
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-1")
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-2")
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/builds.txt", "build-3")
-	verifyFileContains(t, outDir3, "cache-test/usr/share/cache-test/count.txt", "3")
-}
-
 // TestE2E_CacheMountIsolation verifies that different cache IDs are isolated
 func TestE2E_CacheMountIsolation(t *testing.T) {
 	e := newE2ETestContext(t)
@@ -765,4 +715,156 @@ func TestE2E_CacheMountIsolation(t *testing.T) {
 	require.NotContains(t, string(content), "from-cache-a", "cache-b should not contain cache-a data")
 	require.Contains(t, string(content), "from-cache-b", "cache-b should contain its own data")
 	verifyFileContains(t, outDir2, "cache-test/usr/share/cache-test/count.txt", "1")
+}
+
+// TestE2E_GoCacheMounts verifies Go cache mount paths persist across builds
+func TestE2E_GoCacheMounts(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "17-go-cache.yaml")
+
+	// Use the actual Go cache mounts from cache.go
+	cacheMounts := GoCacheMounts()
+
+	// First build
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "1"})
+	require.NoError(t, err, "first build should succeed")
+
+	verifyFileContains(t, outDir1, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "go-cache-test/usr/share/go-cache-test/build-cache-builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "go-cache-test/usr/share/go-cache-test/mod-count.txt", "1")
+	verifyFileContains(t, outDir1, "go-cache-test/usr/share/go-cache-test/build-count.txt", "1")
+
+	// Second build - should see cached data
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "2"})
+	require.NoError(t, err, "second build should succeed")
+
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/build-cache-builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/build-cache-builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-count.txt", "2")
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/build-count.txt", "2")
+}
+
+// TestE2E_PythonCacheMounts verifies Python pip cache mount path persists
+func TestE2E_PythonCacheMounts(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "18-python-cache.yaml")
+
+	cacheMounts := PythonCacheMounts()
+
+	// First build
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "1"})
+	require.NoError(t, err, "first build should succeed")
+
+	verifyFileContains(t, outDir1, "python-cache-test/usr/share/python-cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "python-cache-test/usr/share/python-cache-test/count.txt", "1")
+
+	// Second build
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "2"})
+	require.NoError(t, err, "second build should succeed")
+
+	verifyFileContains(t, outDir2, "python-cache-test/usr/share/python-cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "python-cache-test/usr/share/python-cache-test/builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "python-cache-test/usr/share/python-cache-test/count.txt", "2")
+}
+
+// TestE2E_NodeCacheMounts verifies Node.js npm cache mount path persists
+func TestE2E_NodeCacheMounts(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "19-node-cache.yaml")
+
+	cacheMounts := NodeCacheMounts()
+
+	// First build
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "1"})
+	require.NoError(t, err, "first build should succeed")
+
+	verifyFileContains(t, outDir1, "node-cache-test/usr/share/node-cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "node-cache-test/usr/share/node-cache-test/count.txt", "1")
+
+	// Second build
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "2"})
+	require.NoError(t, err, "second build should succeed")
+
+	verifyFileContains(t, outDir2, "node-cache-test/usr/share/node-cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "node-cache-test/usr/share/node-cache-test/builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "node-cache-test/usr/share/node-cache-test/count.txt", "2")
+}
+
+// TestE2E_RustCacheMounts verifies Rust cargo cache mount paths persist
+func TestE2E_RustCacheMounts(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "20-rust-cache.yaml")
+
+	cacheMounts := RustCacheMounts()
+
+	// First build
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "1"})
+	require.NoError(t, err, "first build should succeed")
+
+	verifyFileContains(t, outDir1, "rust-cache-test/usr/share/rust-cache-test/registry-builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "rust-cache-test/usr/share/rust-cache-test/git-builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "rust-cache-test/usr/share/rust-cache-test/registry-count.txt", "1")
+	verifyFileContains(t, outDir1, "rust-cache-test/usr/share/rust-cache-test/git-count.txt", "1")
+
+	// Second build
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "2"})
+	require.NoError(t, err, "second build should succeed")
+
+	verifyFileContains(t, outDir2, "rust-cache-test/usr/share/rust-cache-test/registry-builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "rust-cache-test/usr/share/rust-cache-test/registry-builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "rust-cache-test/usr/share/rust-cache-test/git-builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "rust-cache-test/usr/share/rust-cache-test/git-builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "rust-cache-test/usr/share/rust-cache-test/registry-count.txt", "2")
+	verifyFileContains(t, outDir2, "rust-cache-test/usr/share/rust-cache-test/git-count.txt", "2")
+}
+
+// TestE2E_ApkCacheMounts verifies APK package cache mount path persists
+func TestE2E_ApkCacheMounts(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "21-apk-cache.yaml")
+
+	cacheMounts := []CacheMount{
+		{ID: ApkCacheID, Target: "/var/cache/apk", Mode: llb.CacheMountShared},
+	}
+
+	// First build
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "1"})
+	require.NoError(t, err, "first build should succeed")
+
+	verifyFileContains(t, outDir1, "apk-cache-test/usr/share/apk-cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "apk-cache-test/usr/share/apk-cache-test/count.txt", "1")
+
+	// Second build
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "2"})
+	require.NoError(t, err, "second build should succeed")
+
+	verifyFileContains(t, outDir2, "apk-cache-test/usr/share/apk-cache-test/builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "apk-cache-test/usr/share/apk-cache-test/builds.txt", "build-2")
+	verifyFileContains(t, outDir2, "apk-cache-test/usr/share/apk-cache-test/count.txt", "2")
+}
+
+// TestE2E_DefaultCacheMounts verifies all default cache mounts work together
+func TestE2E_DefaultCacheMounts(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "17-go-cache.yaml") // Use Go cache test which writes to default paths
+
+	// Use all default cache mounts (includes Go cache paths)
+	cacheMounts := DefaultCacheMounts()
+
+	// First build
+	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "1"})
+	require.NoError(t, err, "first build with default caches should succeed")
+
+	// Verify Go cache paths work (they're included in DefaultCacheMounts)
+	verifyFileContains(t, outDir1, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-1")
+	verifyFileContains(t, outDir1, "go-cache-test/usr/share/go-cache-test/build-cache-builds.txt", "build-1")
+
+	// Second build - verify cache persistence with all default mounts active
+	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "2"})
+	require.NoError(t, err, "second build with default caches should succeed")
+
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-1")
+	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-2")
 }

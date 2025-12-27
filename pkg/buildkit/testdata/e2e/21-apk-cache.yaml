@@ -1,0 +1,24 @@
+package:
+  name: apk-cache-test
+  version: 1.0.0
+  epoch: 0
+  description: Test APK package cache mount path
+
+environment:
+  contents:
+    packages:
+      - busybox
+
+pipeline:
+  - name: Test APK cache path
+    runs: |
+      # Verify APK cache directory is writable and persists
+      mkdir -p /var/cache/apk
+
+      # Write build marker
+      echo "build-$BUILD_ID" >> /var/cache/apk/.build-marker.txt
+
+      # Copy results to output
+      mkdir -p ${{targets.destdir}}/usr/share/apk-cache-test
+      cp /var/cache/apk/.build-marker.txt ${{targets.destdir}}/usr/share/apk-cache-test/builds.txt
+      wc -l < /var/cache/apk/.build-marker.txt > ${{targets.destdir}}/usr/share/apk-cache-test/count.txt

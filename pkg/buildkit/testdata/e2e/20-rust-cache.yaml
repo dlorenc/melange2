@@ -1,0 +1,28 @@
+package:
+  name: rust-cache-test
+  version: 1.0.0
+  epoch: 0
+  description: Test Rust cargo cache mount paths
+
+environment:
+  contents:
+    packages:
+      - busybox
+
+pipeline:
+  - name: Test Cargo cache paths
+    runs: |
+      # Verify Cargo cache directories are writable and persist
+      mkdir -p /root/.cargo/registry
+      mkdir -p /root/.cargo/git
+
+      # Write build markers
+      echo "build-$BUILD_ID" >> /root/.cargo/registry/.build-marker.txt
+      echo "build-$BUILD_ID" >> /root/.cargo/git/.build-marker.txt
+
+      # Copy results to output
+      mkdir -p ${{targets.destdir}}/usr/share/rust-cache-test
+      cp /root/.cargo/registry/.build-marker.txt ${{targets.destdir}}/usr/share/rust-cache-test/registry-builds.txt
+      cp /root/.cargo/git/.build-marker.txt ${{targets.destdir}}/usr/share/rust-cache-test/git-builds.txt
+      wc -l < /root/.cargo/registry/.build-marker.txt > ${{targets.destdir}}/usr/share/rust-cache-test/registry-count.txt
+      wc -l < /root/.cargo/git/.build-marker.txt > ${{targets.destdir}}/usr/share/rust-cache-test/git-count.txt
