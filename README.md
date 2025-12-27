@@ -26,8 +26,12 @@ melange2 is an experimental reimplementation of melange's build execution layer 
 
 This project is **experimental** and not intended for production use. It exists to explore BuildKit as an alternative execution backend for melange builds.
 
+Current status:
+- Both `build` and `test` commands use BuildKit
+- Legacy runner code has been removed
+- Actively being validated against upstream melange (see [#32](https://github.com/dlorenc/melange2/issues/32))
+
 Current limitations:
-- The `test` command still uses the legacy runner system
 - Some edge cases may not be fully supported
 - API and behavior may change without notice
 
@@ -133,6 +137,37 @@ The build process:
 2. **LLB Builder** converts pipeline steps to BuildKit operations
 3. **BuildKit** executes the build with caching and exports results
 4. **melange** packages the output as APK files
+
+## Development
+
+### Running Tests
+
+```shell
+# Unit tests
+go test -short ./...
+
+# E2E tests (requires Docker for testcontainers)
+go test -v ./pkg/buildkit/...
+```
+
+### Comparing Against Upstream Melange
+
+melange2 includes a comparison test harness to validate builds against upstream melange:
+
+```shell
+# Clone wolfi-dev/os and build upstream melange
+git clone https://github.com/wolfi-dev/os /tmp/wolfi-os
+git clone https://github.com/chainguard-dev/melange /tmp/upstream-melange
+cd /tmp/upstream-melange && go build -o /tmp/melange-upstream .
+
+# Run comparison (from melange2 repo)
+make compare \
+  WOLFI_REPO=/tmp/wolfi-os \
+  BASELINE_MELANGE=/tmp/melange-upstream \
+  PACKAGES="jq xz zstd"
+```
+
+See `make help` for all available options.
 
 ## Upstream
 
