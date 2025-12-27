@@ -492,3 +492,76 @@ echo "setup done" > /home/build/melange-out/test-pkg/status.txt
 	require.Contains(t, string(content), "ran-true")
 	require.NotContains(t, string(content), "ran-false")
 }
+
+func TestCopyCacheToWorkspace(t *testing.T) {
+	base := llb.Image("alpine:latest")
+	state := CopyCacheToWorkspace(base, "test-cache")
+
+	def, err := state.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+	require.NotEmpty(t, def.Def)
+}
+
+func TestCacheConstants(t *testing.T) {
+	require.Equal(t, "/var/cache/melange", DefaultCacheDir)
+	require.Equal(t, "cache", CacheLocalName)
+}
+
+// Integration test for cache directory
+func TestCacheDirectoryIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	c, err := client.New(ctx, bk.Addr)
+	require.NoError(t, err)
+	defer c.Close()
+
+	// Create a cache directory with a test file
+	cacheDir := t.TempDir()
+	testFile := filepath.Join(cacheDir, "cached-artifact.txt")
+	err = os.WriteFile(testFile, []byte("cached content"), 0644)
+	require.NoError(t, err)
+
+	// Create a pipeline that reads from the cache
+	builder := NewPipelineBuilder()
+	pipeline := config.Pipeline{
+		Name: "read-cache",
+		Runs: `
+mkdir -p /home/build/melange-out/test-pkg
+cat /var/cache/melange/cached-artifact.txt > /home/build/melange-out/test-pkg/from-cache.txt
+`,
+	}
+
+	// Build the LLB graph
+	base := llb.Image("alpine:latest")
+	state := PrepareWorkspace(base, "test-pkg")
+	state = CopyCacheToWorkspace(state, CacheLocalName)
+	state, err = builder.BuildPipeline(state, &pipeline)
+	require.NoError(t, err)
+
+	export := ExportWorkspace(state)
+	def, err := export.Marshal(ctx, llb.LinuxAmd64)
+	require.NoError(t, err)
+
+	// Solve with cache directory as local mount
+	exportDir := t.TempDir()
+	_, err = c.Solve(ctx, def, client.SolveOpt{
+		LocalDirs: map[string]string{
+			CacheLocalName: cacheDir,
+		},
+		Exports: []client.ExportEntry{{
+			Type:      client.ExporterLocal,
+			OutputDir: exportDir,
+		}},
+	}, nil)
+	require.NoError(t, err)
+
+	// Verify the cached content was read
+	content, err := os.ReadFile(filepath.Join(exportDir, "test-pkg", "from-cache.txt"))
+	require.NoError(t, err)
+	require.Equal(t, "cached content", string(content))
+}

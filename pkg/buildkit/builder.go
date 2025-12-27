@@ -112,6 +112,11 @@ type BuildConfig struct {
 	// WorkspaceDir is the directory where build output will be exported.
 	WorkspaceDir string
 
+	// CacheDir is the host directory to mount at /var/cache/melange.
+	// This enables sharing cached artifacts (fetch downloads, Go modules, etc.)
+	// from the host filesystem into the build.
+	CacheDir string
+
 	// Debug enables shell debugging (set -x).
 	Debug bool
 }
@@ -152,6 +157,13 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 		sourceLocalName := "source"
 		state = CopySourceToWorkspace(state, sourceLocalName)
 		localDirs[sourceLocalName] = cfg.SourceDir
+	}
+
+	// If we have a cache directory, copy it to /var/cache/melange
+	if cfg.CacheDir != "" {
+		log.Infof("copying cache from %s to %s", cfg.CacheDir, DefaultCacheDir)
+		state = CopyCacheToWorkspace(state, CacheLocalName)
+		localDirs[CacheLocalName] = cfg.CacheDir
 	}
 
 	// Create subpackage output directories

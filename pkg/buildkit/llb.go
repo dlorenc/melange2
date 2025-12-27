@@ -33,6 +33,13 @@ const (
 
 	// DefaultPath is the default PATH for pipeline execution.
 	DefaultPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+	// DefaultCacheDir is the default path where the melange cache is mounted.
+	// This is used for caching fetch artifacts, Go modules, etc.
+	DefaultCacheDir = "/var/cache/melange"
+
+	// CacheLocalName is the name used for the cache directory local mount.
+	CacheLocalName = "cache"
 )
 
 // PipelineBuilder converts melange pipelines to BuildKit LLB.
@@ -211,5 +218,17 @@ func ExportWorkspace(state llb.State) llb.State {
 			CopyDirContentsOnly: true,
 		}),
 		llb.WithCustomName("export workspace"),
+	)
+}
+
+// CopyCacheToWorkspace copies cache files from a Local mount to /var/cache/melange.
+// This enables pre-populating the cache from the host filesystem.
+func CopyCacheToWorkspace(base llb.State, localName string) llb.State {
+	return base.File(
+		llb.Copy(llb.Local(localName), "/", DefaultCacheDir+"/", &llb.CopyInfo{
+			CopyDirContentsOnly: true,
+			CreateDestPath:      true,
+		}),
+		llb.WithCustomName("copy cache to workspace"),
 	)
 }

@@ -868,3 +868,119 @@ func TestE2E_DefaultCacheMounts(t *testing.T) {
 	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-1")
 	verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-cache-builds.txt", "build-2")
 }
+
+// buildConfigWithCacheDir executes a build with a host cache directory mounted at /var/cache/melange
+func (e *e2eTestContext) buildConfigWithCacheDir(cfg *config.Configuration, cacheDir string) (string, error) {
+	// Create unique output directory for each build
+	outDir, err := os.MkdirTemp(e.workingDir, "output-"+cfg.Package.Name+"-")
+	if err != nil {
+		return "", err
+	}
+
+	// Build the LLB graph using alpine as base
+	pipeline := NewPipelineBuilder()
+
+	// Set up base environment from config
+	pipeline.BaseEnv["HOME"] = DefaultWorkDir
+	for k, v := range cfg.Environment.Environment {
+		pipeline.BaseEnv[k] = v
+	}
+
+	// Start with alpine base image
+	state := llb.Image("alpine:latest")
+
+	// Prepare workspace
+	state = PrepareWorkspace(state, cfg.Package.Name)
+
+	// Copy cache directory if specified
+	localDirs := map[string]string{}
+	if cacheDir != "" {
+		state = CopyCacheToWorkspace(state, CacheLocalName)
+		localDirs[CacheLocalName] = cacheDir
+	}
+
+	// Perform variable substitution on pipelines
+	pipelines := substituteVariables(cfg, cfg.Pipeline)
+
+	// Build the pipelines
+	state, err = pipeline.BuildPipelines(state, pipelines)
+	if err != nil {
+		return "", err
+	}
+
+	// Export the workspace
+	export := ExportWorkspace(state)
+	def, err := export.Marshal(e.ctx, llb.LinuxAmd64)
+	if err != nil {
+		return "", err
+	}
+
+	// Connect to BuildKit and solve
+	c, err := New(e.ctx, e.bk.Addr)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+
+	_, err = c.Client().Solve(e.ctx, def, client.SolveOpt{
+		LocalDirs: localDirs,
+		Exports: []client.ExportEntry{{
+			Type:      client.ExporterLocal,
+			OutputDir: outDir,
+		}},
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return outDir, nil
+}
+
+// TestE2E_CacheDir verifies that --cache-dir mounts host cache at /var/cache/melange
+func TestE2E_CacheDir(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "22-cache-dir.yaml")
+
+	// Create a cache directory with a test artifact
+	cacheDir := t.TempDir()
+	testArtifact := filepath.Join(cacheDir, "test-artifact.txt")
+	err := os.WriteFile(testArtifact, []byte("cached-content-from-host"), 0644)
+	require.NoError(t, err)
+
+	// Build with the cache directory
+	outDir, err := e.buildConfigWithCacheDir(cfg, cacheDir)
+	require.NoError(t, err, "build with cache dir should succeed")
+
+	// Verify the cached artifact was accessible
+	verifyFileContains(t, outDir, "cache-dir-test/usr/share/cache-dir-test/status.txt", "found")
+	verifyFileContains(t, outDir, "cache-dir-test/usr/share/cache-dir-test/test-artifact.txt", "cached-content-from-host")
+}
+
+// TestE2E_CacheDirEmpty verifies behavior when cache directory is empty
+func TestE2E_CacheDirEmpty(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "22-cache-dir.yaml")
+
+	// Create an empty cache directory
+	cacheDir := t.TempDir()
+
+	// Build with the empty cache directory
+	outDir, err := e.buildConfigWithCacheDir(cfg, cacheDir)
+	require.NoError(t, err, "build with empty cache dir should succeed")
+
+	// Verify the artifact was not found (since cache is empty)
+	verifyFileContains(t, outDir, "cache-dir-test/usr/share/cache-dir-test/status.txt", "not-found")
+}
+
+// TestE2E_CacheDirNotSpecified verifies behavior when no cache directory is specified
+func TestE2E_CacheDirNotSpecified(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "22-cache-dir.yaml")
+
+	// Build without a cache directory
+	outDir, err := e.buildConfigWithCacheDir(cfg, "")
+	require.NoError(t, err, "build without cache dir should succeed")
+
+	// Verify the artifact was not found
+	verifyFileContains(t, outDir, "cache-dir-test/usr/share/cache-dir-test/status.txt", "not-found")
+}

@@ -95,6 +95,11 @@ The LLB graph for a typical melange build looks like this:
                            │
                            ▼
               ┌────────────────────────┐
+              │  llb.Copy(cache)       │  Copy host cache (optional, --cache-dir)
+              └────────────┬───────────┘
+                           │
+                           ▼
+              ┌────────────────────────┐
               │  llb.Run(pipeline[0])  │  Execute pipeline step
               │  + cache mounts        │
               └────────────┬───────────┘
@@ -130,6 +135,7 @@ Local mounts allow BuildKit to access files from the host filesystem. They are d
 |------|--------|---------|
 | `apko-{package}` | Temp directory with extracted apko layer | Base filesystem (Alpine packages) |
 | `source` | `--source-dir` flag or `.` | Source code to build |
+| `cache` | `--cache-dir` flag | Host cache at `/var/cache/melange` |
 
 **How it works:**
 
@@ -140,6 +146,9 @@ localDirs := map[string]string{
 }
 if cfg.SourceDir != "" {
     localDirs["source"] = cfg.SourceDir           // "source" -> "./my-source"
+}
+if cfg.CacheDir != "" {
+    localDirs["cache"] = cfg.CacheDir             // "cache" -> "./melange-cache/"
 }
 
 // When solving
@@ -155,7 +164,38 @@ client.Solve(ctx, def, client.SolveOpt{
 // Reference in LLB graph
 apkoRootfs := llb.Local("apko-mypackage")
 sourceFiles := llb.Local("source")
+cacheFiles := llb.Local("cache")
+
+// Copy cache to /var/cache/melange
+state = CopyCacheToWorkspace(state, "cache")
 ```
+
+### Host Cache Directory (`--cache-dir`)
+
+The `--cache-dir` flag mounts a host directory at `/var/cache/melange` inside the build. This is different from BuildKit cache mounts:
+
+| Feature | Host Cache (`--cache-dir`) | BuildKit Cache Mounts |
+|---------|---------------------------|----------------------|
+| Storage | Host filesystem | BuildKit-internal volumes |
+| Pre-population | Yes (copy existing files) | No |
+| Persistence | On host, survives BuildKit restart | In BuildKit, cleared if BuildKit storage is cleared |
+| Use case | Sharing Go modules, fetch artifacts | Package manager caches |
+
+**How it works:**
+
+```go
+// Copy host cache directory into build
+func CopyCacheToWorkspace(base llb.State, localName string) llb.State {
+    return base.File(
+        llb.Copy(llb.Local(localName), "/", DefaultCacheDir+"/", &llb.CopyInfo{
+            CopyDirContentsOnly: true,
+            CreateDestPath:      true,
+        }),
+    )
+}
+```
+
+**Note:** Changes made to `/var/cache/melange` during the build are NOT synced back to the host. The cache is read-only from the host's perspective. To pre-populate, place files in your `--cache-dir` before building.
 
 ### Cache Mounts (BuildKit-Managed)
 
@@ -434,6 +474,5 @@ func SortedEnvOpts(env map[string]string) []llb.RunOption {
 
 ## Future Improvements
 
-- **Issue #25**: Add `--cache-dir` support for host filesystem mounts at `/var/cache/melange`
 - **Issue #2**: Built-in pipeline support (fetch, git-checkout as native LLB operations)
 - **Issue #3**: Interactive debug support via terminal injection

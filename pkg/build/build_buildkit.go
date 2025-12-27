@@ -155,6 +155,7 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 		BaseEnv:      baseEnv,
 		SourceDir:    b.SourceDir,
 		WorkspaceDir: b.WorkspaceDir,
+		CacheDir:     b.CacheDir,
 		Debug:        b.Debug,
 	}
 
