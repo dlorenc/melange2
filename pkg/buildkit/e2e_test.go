@@ -16,6 +16,7 @@ package buildkit
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,8 +87,16 @@ func (e *e2eTestContext) buildConfig(cfg *config.Configuration) (string, error) 
 	// Prepare workspace
 	state = PrepareWorkspace(state, cfg.Package.Name)
 
+	// Create subpackage output directories (matches production builder.go behavior)
+	for _, sp := range cfg.Subpackages {
+		state = state.File(
+			llb.Mkdir(WorkspaceOutputDir(sp.Name), 0755, llb.WithParents(true)),
+			llb.WithCustomName(fmt.Sprintf("create output directory for %s", sp.Name)),
+		)
+	}
+
 	// Perform variable substitution on pipelines
-	pipelines := substituteVariables(cfg, cfg.Pipeline)
+	pipelines := substituteVariables(cfg, cfg.Pipeline, "")
 
 	// Build the pipelines
 	state, err = pipeline.BuildPipelines(state, pipelines)
@@ -97,7 +106,8 @@ func (e *e2eTestContext) buildConfig(cfg *config.Configuration) (string, error) 
 
 	// Build subpackages
 	for _, subpkg := range cfg.Subpackages {
-		subPipelines := substituteVariables(cfg, subpkg.Pipeline)
+		// Use subpackage-specific variable substitution
+		subPipelines := substituteVariables(cfg, subpkg.Pipeline, subpkg.Name)
 		state, err = pipeline.BuildPipelines(state, subPipelines)
 		if err != nil {
 			return "", err
@@ -132,7 +142,8 @@ func (e *e2eTestContext) buildConfig(cfg *config.Configuration) (string, error) 
 }
 
 // substituteVariables performs basic variable substitution in pipelines
-func substituteVariables(cfg *config.Configuration, pipelines []config.Pipeline) []config.Pipeline {
+// subpkgName is the name of the subpackage being processed (empty for main package)
+func substituteVariables(cfg *config.Configuration, pipelines []config.Pipeline, subpkgName string) []config.Pipeline {
 	result := make([]config.Pipeline, len(pipelines))
 
 	for i, p := range pipelines {
@@ -151,7 +162,14 @@ func substituteVariables(cfg *config.Configuration, pipelines []config.Pipeline)
 			// Target paths
 			runs = strings.ReplaceAll(runs, "${{targets.destdir}}", "/home/build/melange-out/"+cfg.Package.Name)
 			runs = strings.ReplaceAll(runs, "${{targets.contextdir}}", "/home/build")
-			runs = strings.ReplaceAll(runs, "${{targets.subpkgdir}}", "/home/build/melange-out/"+cfg.Package.Name+"-subpkg")
+
+			// Subpackage output directory - use actual subpackage name if provided
+			if subpkgName != "" {
+				runs = strings.ReplaceAll(runs, "${{targets.subpkgdir}}", "/home/build/melange-out/"+subpkgName)
+			} else {
+				// For main package, leave as generic path (shouldn't be used)
+				runs = strings.ReplaceAll(runs, "${{targets.subpkgdir}}", "/home/build/melange-out/"+cfg.Package.Name+"-subpkg")
+			}
 
 			// Custom variables
 			for k, v := range cfg.Vars {
@@ -649,7 +667,7 @@ func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, c
 	state = PrepareWorkspace(state, cfg.Package.Name)
 
 	// Perform variable substitution on pipelines
-	pipelines := substituteVariables(cfg, cfg.Pipeline)
+	pipelines := substituteVariables(cfg, cfg.Pipeline, "")
 
 	// Build the pipelines
 	state, err = pipeline.BuildPipelines(state, pipelines)
@@ -900,7 +918,7 @@ func (e *e2eTestContext) buildConfigWithCacheDir(cfg *config.Configuration, cach
 	}
 
 	// Perform variable substitution on pipelines
-	pipelines := substituteVariables(cfg, cfg.Pipeline)
+	pipelines := substituteVariables(cfg, cfg.Pipeline, "")
 
 	// Build the pipelines
 	state, err = pipeline.BuildPipelines(state, pipelines)
@@ -1104,4 +1122,7 @@ func TestE2E_GoBuild(t *testing.T) {
 	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "build-done")
 	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "multi-build-done")
 	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "experiments-done")
+
+	// Verify subpackage pipeline ran (tests fix for pre-created subpackage directories)
+	verifyFileExists(t, outDir, "go-build-test-compat/usr/bin/compat-link.txt")
 }
