@@ -1,0 +1,94 @@
+package:
+  name: autoconf-test
+  version: 1.2.3
+  epoch: 0
+  description: Test autoconf-style build workflow
+  copyright:
+    - license: MIT
+
+vars:
+  configure-opts: "--enable-feature --with-lib=/usr/lib"
+  make-opts: "-j4"
+
+pipeline:
+  # Simulate autoconf/configure step
+  - name: configure
+    runs: |
+      mkdir -p ${{targets.destdir}}/usr/share/autoconf-test
+
+      # Record the configure step with options
+      cat > ${{targets.destdir}}/usr/share/autoconf-test/configure.log << 'CONFIGURE_EOF'
+      Running configure with standard options:
+        --host=x86_64-linux-gnu
+        --build=x86_64-linux-gnu
+        --prefix=/usr
+        --sysconfdir=/etc
+        --libdir=/usr/lib
+        --mandir=/usr/share/man
+        --infodir=/usr/share/info
+        --localstatedir=/var
+      CONFIGURE_EOF
+
+      # Record custom configure options
+      echo "Custom options: ${{vars.configure-opts}}" >> ${{targets.destdir}}/usr/share/autoconf-test/configure.log
+
+      # Simulate Makefile creation
+      cat > ${{targets.destdir}}/usr/share/autoconf-test/Makefile.generated << 'MAKEFILE_EOF'
+      # Generated Makefile
+      PREFIX=/usr
+      LIBDIR=/usr/lib
+      SYSCONFDIR=/etc
+
+      all: autoconf-test
+
+      autoconf-test: main.o
+      	$(CC) -o $@ $^
+
+      install:
+      	install -D autoconf-test $(DESTDIR)$(PREFIX)/bin/autoconf-test
+      MAKEFILE_EOF
+
+      echo "configure-done" > ${{targets.destdir}}/usr/share/autoconf-test/status.txt
+
+  # Simulate autoconf/make step
+  - name: make
+    runs: |
+      # Record make step with parallel build
+      echo "Running make with: ${{vars.make-opts}}" >> ${{targets.destdir}}/usr/share/autoconf-test/build.log
+      echo "V=1 (verbose)" >> ${{targets.destdir}}/usr/share/autoconf-test/build.log
+
+      # Simulate compilation output
+      mkdir -p ${{targets.destdir}}/usr/bin
+      echo '#!/bin/sh' > ${{targets.destdir}}/usr/bin/autoconf-test
+      echo 'echo "Hello from autoconf-test ${{package.version}}"' >> ${{targets.destdir}}/usr/bin/autoconf-test
+      chmod +x ${{targets.destdir}}/usr/bin/autoconf-test
+
+      echo "make-done" >> ${{targets.destdir}}/usr/share/autoconf-test/status.txt
+
+  # Simulate autoconf/make-install step
+  - name: make-install
+    runs: |
+      # Record make install step with DESTDIR
+      echo "Running make install with DESTDIR=${{targets.destdir}}" >> ${{targets.destdir}}/usr/share/autoconf-test/build.log
+
+      # Create standard directory structure
+      mkdir -p ${{targets.destdir}}/usr/lib
+      mkdir -p ${{targets.destdir}}/usr/include
+      mkdir -p ${{targets.destdir}}/etc
+
+      # Simulate installed library
+      echo "libtest" > ${{targets.destdir}}/usr/lib/libautoconf-test.so.1.2.3
+
+      # Simulate installed header
+      echo "#ifndef AUTOCONF_TEST_H" > ${{targets.destdir}}/usr/include/autoconf-test.h
+      echo "#define AUTOCONF_TEST_H" >> ${{targets.destdir}}/usr/include/autoconf-test.h
+      echo "#define VERSION \"${{package.version}}\"" >> ${{targets.destdir}}/usr/include/autoconf-test.h
+      echo "#endif" >> ${{targets.destdir}}/usr/include/autoconf-test.h
+
+      # Simulate config file
+      echo "# autoconf-test configuration" > ${{targets.destdir}}/etc/autoconf-test.conf
+
+      # Simulate .la file removal (as the real pipeline does)
+      echo "Removed libtool files (.la)" >> ${{targets.destdir}}/usr/share/autoconf-test/build.log
+
+      echo "install-done" >> ${{targets.destdir}}/usr/share/autoconf-test/status.txt

@@ -203,3 +203,236 @@ func (*mockSigner) Sign(controlData []byte) ([]byte, error) {
 func (*mockSigner) SignatureName() string {
 	return "mockiavelli"
 }
+
+func TestHashData(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       []byte
+		digestType crypto.Hash
+		wantLen    int
+		wantErr    bool
+	}{
+		{
+			name:       "SHA256 hash",
+			data:       []byte("test data for hashing"),
+			digestType: crypto.SHA256,
+			wantLen:    32, // SHA256 produces 32 bytes
+		},
+		{
+			name:       "SHA512 hash",
+			data:       []byte("test data for hashing"),
+			digestType: crypto.SHA512,
+			wantLen:    64, // SHA512 produces 64 bytes
+		},
+		{
+			name:       "SHA1 hash",
+			data:       []byte("test data for hashing"),
+			digestType: crypto.SHA1,
+			wantLen:    20, // SHA1 produces 20 bytes
+		},
+		{
+			name:       "empty data",
+			data:       []byte{},
+			digestType: crypto.SHA256,
+			wantLen:    32,
+		},
+		{
+			name:       "large data",
+			data:       bytes.Repeat([]byte("x"), 10000),
+			digestType: crypto.SHA256,
+			wantLen:    32,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := HashData(tt.data, tt.digestType)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result) != tt.wantLen {
+				t.Errorf("expected hash length %d, got %d", tt.wantLen, len(result))
+			}
+		})
+	}
+}
+
+func TestHashDataConsistency(t *testing.T) {
+	// Test that same input produces same output
+	data := []byte("consistent test data")
+
+	hash1, err := HashData(data, crypto.SHA256)
+	if err != nil {
+		t.Fatalf("first hash failed: %v", err)
+	}
+
+	hash2, err := HashData(data, crypto.SHA256)
+	if err != nil {
+		t.Fatalf("second hash failed: %v", err)
+	}
+
+	if !bytes.Equal(hash1, hash2) {
+		t.Error("same input produced different hashes")
+	}
+}
+
+func TestHashDataDifferentInputs(t *testing.T) {
+	// Test that different inputs produce different outputs
+	data1 := []byte("data one")
+	data2 := []byte("data two")
+
+	hash1, err := HashData(data1, crypto.SHA256)
+	if err != nil {
+		t.Fatalf("first hash failed: %v", err)
+	}
+
+	hash2, err := HashData(data2, crypto.SHA256)
+	if err != nil {
+		t.Fatalf("second hash failed: %v", err)
+	}
+
+	if bytes.Equal(hash1, hash2) {
+		t.Error("different inputs produced same hash")
+	}
+}
+
+func TestKeyApkSignerSignatureName(t *testing.T) {
+	tests := []struct {
+		keyFile  string
+		expected string
+	}{
+		{
+			keyFile:  "/path/to/key.pem",
+			expected: ".SIGN.RSA256.key.pem.pub",
+		},
+		{
+			keyFile:  "simple.pem",
+			expected: ".SIGN.RSA256.simple.pem.pub",
+		},
+		{
+			keyFile:  "/very/long/path/to/melange.rsa",
+			expected: ".SIGN.RSA256.melange.rsa.pub",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.keyFile, func(t *testing.T) {
+			signer := KeyApkSigner{
+				KeyFile:       tt.keyFile,
+				KeyPassphrase: "",
+			}
+			result := signer.SignatureName()
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestEmitSignatureHeader(t *testing.T) {
+	// Test that EmitSignature produces correct tar headers
+	sde := time.Unix(1704067200, 0) // 2024-01-01 00:00:00 UTC
+	controlData := []byte("test control data")
+
+	signer := &mockSigner{}
+
+	sig, err := EmitSignature(signer, controlData, sde)
+	if err != nil {
+		t.Fatalf("EmitSignature failed: %v", err)
+	}
+
+	gr, err := gzip.NewReader(bytes.NewReader(sig))
+	if err != nil {
+		t.Fatalf("failed to create gzip reader: %v", err)
+	}
+	defer gr.Close()
+
+	dsig, err := io.ReadAll(gr)
+	if err != nil {
+		t.Fatalf("failed to decompress: %v", err)
+	}
+
+	tr := tar.NewReader(bytes.NewBuffer(dsig))
+	hdr, err := tr.Next()
+	if err != nil {
+		t.Fatalf("failed to read tar header: %v", err)
+	}
+
+	// Verify header fields
+	if hdr.Name != MockName {
+		t.Errorf("expected name %q, got %q", MockName, hdr.Name)
+	}
+	if hdr.Typeflag != tar.TypeReg {
+		t.Errorf("expected TypeReg, got %v", hdr.Typeflag)
+	}
+	if hdr.Mode != 0o644 {
+		t.Errorf("expected mode 0644, got %o", hdr.Mode)
+	}
+	if hdr.Uid != 0 {
+		t.Errorf("expected uid 0, got %d", hdr.Uid)
+	}
+	if hdr.Gid != 0 {
+		t.Errorf("expected gid 0, got %d", hdr.Gid)
+	}
+	if hdr.Uname != "root" {
+		t.Errorf("expected uname 'root', got %q", hdr.Uname)
+	}
+	if hdr.Gname != "root" {
+		t.Errorf("expected gname 'root', got %q", hdr.Gname)
+	}
+	if !hdr.ModTime.Equal(sde) {
+		t.Errorf("expected modtime %v, got %v", sde, hdr.ModTime)
+	}
+}
+
+func TestEmitSignatureSize(t *testing.T) {
+	// Test that signature size matches control data size when using mock signer
+	testCases := []struct {
+		name        string
+		controlData []byte
+	}{
+		{"small data", []byte("small")},
+		{"medium data", bytes.Repeat([]byte("x"), 1000)},
+		{"empty data", []byte{}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			signer := &mockSigner{}
+			sde := time.Now()
+
+			sig, err := EmitSignature(signer, tc.controlData, sde)
+			if err != nil {
+				t.Fatalf("EmitSignature failed: %v", err)
+			}
+
+			gr, err := gzip.NewReader(bytes.NewReader(sig))
+			if err != nil {
+				t.Fatalf("failed to create gzip reader: %v", err)
+			}
+			defer gr.Close()
+
+			dsig, err := io.ReadAll(gr)
+			if err != nil {
+				t.Fatalf("failed to decompress: %v", err)
+			}
+
+			tr := tar.NewReader(bytes.NewBuffer(dsig))
+			hdr, err := tr.Next()
+			if err != nil {
+				t.Fatalf("failed to read tar header: %v", err)
+			}
+
+			// Mock signer returns control data as signature
+			if hdr.Size != int64(len(tc.controlData)) {
+				t.Errorf("expected size %d, got %d", len(tc.controlData), hdr.Size)
+			}
+		})
+	}
+}

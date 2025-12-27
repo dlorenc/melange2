@@ -984,3 +984,127 @@ func TestE2E_CacheDirNotSpecified(t *testing.T) {
 	// Verify the artifact was not found
 	verifyFileContains(t, outDir, "cache-dir-test/usr/share/cache-dir-test/status.txt", "not-found")
 }
+
+// TestE2E_AutoconfBuild tests autoconf-style build workflow (configure, make, make install)
+func TestE2E_AutoconfBuild(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "23-autoconf-build.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "autoconf build should succeed")
+
+	// Verify configure step ran
+	verifyFileExists(t, outDir, "autoconf-test/usr/share/autoconf-test/configure.log")
+	verifyFileContains(t, outDir, "autoconf-test/usr/share/autoconf-test/configure.log", "--prefix=/usr")
+	verifyFileContains(t, outDir, "autoconf-test/usr/share/autoconf-test/configure.log", "--enable-feature --with-lib=/usr/lib")
+
+	// Verify Makefile was generated
+	verifyFileExists(t, outDir, "autoconf-test/usr/share/autoconf-test/Makefile.generated")
+
+	// Verify make step ran
+	verifyFileExists(t, outDir, "autoconf-test/usr/share/autoconf-test/build.log")
+	verifyFileContains(t, outDir, "autoconf-test/usr/share/autoconf-test/build.log", "-j4")
+
+	// Verify binary was created
+	verifyFileExists(t, outDir, "autoconf-test/usr/bin/autoconf-test")
+
+	// Verify install step ran with DESTDIR
+	verifyFileContains(t, outDir, "autoconf-test/usr/share/autoconf-test/build.log", "DESTDIR=")
+
+	// Verify installed files
+	verifyFileExists(t, outDir, "autoconf-test/usr/lib/libautoconf-test.so.1.2.3")
+	verifyFileExists(t, outDir, "autoconf-test/usr/include/autoconf-test.h")
+	verifyFileContains(t, outDir, "autoconf-test/usr/include/autoconf-test.h", "#define VERSION \"1.2.3\"")
+	verifyFileExists(t, outDir, "autoconf-test/etc/autoconf-test.conf")
+
+	// Verify all steps completed
+	verifyFileContains(t, outDir, "autoconf-test/usr/share/autoconf-test/status.txt", "configure-done")
+	verifyFileContains(t, outDir, "autoconf-test/usr/share/autoconf-test/status.txt", "make-done")
+	verifyFileContains(t, outDir, "autoconf-test/usr/share/autoconf-test/status.txt", "install-done")
+}
+
+// TestE2E_CMakeBuild tests CMake-style build workflow (configure, build, install)
+func TestE2E_CMakeBuild(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "24-cmake-build.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "cmake build should succeed")
+
+	// Verify cmake configure step
+	verifyFileExists(t, outDir, "cmake-test/usr/share/cmake-test/cmake-configure.log")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/cmake-configure.log", "-DCMAKE_INSTALL_PREFIX=/usr")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/cmake-configure.log", "-G Ninja")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/cmake-configure.log", "-DENABLE_TESTS=OFF")
+
+	// Verify CMakeCache was generated
+	verifyFileExists(t, outDir, "cmake-test/usr/share/cmake-test/build/CMakeCache.txt")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/build/CMakeCache.txt", "CMAKE_BUILD_TYPE:STRING=Release")
+
+	// Verify cmake build step
+	verifyFileExists(t, outDir, "cmake-test/usr/share/cmake-test/cmake-build.log")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/cmake-build.log", "VERBOSE=1")
+
+	// Verify cmake install step
+	verifyFileExists(t, outDir, "cmake-test/usr/share/cmake-test/cmake-install.log")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/cmake-install.log", "DESTDIR=")
+
+	// Verify installed files
+	verifyFileExists(t, outDir, "cmake-test/usr/bin/cmake-test")
+	verifyFileExists(t, outDir, "cmake-test/usr/lib/libcmake-test.so.2.0.0")
+	verifyFileExists(t, outDir, "cmake-test/usr/include/cmake-test/cmake-test.h")
+	verifyFileContains(t, outDir, "cmake-test/usr/include/cmake-test/cmake-test.h", "#define CMAKE_TEST_VERSION_MAJOR 2")
+
+	// Verify CMake config files
+	verifyFileExists(t, outDir, "cmake-test/usr/lib/cmake/cmake-test/cmake-testConfig.cmake")
+	verifyFileContains(t, outDir, "cmake-test/usr/lib/cmake/cmake-test/cmake-testConfig.cmake", "set(CMAKE_TEST_VERSION \"2.0.0\")")
+
+	// Verify all steps completed
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/status.txt", "configure-done")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/status.txt", "build-done")
+	verifyFileContains(t, outDir, "cmake-test/usr/share/cmake-test/status.txt", "install-done")
+}
+
+// TestE2E_GoBuild tests Go build workflow with ldflags, tags, and multiple packages
+func TestE2E_GoBuild(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "25-go-build.yaml")
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "go build should succeed")
+
+	// Verify go build log
+	verifyFileExists(t, outDir, "go-build-test/usr/share/go-build-test/go-build.log")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/go-build.log", "GOMODCACHE=/var/cache/melange/gomodcache")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/go-build.log", "-trimpath")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/go-build.log", "-X main.version=3.1.4")
+
+	// Verify ldflags and tags were recorded
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/go-build.log", "LDFLAGS:")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/go-build.log", "TAGS: json,netgo")
+
+	// Verify binary was created
+	verifyFileExists(t, outDir, "go-build-test/usr/bin/go-build-test")
+
+	// Verify version info with epoch
+	verifyFileExists(t, outDir, "go-build-test/usr/share/go-build-test/version.txt")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/version.txt", "version=3.1.4")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/version.txt", "epoch=1")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/version.txt", "full-version=3.1.4-r1")
+
+	// Verify multiple binaries were built
+	verifyFileExists(t, outDir, "go-build-test/usr/bin/go-build-test-cli")
+	verifyFileExists(t, outDir, "go-build-test/usr/bin/go-build-test-server")
+
+	// Verify experiments were tested
+	verifyFileExists(t, outDir, "go-build-test/usr/share/go-build-test/experiments.txt")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/experiments.txt", "GOEXPERIMENT=loopvar")
+
+	// Verify all build steps completed
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "build-done")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "multi-build-done")
+	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "experiments-done")
+
+	// Verify subpackage pipeline ran
+	verifyFileExists(t, outDir, "go-build-test-compat/usr/bin/compat-link.txt")
+}
