@@ -154,9 +154,12 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 	}
 
 	if cfg.SourceDir != "" {
-		sourceLocalName := "source"
-		state = CopySourceToWorkspace(state, sourceLocalName)
-		localDirs[sourceLocalName] = cfg.SourceDir
+		// Only mount source directory if it exists
+		if _, err := os.Stat(cfg.SourceDir); err == nil {
+			sourceLocalName := "source"
+			state = CopySourceToWorkspace(state, sourceLocalName)
+			localDirs[sourceLocalName] = cfg.SourceDir
+		}
 	}
 
 	// If we have a cache directory, copy it to /var/cache/melange
@@ -368,14 +371,17 @@ func (b *Builder) runTestPipelines(ctx context.Context, layer v1.Layer, pkgName 
 
 	// Copy test fixtures from source directory if provided
 	if cfg.SourceDir != "" {
-		sourceLocalName := "test-source"
-		state = state.File(
-			llb.Copy(llb.Local(sourceLocalName), "/", DefaultWorkDir, &llb.CopyInfo{
-				CopyDirContentsOnly: true,
-			}),
-			llb.WithCustomName("copy test fixtures"),
-		)
-		localDirs[sourceLocalName] = cfg.SourceDir
+		// Only mount source directory if it exists
+		if _, err := os.Stat(cfg.SourceDir); err == nil {
+			sourceLocalName := "test-source"
+			state = state.File(
+				llb.Copy(llb.Local(sourceLocalName), "/", DefaultWorkDir, &llb.CopyInfo{
+					CopyDirContentsOnly: true,
+				}),
+				llb.WithCustomName("copy test fixtures"),
+			)
+			localDirs[sourceLocalName] = cfg.SourceDir
+		}
 	}
 
 	// Copy cache directory if provided
