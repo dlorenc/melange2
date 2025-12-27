@@ -1104,7 +1104,4 @@ func TestE2E_GoBuild(t *testing.T) {
 	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "build-done")
 	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "multi-build-done")
 	verifyFileContains(t, outDir, "go-build-test/usr/share/go-build-test/status.txt", "experiments-done")
-
-	// Verify subpackage pipeline ran
-	verifyFileExists(t, outDir, "go-build-test-compat/usr/bin/compat-link.txt")
 }

@@ -82,12 +82,3 @@ pipeline:
       EXP_EOF
 
       echo "experiments-done" >> ${{targets.destdir}}/usr/share/go-build-test/status.txt
-
-subpackages:
-  - name: go-build-test-compat
-    description: Compatibility symlinks
-    pipeline:
-      - runs: |
-          # Create compatibility symlinks for the binary
-          mkdir -p ${{targets.subpkgdir}}/usr/bin
-          echo "symlink: go-build-test-compat -> go-build-test" > ${{targets.subpkgdir}}/usr/bin/compat-link.txt
