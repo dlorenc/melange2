@@ -101,7 +101,10 @@ func createLayerFromDir(dir string) (v1.Layer, error) {
 	}
 
 	// Create a layer from the tar bytes
-	return tarball.LayerFromReader(&buf)
+	data := buf.Bytes()
+	return tarball.LayerFromOpener(func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	})
 }
 
 // e2eTestContext holds shared resources for e2e tests
