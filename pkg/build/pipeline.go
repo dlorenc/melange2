@@ -15,23 +15,16 @@
 package build
 
 import (
-	"context"
 	"embed"
 	"fmt"
 	"maps"
-	"os"
-	"os/signal"
-	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	apkoTypes "chainguard.dev/apko/pkg/build/types"
-	"github.com/chainguard-dev/clog"
 
 	"github.com/dlorenc/melange2/pkg/cond"
 	"github.com/dlorenc/melange2/pkg/config"
-	"github.com/dlorenc/melange2/pkg/container"
 	"github.com/dlorenc/melange2/pkg/util"
 )
 
@@ -172,161 +165,6 @@ func matchValidShaChars(s string) bool {
 		}
 	}
 	return true
-}
-
-// Build a script to run as part of evalRun
-func buildEvalRunCommand(_ *config.Pipeline, debugOption rune, workdir string, fragment string) []string {
-	script := fmt.Sprintf(`set -e%c
-[ -d '%s' ] || mkdir -p '%s'
-cd '%s'
-%s
-exit 0`, debugOption, workdir, workdir, workdir, fragment)
-	return []string{"/bin/sh", "-c", script}
-}
-
-type pipelineRunner struct {
-	debug       bool
-	interactive bool
-	config      *container.Config
-	runner      container.Runner
-}
-
-func (r *pipelineRunner) runPipeline(ctx context.Context, pipeline *config.Pipeline) (bool, error) {
-	log := clog.FromContext(ctx)
-
-	if result, err := shouldRun(pipeline.If); !result {
-		return result, err
-	}
-
-	debugOption := ' '
-	if r.debug {
-		debugOption = 'x'
-	}
-
-	// Pipelines can have their own environment variables, which override the global ones.
-	envOverride := map[string]string{
-		// NOTE: This does not currently override PATH in the qemu runner, that's set at openssh build time
-		"PATH": "/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin",
-	}
-
-	maps.Copy(envOverride, pipeline.Environment)
-
-	workdir := WorkDir
-	if pipeline.WorkDir != "" {
-		if filepath.IsAbs(pipeline.WorkDir) {
-			workdir = pipeline.WorkDir
-		} else {
-			workdir = filepath.Join(WorkDir, pipeline.WorkDir)
-		}
-	}
-
-	// We might have called signal.Ignore(os.Interrupt) as part of a previous debug step,
-	// so create a new context to make it possible to cancel the Run.
-	if r.interactive {
-		var stop context.CancelFunc
-		ctx, stop = signal.NotifyContext(ctx, os.Interrupt)
-		defer stop()
-	}
-
-	if id := identity(pipeline); id != unidentifiablePipeline {
-		log.Infof("running step %q", id)
-	}
-
-	command := buildEvalRunCommand(pipeline, debugOption, workdir, pipeline.Runs)
-	if err := r.runner.Run(ctx, r.config, envOverride, command...); err != nil {
-		if err := r.maybeDebug(ctx, pipeline.Runs, envOverride, command, workdir, err); err != nil {
-			return false, err
-		}
-	}
-
-	steps := 0
-
-	for _, p := range pipeline.Pipeline {
-		// Merge nested pipeline environment with parent environment
-		mergedEnv := maps.Clone(envOverride)
-		maps.Copy(mergedEnv, p.Environment)
-		p.Environment = mergedEnv
-		if ran, err := r.runPipeline(ctx, &p); err != nil {
-			return false, fmt.Errorf("unable to run pipeline: %w", err)
-		} else if ran {
-			steps++
-		}
-	}
-
-	if assert := pipeline.Assertions; assert != nil {
-		if want := assert.RequiredSteps; want != steps {
-			return false, fmt.Errorf("pipeline did not run the required %d steps, only %d", want, steps)
-		}
-	}
-
-	return true, nil
-}
-
-func (r *pipelineRunner) maybeDebug(ctx context.Context, fragment string, envOverride map[string]string, cmd []string, workdir string, runErr error) error {
-	if !r.interactive {
-		return runErr
-	}
-
-	log := clog.FromContext(ctx)
-
-	dbg, ok := r.runner.(container.Debugger)
-	if !ok {
-		log.Errorf("TODO: Implement Debug() for Runner: %T", r.runner)
-		return runErr
-	}
-
-	// This is a bit of a hack but I want non-busybox shells to have a working history during interactive debugging,
-	// and I suspect busybox is the least helpful here, so just make everything read from $HOME/.ash_history.
-	if home, ok := envOverride["HOME"]; ok {
-		envOverride["HISTFILE"] = path.Join(home, ".ash_history")
-	} else if home, ok := r.config.Environment["HOME"]; ok {
-		envOverride["HISTFILE"] = path.Join(home, ".ash_history")
-	}
-
-	// Required for many TUIs (emacs, make menuconfig, etc)
-	termType := os.Getenv("TERM")
-	if termType == "" {
-		termType = "xterm-256color"
-	}
-	envOverride["TERM"] = termType
-
-	log.Errorf("Step failed: %v\n%s", runErr, strings.Join(cmd, " "))
-	log.Info(fmt.Sprintf("Execing into pod %q to debug interactively.", r.config.PodID), "workdir", workdir)
-	log.Infof("Type 'exit 0' to continue the next pipeline step or 'exit 1' to abort.")
-
-	// If the context has already been cancelled, return before we mess with it.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	// Don't cancel the context if we hit ctrl+C while debugging.
-	signal.Ignore(os.Interrupt)
-
-	// Populate $HOME/.ash_history with the current command so you can hit up arrow to repeat it.
-	// #nosec G306 - Shell history file in workspace directory
-	if err := os.WriteFile(filepath.Join(r.config.WorkspaceDir, ".ash_history"), []byte(fragment), 0o644); err != nil {
-		return fmt.Errorf("failed to write history file: %w", err)
-	}
-
-	if dbgErr := dbg.Debug(ctx, r.config, envOverride, []string{"/bin/sh", "-c", fmt.Sprintf("cd %s && exec /bin/sh", workdir)}...); dbgErr != nil {
-		return fmt.Errorf("failed to debug: %w; original error: %w", dbgErr, runErr)
-	}
-
-	// Reset to the default signal handling.
-	signal.Reset(os.Interrupt)
-
-	// If Debug() returns successfully (via exit 0), it is a signal to continue execution.
-	return nil
-}
-
-func (r *pipelineRunner) runPipelines(ctx context.Context, pipelines []config.Pipeline) error {
-	for _, p := range pipelines {
-		if _, err := r.runPipeline(ctx, &p); err != nil {
-			return fmt.Errorf("unable to run pipeline: %w", err)
-		}
-	}
-
-	return nil
 }
 
 func shouldRun(ifs string) (bool, error) {

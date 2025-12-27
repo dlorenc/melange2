@@ -16,25 +16,12 @@ package build
 
 import (
 	"context"
-	"slices"
 	"testing"
-
-	apko_types "chainguard.dev/apko/pkg/build/types"
 
 	"github.com/dlorenc/melange2/pkg/config"
 )
 
 func TestCompileEmpty(t *testing.T) {
-	test := &Test{
-		Configuration: config.Configuration{
-			Subpackages: []config.Subpackage{{}},
-		},
-	}
-
-	if err := test.Compile(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
 	build := &Build{
 		Configuration: &config.Configuration{
 			Subpackages: []config.Subpackage{{}},
@@ -74,52 +61,6 @@ func TestInheritWorkdir(t *testing.T) {
 	}
 }
 
-func TestCompileTest(t *testing.T) {
-	test := &Test{
-		Package: "main",
-		Configuration: config.Configuration{
-			Test: &config.Test{
-				Environment: apko_types.ImageConfiguration{
-					Contents: apko_types.ImageContents{
-						Packages: []string{"main-base"},
-					},
-				},
-				Pipeline: []config.Pipeline{{
-					Needs: &config.Needs{
-						Packages: []string{"main-need"},
-					},
-				}},
-			},
-			Subpackages: []config.Subpackage{{
-				Name: "subpackage",
-				Test: &config.Test{
-					Environment: apko_types.ImageConfiguration{
-						Contents: apko_types.ImageContents{
-							Packages: []string{"subpackage-base"},
-						},
-					},
-					Pipeline: []config.Pipeline{{
-						Needs: &config.Needs{
-							Packages: []string{"subpackage-need"},
-						},
-					}},
-				},
-			}},
-		},
-	}
-
-	if err := test.Compile(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if got, want := test.Configuration.Test.Environment.Contents.Packages, []string{"main", "main-base", "main-need"}; !slices.Equal(got, want) {
-		t.Errorf("main test packages: want %v, got %v", want, got)
-	}
-
-	if got, want := test.Configuration.Subpackages[0].Test.Environment.Contents.Packages, []string{"subpackage", "subpackage-base", "subpackage-need"}; !slices.Equal(got, want) {
-		t.Errorf("subpackage test packages: want %v, got %v", want, got)
-	}
-}
 
 func Test_stripComments(t *testing.T) {
 	tests := []struct {

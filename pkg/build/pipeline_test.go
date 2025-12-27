@@ -138,23 +138,6 @@ func Test_substitutionNeedPackages(t *testing.T) {
 	require.Equal(t, "go-5.4.3", c.Needs[0])
 }
 
-func Test_buildEvalRunCommand(t *testing.T) {
-	p := &config.Pipeline{
-		Environment: map[string]string{"FOO": "bar"},
-	}
-
-	debugOption := 'x'
-	workdir := "/bar"
-	fragment := "baz"
-	command := buildEvalRunCommand(p, debugOption, workdir, fragment)
-	expected := []string{"/bin/sh", "-c", `set -ex
-[ -d '/bar' ] || mkdir -p '/bar'
-cd '/bar'
-baz
-exit 0`}
-	require.Equal(t, command, expected)
-}
-
 func TestAllPipelines(t *testing.T) {
 	// Get all the yamls in pipelines/*/*.yaml and test that they unmarshal
 	pipelines, err := filepath.Glob("pipelines/*/*.yaml")

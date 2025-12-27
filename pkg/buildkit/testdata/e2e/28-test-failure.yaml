@@ -1,0 +1,25 @@
+package:
+  name: failing-test
+  version: 1.0.0
+  epoch: 0
+  description: Test that deliberately fails to verify failure detection
+
+pipeline: []
+
+test:
+  pipeline:
+    - name: setup
+      runs: |
+        echo "This step should succeed"
+        mkdir -p /tmp/test
+
+    - name: deliberate-failure
+      runs: |
+        echo "This test is designed to fail"
+        exit 1
+
+    - name: should-not-run
+      runs: |
+        # This should never execute because the previous step fails
+        echo "ERROR: This step should not have run!"
+        exit 1

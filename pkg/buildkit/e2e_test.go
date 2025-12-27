@@ -15,20 +15,94 @@
 package buildkit
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlorenc/melange2/pkg/config"
 )
+
+// createLayerFromDir creates a v1.Layer from a directory for testing purposes.
+// This is used to simulate an apko layer in e2e tests.
+func createLayerFromDir(dir string) (v1.Layer, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Get relative path
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip the root directory itself
+		if relPath == "." {
+			return nil
+		}
+
+		// Create tar header
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = relPath
+
+		// Handle symlinks
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			header.Linkname = link
+		}
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		// Write file content for regular files
+		if info.Mode().IsRegular() {
+			f, err := os.Open(path) // #nosec G304 - Test helper reading test files
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			if _, err := io.Copy(tw, f); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+
+	// Create a layer from the tar bytes
+	return tarball.LayerFromReader(&buf)
+}
 
 // e2eTestContext holds shared resources for e2e tests
 type e2eTestContext struct {
@@ -1125,4 +1199,193 @@ func TestE2E_GoBuild(t *testing.T) {
 
 	// Verify subpackage pipeline ran (tests fix for pre-created subpackage directories)
 	verifyFileExists(t, outDir, "go-build-test-compat/usr/bin/compat-link.txt")
+}
+
+// =============================================================================
+// Test Pipeline E2E Tests
+// =============================================================================
+
+// testConfig executes test pipelines with the given config and returns the output directory
+func (e *e2eTestContext) testConfig(cfg *config.Configuration) (string, error) {
+	return e.testConfigWithSourceDir(cfg, "")
+}
+
+// testConfigWithSourceDir executes test pipelines with source directory
+func (e *e2eTestContext) testConfigWithSourceDir(cfg *config.Configuration, sourceDir string) (string, error) {
+	builder, err := NewBuilder(e.bk.Addr)
+	if err != nil {
+		return "", err
+	}
+	defer builder.Close()
+
+	// Create output directory
+	outDir := filepath.Join(e.workingDir, "test-output")
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return "", err
+	}
+
+	// Build test pipelines - substitute variables first
+	var testPipelines []config.Pipeline
+	if cfg.Test != nil {
+		testPipelines = substituteVariables(cfg, cfg.Test.Pipeline, "")
+	}
+
+	// Build subpackage test configs
+	var subpackageTests []SubpackageTestConfig
+	for _, sp := range cfg.Subpackages {
+		if sp.Test != nil && len(sp.Test.Pipeline) > 0 {
+			subpackageTests = append(subpackageTests, SubpackageTestConfig{
+				Name:      sp.Name,
+				Pipelines: substituteVariables(cfg, sp.Test.Pipeline, sp.Name),
+			})
+		}
+	}
+
+	// Skip if no tests
+	if len(testPipelines) == 0 && len(subpackageTests) == 0 {
+		return outDir, nil
+	}
+
+	// Create a simple test layer (alpine) - in real usage this would be
+	// an apko layer with the package installed
+	state := llb.Image("alpine:latest")
+	def, err := state.Marshal(e.ctx, llb.LinuxAmd64)
+	if err != nil {
+		return "", err
+	}
+
+	// Solve to get the layer
+	c, err := client.New(e.ctx, e.bk.Addr)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+
+	// Export to get a layer we can use
+	layerDir := filepath.Join(e.workingDir, "test-layer")
+	if err := os.MkdirAll(layerDir, 0755); err != nil {
+		return "", err
+	}
+
+	_, err = c.Solve(e.ctx, def, client.SolveOpt{
+		Exports: []client.ExportEntry{{
+			Type:      client.ExporterLocal,
+			OutputDir: layerDir,
+		}},
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+
+	// Create a fake layer from the exported content
+	layer, err := createLayerFromDir(layerDir)
+	if err != nil {
+		return "", err
+	}
+
+	// Configure and run tests
+	testCfg := &TestConfig{
+		PackageName:     cfg.Package.Name,
+		Arch:            apko_types.Architecture("amd64"),
+		TestPipelines:   testPipelines,
+		SubpackageTests: subpackageTests,
+		BaseEnv: map[string]string{
+			"HOME": "/home/build",
+		},
+		SourceDir:    sourceDir,
+		WorkspaceDir: outDir,
+	}
+
+	if err := builder.Test(e.ctx, layer, testCfg); err != nil {
+		return "", err
+	}
+
+	return outDir, nil
+}
+
+// TestE2E_SimpleTestPipeline tests basic test pipeline execution
+func TestE2E_SimpleTestPipeline(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "26-simple-test.yaml")
+
+	outDir, err := e.testConfig(cfg)
+	require.NoError(t, err, "test should succeed")
+
+	// Verify test results were exported
+	verifyFileExists(t, outDir, "test-results/simple-test/status.txt")
+	verifyFileContains(t, outDir, "test-results/simple-test/status.txt", "PASSED")
+}
+
+// TestE2E_SubpackageTestIsolation tests that each subpackage test runs in isolation
+func TestE2E_SubpackageTestIsolation(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "27-subpackage-test-isolation.yaml")
+
+	outDir, err := e.testConfig(cfg)
+	require.NoError(t, err, "all tests should succeed - isolation is maintained")
+
+	// Verify main package test ran
+	verifyFileExists(t, outDir, "test-results/isolation-test/status.txt")
+	verifyFileContains(t, outDir, "test-results/isolation-test/status.txt", "PASSED")
+
+	// Verify sub1 test ran (and passed isolation check)
+	verifyFileExists(t, outDir, "test-results/isolation-test-sub1/status.txt")
+	verifyFileContains(t, outDir, "test-results/isolation-test-sub1/status.txt", "PASSED")
+
+	// Verify sub2 test ran (and passed isolation check)
+	verifyFileExists(t, outDir, "test-results/isolation-test-sub2/status.txt")
+	verifyFileContains(t, outDir, "test-results/isolation-test-sub2/status.txt", "PASSED")
+}
+
+// TestE2E_TestFailureDetection tests that test failures are properly detected
+func TestE2E_TestFailureDetection(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "28-test-failure.yaml")
+
+	_, err := e.testConfig(cfg)
+	require.Error(t, err, "test should fail")
+	require.Contains(t, err.Error(), "failed", "error should indicate test failure")
+}
+
+// TestE2E_TestWithSourceDir tests that source directory is properly copied
+func TestE2E_TestWithSourceDir(t *testing.T) {
+	e := newE2ETestContext(t)
+	cfg := loadTestConfig(t, "29-test-with-sources.yaml")
+
+	// Create a source directory with test fixtures
+	sourceDir := filepath.Join(e.workingDir, "test-fixtures")
+	require.NoError(t, os.MkdirAll(sourceDir, 0755))
+
+	// Create the test fixture file
+	testFixturePath := filepath.Join(sourceDir, "test-fixture.txt")
+	require.NoError(t, os.WriteFile(testFixturePath, []byte("test-fixture-content"), 0644))
+
+	outDir, err := e.testConfigWithSourceDir(cfg, sourceDir)
+	require.NoError(t, err, "test with source dir should succeed")
+
+	// Verify test passed
+	verifyFileExists(t, outDir, "test-results/source-test/status.txt")
+	verifyFileContains(t, outDir, "test-results/source-test/status.txt", "PASSED")
+}
+
+// TestE2E_TestNoTestPipelines tests behavior when no test pipelines exist
+func TestE2E_TestNoTestPipelines(t *testing.T) {
+	e := newE2ETestContext(t)
+
+	// Create a config with no test pipelines
+	cfg := &config.Configuration{
+		Package: config.Package{
+			Name:    "no-tests",
+			Version: "1.0.0",
+		},
+		// No Test section
+	}
+
+	outDir, err := e.testConfig(cfg)
+	require.NoError(t, err, "should succeed with no tests")
+
+	// test-results directory should exist but be empty
+	_, err = os.Stat(filepath.Join(outDir, "test-results"))
+	// It's ok if the directory doesn't exist - no tests means nothing to export
+	require.True(t, err == nil || os.IsNotExist(err))
 }

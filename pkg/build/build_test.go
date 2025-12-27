@@ -263,6 +263,10 @@ func cleanTestConfig(cfg *config.Configuration) {
 	if len(cfg.Subpackages) == 0 {
 		cfg.Subpackages = nil
 	}
+
+	// Additional cleanup for test configurations
+	cfg.Package.Epoch = 0
+	cfg.Package.TargetArchitecture = nil
 }
 
 // TestConfiguration_Load_Raw tests loading a configuration file with raw

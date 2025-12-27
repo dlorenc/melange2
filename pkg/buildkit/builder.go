@@ -255,3 +255,215 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 	log.Info("build completed successfully")
 	return nil
 }
+
+// TestConfig contains configuration for running tests.
+type TestConfig struct {
+	// PackageName is the name of the package being tested.
+	PackageName string
+
+	// Arch is the target architecture.
+	Arch apko_types.Architecture
+
+	// TestPipelines are the main package test pipelines to execute.
+	TestPipelines []config.Pipeline
+
+	// SubpackageTests are the subpackage test configurations.
+	// IMPORTANT: Each subpackage test runs in a FRESH container to ensure
+	// isolation and avoid masking missing dependencies.
+	SubpackageTests []SubpackageTestConfig
+
+	// BaseEnv is the base environment for test execution.
+	BaseEnv map[string]string
+
+	// SourceDir is the directory containing test fixtures to copy into the workspace.
+	SourceDir string
+
+	// WorkspaceDir is the directory where test results will be exported.
+	// Unlike builds, tests only export marker files to indicate success.
+	WorkspaceDir string
+
+	// CacheDir is the host directory to mount at /var/cache/melange.
+	CacheDir string
+
+	// Debug enables shell debugging (set -x).
+	Debug bool
+}
+
+// SubpackageTestConfig contains test configuration for a single subpackage.
+type SubpackageTestConfig struct {
+	// Name is the subpackage name.
+	Name string
+
+	// Pipelines are the test pipelines for this subpackage.
+	Pipelines []config.Pipeline
+}
+
+// Test executes tests using BuildKit.
+// Unlike Build, Test:
+// - Runs in an environment with the package already installed
+// - Each subpackage test runs in a FRESH container (isolation)
+// - Exports test result markers instead of package files
+func (b *Builder) Test(ctx context.Context, layer v1.Layer, cfg *TestConfig) error {
+	log := clog.FromContext(ctx)
+
+	// Run main package tests if any
+	if len(cfg.TestPipelines) > 0 {
+		log.Info("running main package tests")
+		if err := b.runTestPipelines(ctx, layer, cfg.PackageName, cfg.TestPipelines, cfg); err != nil {
+			return fmt.Errorf("main package tests failed: %w", err)
+		}
+		log.Info("main package tests passed")
+	}
+
+	// Run each subpackage test in isolation
+	// CRITICAL: Each subpackage gets a fresh container to avoid masking
+	// missing dependencies
+	for _, spTest := range cfg.SubpackageTests {
+		if len(spTest.Pipelines) == 0 {
+			continue
+		}
+
+		log.Infof("running tests for subpackage %s", spTest.Name)
+		if err := b.runTestPipelines(ctx, layer, spTest.Name, spTest.Pipelines, cfg); err != nil {
+			return fmt.Errorf("subpackage %s tests failed: %w", spTest.Name, err)
+		}
+		log.Infof("subpackage %s tests passed", spTest.Name)
+	}
+
+	log.Info("all tests passed")
+	return nil
+}
+
+// runTestPipelines runs test pipelines for a single package/subpackage.
+// Each invocation uses a fresh container to ensure isolation.
+func (b *Builder) runTestPipelines(ctx context.Context, layer v1.Layer, pkgName string, pipelines []config.Pipeline, cfg *TestConfig) error {
+	log := clog.FromContext(ctx)
+
+	// Load the apko layer (fresh for each test to ensure isolation)
+	loadResult, err := b.loader.LoadLayer(ctx, layer, pkgName+"-test")
+	if err != nil {
+		return fmt.Errorf("loading apko layer: %w", err)
+	}
+	defer func() {
+		if err := loadResult.Cleanup(); err != nil {
+			log.Warnf("cleanup failed: %v", err)
+		}
+	}()
+
+	// Start from scratch and copy the apko rootfs
+	state := llb.Scratch().File(
+		llb.Copy(llb.Local(loadResult.LocalName), "/", "/"),
+		llb.WithCustomName(fmt.Sprintf("copy test environment for %s", pkgName)),
+	)
+
+	// Prepare workspace (simpler than build - no output dirs needed)
+	state = state.File(
+		llb.Mkdir(DefaultWorkDir, 0755, llb.WithParents(true)),
+		llb.WithCustomName("create workspace"),
+	)
+
+	localDirs := map[string]string{
+		loadResult.LocalName: loadResult.ExtractDir,
+	}
+
+	// Copy test fixtures from source directory if provided
+	if cfg.SourceDir != "" {
+		sourceLocalName := "test-source"
+		state = state.File(
+			llb.Copy(llb.Local(sourceLocalName), "/", DefaultWorkDir, &llb.CopyInfo{
+				CopyDirContentsOnly: true,
+			}),
+			llb.WithCustomName("copy test fixtures"),
+		)
+		localDirs[sourceLocalName] = cfg.SourceDir
+	}
+
+	// Copy cache directory if provided
+	if cfg.CacheDir != "" {
+		state = CopyCacheToWorkspace(state, CacheLocalName)
+		localDirs[CacheLocalName] = cfg.CacheDir
+	}
+
+	// Configure pipeline builder for this test run
+	pipelineBuilder := NewPipelineBuilder()
+	pipelineBuilder.Debug = cfg.Debug
+	if cfg.BaseEnv != nil {
+		pipelineBuilder.BaseEnv = MergeEnv(pipelineBuilder.BaseEnv, cfg.BaseEnv)
+	}
+	pipelineBuilder.CacheMounts = b.pipeline.CacheMounts
+
+	// Run test pipelines
+	state, err = pipelineBuilder.BuildPipelines(state, pipelines)
+	if err != nil {
+		return fmt.Errorf("building test pipelines: %w", err)
+	}
+
+	// Create a marker file to indicate test success
+	// This allows e2e tests to verify that tests actually ran
+	testResultDir := fmt.Sprintf("/test-results/%s", pkgName)
+	state = state.Run(
+		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(
+			"mkdir -p %s && echo 'PASSED' > %s/status.txt",
+			testResultDir, testResultDir,
+		)}),
+		llb.WithCustomName(fmt.Sprintf("mark %s tests as passed", pkgName)),
+	).Root()
+
+	// Export test results
+	exportState := llb.Scratch().File(
+		llb.Copy(state, "/test-results/", "/", &llb.CopyInfo{
+			CopyDirContentsOnly: true,
+		}),
+		llb.WithCustomName("export test results"),
+	)
+
+	// Marshal to LLB definition
+	ociPlatform := cfg.Arch.ToOCIPlatform()
+	platform := llb.Platform(ocispecs.Platform{
+		OS:           ociPlatform.OS,
+		Architecture: ociPlatform.Architecture,
+		Variant:      ociPlatform.Variant,
+	})
+	def, err := exportState.Marshal(ctx, platform)
+	if err != nil {
+		return fmt.Errorf("marshaling LLB: %w", err)
+	}
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(cfg.WorkspaceDir, 0755); err != nil {
+		return fmt.Errorf("creating workspace dir: %w", err)
+	}
+
+	testResultsDir := filepath.Join(cfg.WorkspaceDir, "test-results")
+	if err := os.MkdirAll(testResultsDir, 0755); err != nil {
+		return fmt.Errorf("creating test-results dir: %w", err)
+	}
+
+	// Create progress writer
+	progress := NewProgressWriter(os.Stderr, b.ProgressMode, b.ShowLogs)
+
+	// Solve and export
+	statusCh := make(chan *client.SolveStatus)
+	eg, egCtx := errgroup.WithContext(ctx)
+
+	eg.Go(func() error {
+		return progress.Write(egCtx, statusCh)
+	})
+
+	eg.Go(func() error {
+		_, err := b.client.Client().Solve(ctx, def, client.SolveOpt{
+			LocalDirs: localDirs,
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterLocal,
+				OutputDir: testResultsDir,
+			}},
+		}, statusCh)
+		return err
+	})
+
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("test execution failed: %w", err)
+	}
+
+	return nil
+}

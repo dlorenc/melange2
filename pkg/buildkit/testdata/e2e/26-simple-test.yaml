@@ -1,0 +1,29 @@
+package:
+  name: simple-test
+  version: 1.0.0
+  epoch: 0
+  description: Simple test to verify test pipeline execution
+
+# No build pipeline - this is purely for testing the test infrastructure
+pipeline: []
+
+test:
+  pipeline:
+    - name: basic-commands
+      runs: |
+        echo "Running basic test commands"
+        mkdir -p /tmp/test-output
+        echo "test data" > /tmp/test-output/data.txt
+
+    - name: verify-environment
+      runs: |
+        echo "HOME is: $HOME"
+        echo "PWD is: $PWD"
+        # Verify we're in the workspace
+        test -d /home/build
+
+    - name: create-marker
+      runs: |
+        # Create a marker file that the e2e test can verify
+        mkdir -p /home/build/markers
+        echo "test-executed" > /home/build/markers/simple-test.txt

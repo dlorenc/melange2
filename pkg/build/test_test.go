@@ -17,7 +17,6 @@ package build
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
@@ -25,19 +24,12 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/stretchr/testify/require"
-	"github.com/yookoala/realpath"
 
 	"github.com/dlorenc/melange2/pkg/config"
-	"github.com/dlorenc/melange2/pkg/container"
 )
 
 const (
-	buildUser        = "build"
-	etcResolveConf   = "/etc/resolv.conf"
-	homeBuild        = "/home/build"
-	testImgRef       = "testImageRef"
-	testPkgName      = "testPkgName"
-	testWorkspaceDir = "/workspace"
+	buildUser = "build"
 )
 
 var gid1000 = uint32(1000)
@@ -55,101 +47,6 @@ func defaultEnv(opts ...func(*apko_types.ImageConfiguration)) apko_types.ImageCo
 	}
 
 	return env
-}
-
-func TestBuildWorkspaceConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	// realpath is used to get the real path of the temp dir
-	tmpDirReal, err := realpath.Realpath(tmpDir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Just define the base stuff here that we can then
-	// modify in the tests.
-	baseTest := Test{
-		WorkspaceDir: testWorkspaceDir,
-	}
-
-	// Just define the base stuff here that we can then
-	// modify in the tests.
-	wantBase := container.Config{
-		Environment:  map[string]string{"HOME": "/root"},
-		PackageName:  testPkgName,
-		ImgRef:       testImgRef,
-		WorkspaceDir: "/workspace",
-		Capabilities: container.Capabilities{Networking: true},
-		Mounts: []container.BindMount{
-			{Source: testWorkspaceDir, Destination: homeBuild},
-			{Source: etcResolveConf, Destination: etcResolveConf},
-		},
-	}
-
-	tests := []struct {
-		name    string
-		env     map[string]string
-		t       *Test
-		wantErr string
-		want    *container.Config
-	}{
-		{
-			name: "test - no cache dir",
-			t:    &baseTest,
-			want: func() *container.Config {
-				want := wantBase
-				return &want
-			}(),
-		}, {
-			name: "test - with cache dir, exists",
-			t: func() *Test {
-				cacheT := baseTest
-				cacheT.CacheDir = tmpDirReal
-				return &cacheT
-			}(),
-			want: func() *container.Config {
-				want := wantBase
-				want.Mounts = append(want.Mounts, container.BindMount{Source: tmpDirReal, Destination: "/var/cache/melange"})
-				want.CacheDir = tmpDirReal
-				return &want
-			}(),
-		}, {
-			name: "test - with cache dir, exists, environment",
-			t: func() *Test {
-				cacheT := baseTest
-				cacheT.CacheDir = tmpDirReal
-				return &cacheT
-			}(),
-			env: map[string]string{"FOO": "bar", "BAZ": "zzz"},
-			want: func() *container.Config {
-				want := wantBase
-				want.Mounts = append(want.Mounts, container.BindMount{Source: tmpDirReal, Destination: "/var/cache/melange"})
-				want.Environment = map[string]string{"FOO": "bar", "BAZ": "zzz", "HOME": "/root"}
-				want.CacheDir = tmpDirReal
-				return &want
-			}(),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctx := slogtest.Context(t)
-			got, gotErr := tt.t.buildWorkspaceConfig(ctx, testImgRef, testPkgName, apko_types.ImageConfiguration{Environment: tt.env})
-			if gotErr != nil {
-				if tt.wantErr == "" {
-					t.Fatalf("unexpected error: %v", gotErr)
-				}
-				if !strings.Contains(gotErr.Error(), tt.wantErr) {
-					t.Fatalf("expected error to contain %q, got %q", tt.wantErr, gotErr.Error())
-				}
-			} else {
-				if tt.wantErr != "" {
-					t.Fatalf("expected error %q, got nil", tt.wantErr)
-				}
-				if !cmp.Equal(tt.want, got) {
-					t.Errorf("%s", cmp.Diff(tt.want, got))
-				}
-			}
-		})
-	}
 }
 
 // TestConfigurationLoad is the main set of tests for loading a configuration
@@ -302,11 +199,9 @@ func TestConfigurationLoad(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := slogtest.Context(t)
-			tctx := Test{
-				ConfigFile: filepath.Join("testdata", "test_configuration_load", fmt.Sprintf("%s.melange.yaml", tt.name)),
-			}
+			configFile := filepath.Join("testdata", "test_configuration_load", fmt.Sprintf("%s.melange.yaml", tt.name))
 
-			cfg, err := config.ParseConfiguration(ctx, tctx.ConfigFile)
+			cfg, err := config.ParseConfiguration(ctx, configFile)
 			tt.requireErr(t, err)
 
 			if !tt.skipConfigCleanStep {

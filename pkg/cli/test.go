@@ -16,11 +16,7 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
-	"strings"
-	"time"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
@@ -30,6 +26,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/buildkit"
 )
 
 // addTestFlags registers all test command flags to the provided FlagSet using the TestFlags struct
@@ -38,25 +35,15 @@ func addTestFlags(fs *pflag.FlagSet, flags *TestFlags) {
 	fs.StringSliceVar(&flags.PipelineDirs, "pipeline-dirs", []string{}, "directories used to extend defined built-in pipelines")
 	fs.StringVar(&flags.SourceDir, "source-dir", "", "directory used for included sources")
 	fs.StringVar(&flags.CacheDir, "cache-dir", "", "directory used for cached inputs")
-	fs.StringVar(&flags.CacheSource, "cache-source", "", "directory or bucket used for preloading the cache")
 	fs.StringVar(&flags.ApkCacheDir, "apk-cache-dir", "", "directory used for cached apk packages (default is system-defined cache directory)")
 	fs.StringSliceVar(&flags.Archstrs, "arch", nil, "architectures to build for (e.g., x86_64,ppc64le,arm64) -- default is all, unless specified in config")
-	fs.StringSliceVar(&flags.TestOption, "test-option", []string{}, "build options to enable")
-	fs.StringVar(&flags.Runner, "runner", "", fmt.Sprintf("which runner to use to enable running commands, default is based on your platform. Options are %q", build.GetAllRunners()))
 	fs.StringSliceVarP(&flags.ExtraKeys, "keyring-append", "k", []string{}, "path to extra keys to include in the build environment keyring")
 	fs.StringVar(&flags.EnvFile, "env-file", "", "file to use for preloaded environment variables")
 	fs.BoolVar(&flags.Debug, "debug", false, "enables debug logging of test pipelines (sets -x for steps)")
-	fs.BoolVar(&flags.DebugRunner, "debug-runner", false, "when enabled, the builder pod will persist after the build succeeds or fails")
-	fs.BoolVarP(&flags.Interactive, "interactive", "i", false, "when enabled, attaches stdin with a tty to the pod on failure")
 	fs.StringSliceVarP(&flags.ExtraRepos, "repository-append", "r", []string{}, "path to extra repositories to include in the build environment")
 	fs.StringSliceVar(&flags.ExtraTestPackages, "test-package-append", []string{}, "extra packages to install for each of the test environments")
-	fs.BoolVar(&flags.Remove, "rm", true, "clean up intermediate artifacts (e.g. container images, temp dirs)")
 	fs.BoolVar(&flags.IgnoreSignatures, "ignore-signatures", false, "ignore repository signature verification")
-	fs.StringVar(&flags.CPU, "cpu", "", "default CPU resources to use for tests")
-	fs.StringVar(&flags.CPUModel, "cpumodel", "", "default CPU model to use for tests")
-	fs.StringVar(&flags.Disk, "disk", "", "disk size to use for tests")
-	fs.StringVar(&flags.Memory, "memory", "", "default memory resources to use for tests")
-	fs.DurationVar(&flags.Timeout, "timeout", 0, "default timeout for tests")
+	fs.StringVar(&flags.BuildKitAddr, "buildkit-addr", buildkit.DefaultAddr, "BuildKit daemon address (e.g., tcp://localhost:1234)")
 }
 
 // TestFlags holds all parsed test command flags
@@ -64,26 +51,16 @@ type TestFlags struct {
 	WorkspaceDir      string
 	SourceDir         string
 	CacheDir          string
-	CacheSource       string
 	ApkCacheDir       string
 	Archstrs          []string
 	PipelineDirs      []string
 	ExtraKeys         []string
 	ExtraRepos        []string
 	EnvFile           string
-	TestOption        []string
 	Debug             bool
-	DebugRunner       bool
-	Interactive       bool
-	Runner            string
 	ExtraTestPackages []string
-	Remove            bool
 	IgnoreSignatures  bool
-	CPU               string
-	CPUModel          string
-	Memory            string
-	Disk              string
-	Timeout           time.Duration
+	BuildKitAddr      string
 }
 
 // ParseTestFlags parses test flags from the provided args and returns a TestFlags struct
@@ -100,62 +77,36 @@ func ParseTestFlags(args []string) (*TestFlags, []string, error) {
 	return flags, fs.Args(), nil
 }
 
-// TestOptions converts TestFlags into a slice of build.TestOption
-// This includes all core test options that are directly derived from the flags.
-func (flags *TestFlags) TestOptions(ctx context.Context, args ...string) ([]build.TestOption, error) {
-	r, err := getRunner(ctx, flags.Runner, flags.Remove)
-	if err != nil {
-		return nil, err
-	}
-
-	options := []build.TestOption{
-		build.WithTestWorkspaceDir(flags.WorkspaceDir),
-		build.WithTestCacheDir(flags.CacheDir),
-		build.WithTestCacheSource(flags.CacheSource),
-		build.WithTestPackageCacheDir(flags.ApkCacheDir),
-		build.WithTestExtraKeys(flags.ExtraKeys),
-		build.WithTestExtraRepos(flags.ExtraRepos),
-		build.WithExtraTestPackages(flags.ExtraTestPackages),
-		build.WithTestRunner(r),
-		build.WithTestEnvFile(flags.EnvFile),
-		build.WithTestDebug(flags.Debug),
-		build.WithTestDebugRunner(flags.DebugRunner),
-		build.WithTestInteractive(flags.Interactive),
-		build.WithTestRemove(flags.Remove),
-		build.WithTestIgnoreSignatures(flags.IgnoreSignatures),
-		build.WithTestCPU(flags.CPU),
-		build.WithTestCPUModel(flags.CPUModel),
-		build.WithTestMemory(flags.Memory),
-		build.WithTestDisk(flags.Disk),
-		build.WithTestTimeout(flags.Timeout),
+// TestOptions converts TestFlags into a slice of build.TestBuildKitOption
+func (flags *TestFlags) TestOptions(ctx context.Context, args ...string) ([]build.TestBuildKitOption, error) {
+	options := []build.TestBuildKitOption{
+		build.WithTestBuildKitWorkspaceDir(flags.WorkspaceDir),
+		build.WithTestBuildKitCacheDir(flags.CacheDir),
+		build.WithTestBuildKitApkCacheDir(flags.ApkCacheDir),
+		build.WithTestBuildKitExtraKeys(flags.ExtraKeys),
+		build.WithTestBuildKitExtraRepos(flags.ExtraRepos),
+		build.WithTestBuildKitExtraTestPackages(flags.ExtraTestPackages),
+		build.WithTestBuildKitEnvFile(flags.EnvFile),
+		build.WithTestBuildKitDebug(flags.Debug),
+		build.WithTestBuildKitIgnoreSignatures(flags.IgnoreSignatures),
+		build.WithTestBuildKitAddr(flags.BuildKitAddr),
 	}
 
 	if len(args) > 0 {
-		options = append(options, build.WithTestConfig(args[0]))
+		options = append(options, build.WithTestBuildKitConfig(args[0]))
 	}
 	if len(args) > 1 {
-		options = append(options, build.WithTestPackage(args[1]))
+		options = append(options, build.WithTestBuildKitPackage(args[1]))
 	}
 
 	if flags.SourceDir != "" {
-		options = append(options, build.WithTestSourceDir(flags.SourceDir))
+		options = append(options, build.WithTestBuildKitSourceDir(flags.SourceDir))
 	}
 
 	for i := range flags.PipelineDirs {
-		options = append(options, build.WithTestPipelineDir(flags.PipelineDirs[i]))
+		options = append(options, build.WithTestBuildKitPipelineDir(flags.PipelineDirs[i]))
 	}
-	options = append(options, build.WithTestPipelineDir(BuiltinPipelineDir))
-
-	if auth, ok := os.LookupEnv("HTTP_AUTH"); !ok {
-		// Fine, no auth.
-	} else if parts := strings.SplitN(auth, ":", 4); len(parts) != 4 {
-		return nil, fmt.Errorf("HTTP_AUTH must be in the form 'basic:REALM:USERNAME:PASSWORD' (got %d parts)", len(parts))
-	} else if parts[0] != "basic" {
-		return nil, fmt.Errorf("HTTP_AUTH must be in the form 'basic:REALM:USERNAME:PASSWORD' (got %q for first part)", parts[0])
-	} else {
-		domain, user, pass := parts[1], parts[2], parts[3]
-		options = append(options, build.WithTestAuth(domain, user, pass))
-	}
+	options = append(options, build.WithTestBuildKitPipelineDir(BuiltinPipelineDir))
 
 	return options, nil
 }
@@ -188,7 +139,7 @@ func test() *cobra.Command {
 	return cmd
 }
 
-func TestCmd(ctx context.Context, archs []apko_types.Architecture, baseOpts ...build.TestOption) error {
+func TestCmd(ctx context.Context, archs []apko_types.Architecture, baseOpts ...build.TestBuildKitOption) error {
 	log := clog.FromContext(ctx)
 	ctx, span := otel.Tracer("melange").Start(ctx, "TestCmd")
 	defer span.End()
@@ -197,47 +148,31 @@ func TestCmd(ctx context.Context, archs []apko_types.Architecture, baseOpts ...b
 		archs = apko_types.AllArchs
 	}
 
-	// Set up the test contexts before running them.  This avoids various
-	// race conditions and the possibility that a context may be garbage
-	// collected before it is actually run.
-	//
-	// Yes, this happens.  Really.
-	// https://github.com/distroless/nginx/runs/7219233843?check_suite_focus=true
-	bcs := []*build.Test{}
+	// Set up the test contexts before running them.
+	tcs := []*build.TestBuildKit{}
 	for _, arch := range archs {
-		opts := []build.TestOption{build.WithTestArch(arch)}
+		opts := []build.TestBuildKitOption{build.WithTestBuildKitArch(arch)}
 		opts = append(opts, baseOpts...)
 
-		bc, err := build.NewTest(ctx, opts...)
-		if errors.Is(err, build.ErrSkipThisArch) {
-			log.Infof("skipping arch %s", arch)
-			continue
-		} else if err != nil {
+		tc, err := build.NewTestBuildKit(ctx, opts...)
+		if err != nil {
 			return err
 		}
-		defer bc.Close()
 
-		bcs = append(bcs, bc)
+		tcs = append(tcs, tc)
 	}
 
-	if len(bcs) == 0 {
+	if len(tcs) == 0 {
 		log.Warnf("target-architecture and --arch do not overlap, nothing to test")
 		return nil
 	}
 
 	var errg errgroup.Group
 
-	if bcs[0].Interactive {
-		// Concurrent interactive debugging will break your terminal.
-		errg.SetLimit(1)
-	}
-
-	for _, bc := range bcs {
+	for _, tc := range tcs {
 		errg.Go(func() error {
-			if err := bc.TestPackage(ctx); err != nil {
-				log.Errorf("ERROR: failed to test package. the test environment has been preserved:")
-				bc.SummarizePaths(ctx)
-
+			if err := tc.TestPackage(ctx); err != nil {
+				log.Errorf("ERROR: failed to test package: %v", err)
 				return fmt.Errorf("failed to test package: %w", err)
 			}
 			return nil
