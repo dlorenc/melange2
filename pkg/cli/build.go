@@ -204,10 +204,10 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 
 	if len(args) > 0 {
 		opts = append(opts, build.WithConfig(buildConfigFilePath))
-
-		if flags.SourceDir == "" {
-			flags.SourceDir = filepath.Dir(buildConfigFilePath)
-		}
+		// Note: We no longer default SourceDir to the config file directory.
+		// This ensures an empty workspace by default, which is correct for
+		// packages that fetch source via git-checkout or other pipelines.
+		// Use --source-dir explicitly if local sources are needed.
 	}
 
 	if flags.SourceDir != "" {
