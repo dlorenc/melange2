@@ -34,7 +34,7 @@ func TestPipelineBuilderSimple(t *testing.T) {
 		Runs: "echo hello",
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -54,7 +54,7 @@ func TestPipelineBuilderWithEnvironment(t *testing.T) {
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -72,7 +72,7 @@ func TestPipelineBuilderWithWorkDir(t *testing.T) {
 		WorkDir: "/tmp/custom",
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -90,7 +90,7 @@ func TestPipelineBuilderWithRelativeWorkDir(t *testing.T) {
 		WorkDir: "subdir",
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -110,7 +110,7 @@ func TestPipelineBuilderNestedPipelines(t *testing.T) {
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -128,7 +128,7 @@ func TestPipelineBuilderIfConditionTrue(t *testing.T) {
 		Runs: "echo should run",
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -147,7 +147,7 @@ func TestPipelineBuilderIfConditionFalse(t *testing.T) {
 		Runs: "echo should not run",
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -167,7 +167,7 @@ func TestPipelineBuilderEmptyRuns(t *testing.T) {
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -185,7 +185,7 @@ func TestPipelineBuilderMultiplePipelines(t *testing.T) {
 		{Runs: "echo step3"},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipelines(base, pipelines)
 	require.NoError(t, err)
 
@@ -209,7 +209,7 @@ func TestPipelineBuilderDeterminism(t *testing.T) {
 			},
 		}
 
-		base := llb.Image("alpine:latest")
+		base := llb.Image(TestBaseImage)
 		state, err := builder.BuildPipeline(base, &pipeline)
 		require.NoError(t, err)
 
@@ -235,7 +235,7 @@ func TestPipelineBuilderDebug(t *testing.T) {
 		Runs: "echo debug",
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -245,7 +245,7 @@ func TestPipelineBuilderDebug(t *testing.T) {
 }
 
 func TestPrepareWorkspace(t *testing.T) {
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := PrepareWorkspace(base, "test-pkg")
 
 	def, err := state.Marshal(context.Background(), llb.LinuxAmd64)
@@ -254,7 +254,7 @@ func TestPrepareWorkspace(t *testing.T) {
 }
 
 func TestExportWorkspace(t *testing.T) {
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	prepared := PrepareWorkspace(base, "test-pkg")
 	export := ExportWorkspace(prepared)
 
@@ -295,7 +295,7 @@ echo "hello from pipeline" > /home/build/melange-out/test-pkg/output.txt
 	}
 
 	// Start with alpine and prepare workspace
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := PrepareWorkspace(base, "test-pkg")
 
 	// Run pipelines
@@ -355,7 +355,7 @@ echo "step1" >> /home/build/melange-out/test-pkg/log.txt
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := PrepareWorkspace(base, "test-pkg")
 	state, err = builder.BuildPipeline(state, &pipeline)
 	require.NoError(t, err)
@@ -409,7 +409,7 @@ echo "LOCAL_VAR=$LOCAL_VAR" >> /home/build/melange-out/test-pkg/env.txt
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := PrepareWorkspace(base, "test-pkg")
 	state, err = builder.BuildPipeline(state, &pipeline)
 	require.NoError(t, err)
@@ -468,7 +468,7 @@ echo "setup done" > /home/build/melange-out/test-pkg/status.txt
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := PrepareWorkspace(base, "test-pkg")
 	state, err = builder.BuildPipelines(state, pipelines)
 	require.NoError(t, err)
@@ -494,7 +494,7 @@ echo "setup done" > /home/build/melange-out/test-pkg/status.txt
 }
 
 func TestCopyCacheToWorkspace(t *testing.T) {
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := CopyCacheToWorkspace(base, "test-cache")
 
 	def, err := state.Marshal(context.Background(), llb.LinuxAmd64)
@@ -537,7 +537,7 @@ cat /var/cache/melange/cached-artifact.txt > /home/build/melange-out/test-pkg/fr
 	}
 
 	// Build the LLB graph
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := PrepareWorkspace(base, "test-pkg")
 	state = CopyCacheToWorkspace(state, CacheLocalName)
 	state, err = builder.BuildPipeline(state, &pipeline)

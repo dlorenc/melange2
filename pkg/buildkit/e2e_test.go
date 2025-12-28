@@ -149,7 +149,7 @@ func (e *e2eTestContext) buildConfig(cfg *config.Configuration) (string, error) 
 		return "", err
 	}
 
-	// Build the LLB graph using alpine as base (since we don't have a real apko layer)
+	// Build the LLB graph using wolfi-base (since we don't have a real apko layer)
 	pipeline := NewPipelineBuilder()
 
 	// Set up base environment from config
@@ -158,10 +158,10 @@ func (e *e2eTestContext) buildConfig(cfg *config.Configuration) (string, error) 
 		pipeline.BaseEnv[k] = v
 	}
 
-	// Start with alpine base image
-	state := llb.Image("alpine:latest")
+	// Start with wolfi-base image
+	state := llb.Image(TestBaseImage)
 
-	// Set up build user (alpine doesn't have it by default)
+	// Set up build user (idempotent - wolfi-base already has it)
 	state = SetupBuildUser(state)
 
 	// Prepare workspace
@@ -435,12 +435,12 @@ echo "TEST_VAR=$TEST_VAR" > /home/build/melange-out/integration-test/usr/share/e
 		},
 	}
 
-	// Use alpine as base since our test layer doesn't have a shell
+	// Use wolfi-base since our test layer doesn't have a shell
 	// In real usage, apko layer would have a full rootfs
 	pipeline := NewPipelineBuilder()
-	state := llb.Image("alpine:latest")
+	state := llb.Image(TestBaseImage)
 
-	// Set up build user (alpine doesn't have it by default)
+	// Set up build user (idempotent - wolfi-base already has it)
 	state = SetupBuildUser(state)
 
 	state = PrepareWorkspace(state, cfg.PackageName)
@@ -489,7 +489,7 @@ func TestE2E_PipelineEnvironment(t *testing.T) {
 	defer c.Close()
 
 	// Test that environment variables are properly passed to pipeline steps
-	state := llb.Image("alpine:latest")
+	state := llb.Image(TestBaseImage)
 
 	// Set up environment
 	state = state.Run(
@@ -539,7 +539,7 @@ func TestE2E_LargeOutput(t *testing.T) {
 	defer c.Close()
 
 	// Create a build that generates multiple output files
-	state := llb.Image("alpine:latest").
+	state := llb.Image(TestBaseImage).
 		Run(llb.Args([]string{"/bin/sh", "-c", `
 mkdir -p /output/bin /output/lib /output/include /output/share/doc
 
@@ -733,7 +733,7 @@ func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, c
 		return "", err
 	}
 
-	// Build the LLB graph using alpine as base
+	// Build the LLB graph using wolfi-base
 	pipeline := NewPipelineBuilder()
 
 	// Set up base environment from config
@@ -748,10 +748,10 @@ func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, c
 	// Set cache mounts
 	pipeline.CacheMounts = cacheMounts
 
-	// Start with alpine base image
-	state := llb.Image("alpine:latest")
+	// Start with wolfi-base image
+	state := llb.Image(TestBaseImage)
 
-	// Set up build user (alpine doesn't have it by default)
+	// Set up build user (idempotent - wolfi-base already has it)
 	state = SetupBuildUser(state)
 
 	// Prepare workspace
@@ -993,7 +993,7 @@ func (e *e2eTestContext) buildConfigWithCacheDir(cfg *config.Configuration, cach
 		return "", err
 	}
 
-	// Build the LLB graph using alpine as base
+	// Build the LLB graph using wolfi-base
 	pipeline := NewPipelineBuilder()
 
 	// Set up base environment from config
@@ -1002,10 +1002,10 @@ func (e *e2eTestContext) buildConfigWithCacheDir(cfg *config.Configuration, cach
 		pipeline.BaseEnv[k] = v
 	}
 
-	// Start with alpine base image
-	state := llb.Image("alpine:latest")
+	// Start with wolfi-base image
+	state := llb.Image(TestBaseImage)
 
-	// Set up build user (alpine doesn't have it by default)
+	// Set up build user (idempotent - wolfi-base already has it)
 	state = SetupBuildUser(state)
 
 	// Prepare workspace
@@ -1273,10 +1273,10 @@ func (e *e2eTestContext) testConfigWithSourceDir(cfg *config.Configuration, sour
 		return outDir, nil
 	}
 
-	// Create a simple test layer (alpine) - in real usage this would be
+	// Create a simple test layer (wolfi-base) - in real usage this would be
 	// an apko layer with the package installed
-	state := llb.Image("alpine:latest")
-	// Set up build user (alpine doesn't have it by default)
+	state := llb.Image(TestBaseImage)
+	// Set up build user (idempotent - wolfi-base already has it)
 	state = SetupBuildUser(state)
 	def, err := state.Marshal(e.ctx, llb.LinuxAmd64)
 	if err != nil {

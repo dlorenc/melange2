@@ -223,7 +223,7 @@ func TestImageLoaderIntegration(t *testing.T) {
 	defer result.Cleanup()
 
 	// Use alpine as base (for /bin/sh) and overlay our files
-	state := llb.Image("alpine:latest").File(
+	state := llb.Image(TestBaseImage).File(
 		llb.Copy(llb.Local(result.LocalName), "/etc/test-config", "/etc/test-config"),
 	)
 
@@ -290,7 +290,7 @@ func TestLoadResultUsage(t *testing.T) {
 	defer result.Cleanup()
 
 	// Use alpine and copy in our source file
-	state := llb.Image("alpine:latest").File(
+	state := llb.Image(TestBaseImage).File(
 		llb.Mkdir("/home/build", 0755, llb.WithParents(true)),
 	).File(
 		llb.Copy(llb.Local(result.LocalName), "/home/build/source.c", "/home/build/source.c"),

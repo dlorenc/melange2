@@ -75,54 +75,56 @@ const (
 // DefaultCacheMounts returns the default set of cache mounts for common
 // package managers and build tools. These use shared mode so multiple
 // builds can read from the cache concurrently.
+// All paths use /home/build instead of /root to support running as the
+// build user (UID 1000).
 func DefaultCacheMounts() []CacheMount {
 	return []CacheMount{
-		// Go caches
+		// Go caches - use /home/build paths to match build user's home
 		{
 			ID:     GoModCacheID,
-			Target: "/go/pkg/mod",
+			Target: "/home/build/go/pkg/mod",
 			Mode:   llb.CacheMountShared,
 		},
 		{
 			ID:     GoBuildCacheID,
-			Target: "/root/.cache/go-build",
+			Target: "/home/build/.cache/go-build",
 			Mode:   llb.CacheMountShared,
 		},
 
 		// Python pip cache
 		{
 			ID:     PipCacheID,
-			Target: "/root/.cache/pip",
+			Target: "/home/build/.cache/pip",
 			Mode:   llb.CacheMountShared,
 		},
 
 		// Node.js npm cache
 		{
 			ID:     NpmCacheID,
-			Target: "/root/.npm",
+			Target: "/home/build/.npm",
 			Mode:   llb.CacheMountShared,
 		},
 
 		// Rust Cargo caches
 		{
 			ID:     CargoRegistryCacheID,
-			Target: "/root/.cargo/registry",
+			Target: "/home/build/.cargo/registry",
 			Mode:   llb.CacheMountShared,
 		},
 		{
 			ID:     CargoBuildCacheID,
-			Target: "/root/.cargo/git",
+			Target: "/home/build/.cargo/git",
 			Mode:   llb.CacheMountShared,
 		},
 
 		// C/C++ ccache
 		{
 			ID:     CcacheCacheID,
-			Target: "/root/.ccache",
+			Target: "/home/build/.ccache",
 			Mode:   llb.CacheMountShared,
 		},
 
-		// APK package cache
+		// APK package cache - system path, but cache mounts handle permissions
 		{
 			ID:     ApkCacheID,
 			Target: "/var/cache/apk",
@@ -132,66 +134,95 @@ func DefaultCacheMounts() []CacheMount {
 }
 
 // GoCacheMounts returns cache mounts optimized for Go builds.
+// Uses /home/build paths to support running as the build user.
 func GoCacheMounts() []CacheMount {
 	return []CacheMount{
 		{
 			ID:     GoModCacheID,
-			Target: "/go/pkg/mod",
+			Target: "/home/build/go/pkg/mod",
 			Mode:   llb.CacheMountShared,
 		},
 		{
 			ID:     GoBuildCacheID,
-			Target: "/root/.cache/go-build",
+			Target: "/home/build/.cache/go-build",
 			Mode:   llb.CacheMountShared,
 		},
 	}
 }
 
 // PythonCacheMounts returns cache mounts optimized for Python builds.
+// Uses /home/build paths to support running as the build user.
 func PythonCacheMounts() []CacheMount {
 	return []CacheMount{
 		{
 			ID:     PipCacheID,
-			Target: "/root/.cache/pip",
+			Target: "/home/build/.cache/pip",
 			Mode:   llb.CacheMountShared,
 		},
 	}
 }
 
 // RustCacheMounts returns cache mounts optimized for Rust builds.
+// Uses /home/build paths to support running as the build user.
 func RustCacheMounts() []CacheMount {
 	return []CacheMount{
 		{
 			ID:     CargoRegistryCacheID,
-			Target: "/root/.cargo/registry",
+			Target: "/home/build/.cargo/registry",
 			Mode:   llb.CacheMountShared,
 		},
 		{
 			ID:     CargoBuildCacheID,
-			Target: "/root/.cargo/git",
+			Target: "/home/build/.cargo/git",
 			Mode:   llb.CacheMountShared,
 		},
 	}
 }
 
 // NodeCacheMounts returns cache mounts optimized for Node.js builds.
+// Uses /home/build paths to support running as the build user.
 func NodeCacheMounts() []CacheMount {
 	return []CacheMount{
 		{
 			ID:     NpmCacheID,
-			Target: "/root/.npm",
+			Target: "/home/build/.npm",
 			Mode:   llb.CacheMountShared,
 		},
 	}
 }
 
 // CCacheMounts returns cache mounts for C/C++ builds using ccache.
+// Uses /home/build paths to support running as the build user.
 func CCacheMounts() []CacheMount {
 	return []CacheMount{
 		{
 			ID:     CcacheCacheID,
-			Target: "/root/.ccache",
+			Target: "/home/build/.ccache",
 			Mode:   llb.CacheMountShared,
 		},
+	}
+}
+
+// CacheEnvironment returns environment variables that configure tools
+// to use the cache mount paths. These should be set in the build environment
+// to ensure tools write to the correct cache locations.
+func CacheEnvironment() map[string]string {
+	return map[string]string{
+		// Go cache configuration
+		"GOMODCACHE": "/home/build/go/pkg/mod",
+		"GOCACHE":    "/home/build/.cache/go-build",
+		"GOPATH":     "/home/build/go",
+
+		// Python pip cache
+		"PIP_CACHE_DIR": "/home/build/.cache/pip",
+
+		// npm cache
+		"NPM_CONFIG_CACHE": "/home/build/.npm",
+
+		// Cargo/Rust cache
+		"CARGO_HOME": "/home/build/.cargo",
+
+		// ccache
+		"CCACHE_DIR": "/home/build/.ccache",
 	}
 }

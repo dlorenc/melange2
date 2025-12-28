@@ -34,13 +34,13 @@ func TestDefaultCacheMounts(t *testing.T) {
 	require.NotEmpty(t, mounts)
 
 	expectedIDs := map[string]string{
-		GoModCacheID:         "/go/pkg/mod",
-		GoBuildCacheID:       "/root/.cache/go-build",
-		PipCacheID:           "/root/.cache/pip",
-		NpmCacheID:           "/root/.npm",
-		CargoRegistryCacheID: "/root/.cargo/registry",
-		CargoBuildCacheID:    "/root/.cargo/git",
-		CcacheCacheID:        "/root/.ccache",
+		GoModCacheID:         "/home/build/go/pkg/mod",
+		GoBuildCacheID:       "/home/build/.cache/go-build",
+		PipCacheID:           "/home/build/.cache/pip",
+		NpmCacheID:           "/home/build/.npm",
+		CargoRegistryCacheID: "/home/build/.cargo/registry",
+		CargoBuildCacheID:    "/home/build/.cargo/git",
+		CcacheCacheID:        "/home/build/.ccache",
 		ApkCacheID:           "/var/cache/apk",
 	}
 
@@ -75,7 +75,7 @@ func TestPythonCacheMounts(t *testing.T) {
 	mounts := PythonCacheMounts()
 	require.Len(t, mounts, 1)
 	require.Equal(t, PipCacheID, mounts[0].ID)
-	require.Equal(t, "/root/.cache/pip", mounts[0].Target)
+	require.Equal(t, "/home/build/.cache/pip", mounts[0].Target)
 }
 
 func TestRustCacheMounts(t *testing.T) {
@@ -95,14 +95,35 @@ func TestNodeCacheMounts(t *testing.T) {
 	mounts := NodeCacheMounts()
 	require.Len(t, mounts, 1)
 	require.Equal(t, NpmCacheID, mounts[0].ID)
-	require.Equal(t, "/root/.npm", mounts[0].Target)
+	require.Equal(t, "/home/build/.npm", mounts[0].Target)
 }
 
 func TestCCacheMounts(t *testing.T) {
 	mounts := CCacheMounts()
 	require.Len(t, mounts, 1)
 	require.Equal(t, CcacheCacheID, mounts[0].ID)
-	require.Equal(t, "/root/.ccache", mounts[0].Target)
+	require.Equal(t, "/home/build/.ccache", mounts[0].Target)
+}
+
+func TestCacheEnvironment(t *testing.T) {
+	env := CacheEnvironment()
+
+	// Verify all expected environment variables are set
+	expectedVars := map[string]string{
+		"GOMODCACHE":       "/home/build/go/pkg/mod",
+		"GOCACHE":          "/home/build/.cache/go-build",
+		"GOPATH":           "/home/build/go",
+		"PIP_CACHE_DIR":    "/home/build/.cache/pip",
+		"NPM_CONFIG_CACHE": "/home/build/.npm",
+		"CARGO_HOME":       "/home/build/.cargo",
+		"CCACHE_DIR":       "/home/build/.ccache",
+	}
+
+	for key, expectedValue := range expectedVars {
+		value, ok := env[key]
+		require.True(t, ok, "missing environment variable %s", key)
+		require.Equal(t, expectedValue, value, "wrong value for %s", key)
+	}
 }
 
 func TestCacheMountOption(t *testing.T) {
@@ -165,7 +186,7 @@ func TestPipelineBuilderCacheMountsPassedToNestedPipelines(t *testing.T) {
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state, err := builder.BuildPipeline(base, &pipeline)
 	require.NoError(t, err)
 
@@ -205,7 +226,7 @@ cp /cache/data.txt /home/build/melange-out/cache-test/
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state := PrepareWorkspace(base, "cache-test")
 	state, err = builder.BuildPipelines(state, pipelines)
 	require.NoError(t, err)
@@ -262,7 +283,7 @@ echo "done" > /home/build/melange-out/pkg1/status.txt
 		},
 	}
 
-	base := llb.Image("alpine:latest")
+	base := llb.Image(TestBaseImage)
 	state1 := PrepareWorkspace(base, "pkg1")
 	state1, err = builder1.BuildPipelines(state1, pipelines1)
 	require.NoError(t, err)

@@ -79,8 +79,12 @@ func (b *Builder) WithCacheMounts(mounts []CacheMount) *Builder {
 
 // WithDefaultCacheMounts enables the default cache mounts for common
 // package managers (Go, Python, Rust, Node.js, etc.).
+// Also sets the corresponding environment variables so tools use the
+// correct cache paths.
 func (b *Builder) WithDefaultCacheMounts() *Builder {
 	b.pipeline.CacheMounts = DefaultCacheMounts()
+	// Set environment variables so tools use the cache mount paths
+	b.pipeline.BaseEnv = MergeEnv(b.pipeline.BaseEnv, CacheEnvironment())
 	return b
 }
 

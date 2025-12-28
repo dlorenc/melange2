@@ -159,7 +159,7 @@ echo "hello" > /home/build/melange-out/test-pkg/result.txt
 	}
 
 	// Build the LLB graph using alpine as base (since our test layer isn't a full rootfs)
-	state := PrepareWorkspace(llb.Image("alpine:latest"), "test-pkg")
+	state := PrepareWorkspace(llb.Image(TestBaseImage), "test-pkg")
 	state, err = pipeline.BuildPipelines(state, pipelines)
 	require.NoError(t, err)
 

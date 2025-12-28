@@ -70,7 +70,7 @@ func TestSimpleLLBExecution(t *testing.T) {
 	defer c.Close()
 
 	// Build a simple LLB: alpine + echo hello
-	state := llb.Image("alpine:latest").
+	state := llb.Image(TestBaseImage).
 		Run(llb.Args([]string{"/bin/sh", "-c", "echo hello-from-buildkit"})).
 		Root()
 
@@ -130,7 +130,7 @@ func TestLocalFilesystemAsImage(t *testing.T) {
 
 	// Start with alpine (simulates apko rootfs which has /bin/sh)
 	// Then overlay our test file from the extracted tar
-	state := llb.Image("alpine:latest").File(
+	state := llb.Image(TestBaseImage).File(
 		llb.Copy(local, "/etc/test-file", "/etc/test-file"),
 	)
 
@@ -169,7 +169,7 @@ func TestWorkspaceExport(t *testing.T) {
 	defer c.Close()
 
 	// Build something that creates output files
-	state := llb.Image("alpine:latest").
+	state := llb.Image(TestBaseImage).
 		Run(llb.Args([]string{"/bin/sh", "-c", "mkdir -p /output && echo 'built content' > /output/result.txt"})).
 		Root()
 
@@ -221,7 +221,7 @@ func TestDeterministicLLB(t *testing.T) {
 	}
 
 	buildLLB := func() (string, error) {
-		state := llb.Image("alpine:latest")
+		state := llb.Image(TestBaseImage)
 
 		// CRITICAL: Sort env vars for determinism
 		// Go map iteration is random, so we must sort keys
@@ -282,7 +282,7 @@ func TestPipelineSimulation(t *testing.T) {
 	defer c.Close()
 
 	// Start with alpine (simulating apko-built image)
-	state := llb.Image("alpine:latest")
+	state := llb.Image(TestBaseImage)
 
 	// Simulate workspace mount via Local
 	workspaceDir := t.TempDir()

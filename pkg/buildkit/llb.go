@@ -50,6 +50,11 @@ const (
 
 	// BuildUserName is the username for the build user.
 	BuildUserName = "build"
+
+	// TestBaseImage is the base image used for e2e tests.
+	// Uses wolfi-base to avoid Docker Hub rate limits and because it already
+	// has the build user (UID 1000) configured.
+	TestBaseImage = "cgr.dev/chainguard/wolfi-base:latest"
 )
 
 // PipelineBuilder converts melange pipelines to BuildKit LLB.
@@ -203,7 +208,8 @@ func WorkspaceOutputDir(pkgName string) string {
 }
 
 // SetupBuildUser creates the build user and group in the base image.
-// This is needed for images that don't already have the build user (e.g., alpine).
+// This is idempotent - it safely handles images that already have the build user
+// (e.g., wolfi-base) as well as those that don't.
 // The build user (UID/GID 1000) matches baseline melange behavior.
 // Also ensures /tmp exists with proper permissions for temporary files.
 func SetupBuildUser(base llb.State) llb.State {
