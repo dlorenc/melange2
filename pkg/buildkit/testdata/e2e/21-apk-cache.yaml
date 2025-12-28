@@ -13,9 +13,10 @@ pipeline:
   - name: Test APK cache path
     runs: |
       # Verify APK cache directory is writable and persists
-      mkdir -p /var/cache/apk
+      # The cache mount is at /var/cache/apk - BuildKit creates this when the cache is mounted
+      # We don't need mkdir -p since the cache mount handles directory creation
 
-      # Write build marker
+      # Write build marker (cache mount makes this writable even for non-root user)
       echo "build-$BUILD_ID" >> /var/cache/apk/.build-marker.txt
 
       # Copy results to output

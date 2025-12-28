@@ -13,16 +13,17 @@ pipeline:
   - name: Test Cargo cache paths
     runs: |
       # Verify Cargo cache directories are writable and persist
-      mkdir -p /root/.cargo/registry
-      mkdir -p /root/.cargo/git
+      # Use /home/build paths since builds run as build user (UID 1000)
+      mkdir -p /home/build/.cargo/registry
+      mkdir -p /home/build/.cargo/git
 
       # Write build markers
-      echo "build-$BUILD_ID" >> /root/.cargo/registry/.build-marker.txt
-      echo "build-$BUILD_ID" >> /root/.cargo/git/.build-marker.txt
+      echo "build-$BUILD_ID" >> /home/build/.cargo/registry/.build-marker.txt
+      echo "build-$BUILD_ID" >> /home/build/.cargo/git/.build-marker.txt
 
       # Copy results to output
       mkdir -p ${{targets.destdir}}/usr/share/rust-cache-test
-      cp /root/.cargo/registry/.build-marker.txt ${{targets.destdir}}/usr/share/rust-cache-test/registry-builds.txt
-      cp /root/.cargo/git/.build-marker.txt ${{targets.destdir}}/usr/share/rust-cache-test/git-builds.txt
-      wc -l < /root/.cargo/registry/.build-marker.txt > ${{targets.destdir}}/usr/share/rust-cache-test/registry-count.txt
-      wc -l < /root/.cargo/git/.build-marker.txt > ${{targets.destdir}}/usr/share/rust-cache-test/git-count.txt
+      cp /home/build/.cargo/registry/.build-marker.txt ${{targets.destdir}}/usr/share/rust-cache-test/registry-builds.txt
+      cp /home/build/.cargo/git/.build-marker.txt ${{targets.destdir}}/usr/share/rust-cache-test/git-builds.txt
+      wc -l < /home/build/.cargo/registry/.build-marker.txt > ${{targets.destdir}}/usr/share/rust-cache-test/registry-count.txt
+      wc -l < /home/build/.cargo/git/.build-marker.txt > ${{targets.destdir}}/usr/share/rust-cache-test/git-count.txt

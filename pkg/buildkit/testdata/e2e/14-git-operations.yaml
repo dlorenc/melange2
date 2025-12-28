@@ -6,12 +6,16 @@ package:
   copyright:
     - license: MIT
 
+environment:
+  environment:
+    # Use TEST_INSTALL_PACKAGES to install git as root before the build starts
+    TEST_INSTALL_PACKAGES: git
+
 pipeline:
   - name: setup
     runs: |
       mkdir -p ${{targets.destdir}}/usr/share/git-test
-      # Install git (not in alpine base image)
-      apk add --no-cache git
+      # git is installed via TEST_INSTALL_PACKAGES (as root, before build user steps)
 
   - name: git-clone-basic
     runs: |
