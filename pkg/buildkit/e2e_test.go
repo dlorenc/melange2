@@ -1273,10 +1273,11 @@ func (e *e2eTestContext) testConfigWithSourceDir(cfg *config.Configuration, sour
 		return outDir, nil
 	}
 
-	// Create a simple test layer (wolfi-base) - in real usage this would be
-	// an apko layer with the package installed
-	state := llb.Image(TestBaseImage)
-	// Set up build user (idempotent - wolfi-base already has it)
+	// Create a simple test layer - in real usage this would be an apko layer
+	// with the package installed. Use TestExportableBaseImage (alpine) because
+	// wolfi-base contains device files that can't be exported to local filesystem.
+	state := llb.Image(TestExportableBaseImage)
+	// Set up build user (alpine doesn't have it by default)
 	state = SetupBuildUser(state)
 	def, err := state.Marshal(e.ctx, llb.LinuxAmd64)
 	if err != nil {

@@ -55,6 +55,11 @@ const (
 	// Uses wolfi-base to avoid Docker Hub rate limits and because it already
 	// has the build user (UID 1000) configured.
 	TestBaseImage = "cgr.dev/chainguard/wolfi-base:latest"
+
+	// TestExportableBaseImage is used for tests that need to export a full rootfs
+	// to a local directory. Uses alpine because wolfi-base contains device files
+	// in /dev/ that can't be exported without elevated privileges.
+	TestExportableBaseImage = "alpine:latest"
 )
 
 // PipelineBuilder converts melange pipelines to BuildKit LLB.
