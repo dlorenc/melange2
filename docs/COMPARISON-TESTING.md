@@ -1,10 +1,15 @@
 # Comparison Testing
 
-This document describes the comparison test harness for validating melange2 builds against upstream melange.
+This document describes the comparison test harness for validating melange2 builds against packages in the Wolfi APK repository.
 
 ## Overview
 
-The comparison test harness builds packages using both upstream melange and melange2, then compares the resulting APK files to identify differences. This helps ensure melange2's BuildKit-based approach produces equivalent (or better) results.
+The comparison test harness builds packages using melange2 and compares the resulting APK files against the corresponding pre-built packages from the Wolfi APK repository (https://packages.wolfi.dev/os/). This approach:
+
+- **Is faster**: No need to build with upstream melange (halves build time)
+- **Has simpler setup**: No need to install/manage upstream melange binary
+- **Uses production baseline**: Compares against actual packages in production use
+- **Requires less infrastructure**: Single melange binary, single build process
 
 ## Prerequisites
 
@@ -23,21 +28,12 @@ docker exec buildkitd buildctl --addr tcp://127.0.0.1:8372 debug workers
 
 > **Warning**: Do NOT use `buildkitd --addr ...` as the command - the entrypoint already includes `buildkitd`. Using it twice causes silent failures.
 
-### 2. Wolfi Package Repository
+### 2. Wolfi Package Repository (Build Configs)
 
-Clone the wolfi-dev/os repository:
+Clone the wolfi-dev/os repository for build configurations:
 
 ```bash
 git clone --depth 1 https://github.com/wolfi-dev/os /tmp/melange-compare/os
-```
-
-### 3. Upstream Melange Binary
-
-Build the upstream melange for comparison:
-
-```bash
-git clone https://github.com/chainguard-dev/melange /tmp/upstream-melange
-cd /tmp/upstream-melange && go build -o /tmp/melange-compare/melange-upstream .
 ```
 
 ## Running Comparisons
@@ -47,8 +43,7 @@ cd /tmp/upstream-melange && go build -o /tmp/melange-compare/melange-upstream .
 ```bash
 go test -v -tags=compare ./test/compare/... \
   -timeout 60m \
-  -wolfi-repo="/tmp/melange-compare/os" \
-  -baseline-melange="/tmp/melange-compare/melange-upstream" \
+  -wolfi-os-path="/tmp/melange-compare/os" \
   -buildkit-addr="tcp://localhost:8372" \
   -arch="aarch64" \
   -packages="pkgconf,scdoc,jq" \
@@ -59,8 +54,7 @@ go test -v -tags=compare ./test/compare/... \
 
 ```bash
 make compare \
-  WOLFI_REPO=/tmp/melange-compare/os \
-  BASELINE_MELANGE=/tmp/melange-compare/melange-upstream \
+  WOLFI_OS_PATH=/tmp/melange-compare/os \
   PACKAGES="pkgconf scdoc jq" \
   BUILD_ARCH=aarch64 \
   KEEP_OUTPUTS=1
@@ -70,14 +64,13 @@ make compare \
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-wolfi-repo` | Path to wolfi-dev/os repository | (required) |
-| `-baseline-melange` | Path to upstream melange binary | (required) |
+| `-wolfi-os-path` | Path to wolfi-dev/os repository (for build configs) | (required) |
+| `-wolfi-repo-url` | URL to Wolfi APK repository | `https://packages.wolfi.dev/os` |
 | `-buildkit-addr` | BuildKit daemon address | `tcp://localhost:8372` |
 | `-arch` | Architecture to build for | `x86_64` |
 | `-packages` | Comma-separated list of packages | (required) |
 | `-packages-file` | File with package names (one per line) | - |
 | `-keep-outputs` | Keep output directories after test | `false` |
-| `-baseline-args` | Additional args for baseline melange | - |
 | `-melange2-args` | Additional args for melange2 | - |
 
 ## Architecture Considerations
@@ -95,10 +88,18 @@ On ARM Macs (M1/M2/M3), use `aarch64` to avoid slow QEMU emulation:
 
 | Symbol | Meaning |
 |--------|---------|
-| ✅ IDENTICAL | Packages match perfectly |
-| ⚠️ DIFFERENT | Packages differ (may be expected) |
-| ❌ MELANGE2_FAILED | Melange2 build failed |
-| 🔶 BASELINE_FAILED | Upstream melange build failed |
+| IDENTICAL | Packages match perfectly |
+| DIFFERENT | Packages differ (may be expected) |
+| MELANGE2_FAILED | Melange2 build failed |
+| WOLFI_DOWNLOAD_FAILED | Could not download from Wolfi repo |
+
+### Version Mismatches
+
+The test harness tracks version mismatches between:
+- The config in wolfi-dev/os (may have been updated)
+- The package in the Wolfi repository (built from an earlier config)
+
+Results will be annotated with "(version mismatch)" when versions differ. This is expected when configs have been updated but new packages haven't been published yet.
 
 ### Expected Differences
 
@@ -109,9 +110,15 @@ Some differences are expected and not bugs:
    - Memory layout differences
    - Compiler optimizations
 
-2. **File permissions**: Melange2 correctly preserves explicit permissions (e.g., `install -m444`), while baseline may modify them.
+2. **File permissions**: Melange2 correctly preserves explicit permissions (e.g., `install -m444`), while production builds may differ.
 
-3. **File ownership**: Melange2 normalizes ownership to root (0:0), while baseline may leak build user IDs.
+3. **File ownership**: Melange2 normalizes ownership to root (0:0).
+
+4. **Non-deterministic files**: The following are automatically excluded from comparison:
+   - `.PKGINFO` - Contains build timestamp
+   - `.SIGN.*` - Signature files (different signing keys)
+   - `.spdx.json` / `.cdx.json` - SBOMs with timestamps
+   - `buildinfo` - Build info with timestamps
 
 ## Debugging Differences
 
@@ -125,16 +132,16 @@ COMPARE_DIR=$(find /var/folders -name "melange-compare-*" -type d | head -1)
 
 ```bash
 # List files in each APK
-tar -tvzf "$COMPARE_DIR/baseline/PACKAGE/aarch64/PACKAGE-*.apk"
-tar -tvzf "$COMPARE_DIR/melange2/PACKAGE/aarch64/PACKAGE-*.apk"
+tar -tvzf "$COMPARE_DIR/wolfi/PACKAGE/PACKAGE-*.apk"
+tar -tvzf "$COMPARE_DIR/melange2/PACKAGE/ARCH/PACKAGE-*.apk"
 ```
 
 ### Compare Package Metadata
 
 ```bash
 # Extract and compare PKGINFO
-tar -xzf "$COMPARE_DIR/baseline/PACKAGE/aarch64/PACKAGE-*.apk" -O .PKGINFO
-tar -xzf "$COMPARE_DIR/melange2/PACKAGE/aarch64/PACKAGE-*.apk" -O .PKGINFO
+tar -xzf "$COMPARE_DIR/wolfi/PACKAGE/PACKAGE-*.apk" -O .PKGINFO
+tar -xzf "$COMPARE_DIR/melange2/PACKAGE/ARCH/PACKAGE-*.apk" -O .PKGINFO
 ```
 
 ### Key PKGINFO Fields
@@ -177,15 +184,22 @@ mkdir -p ./melange-cache
 -melange2-args="--cache-dir="
 ```
 
-### Empty Packages from Baseline
+### Package Not Found in Repository
 
-If baseline produces empty packages (only SBOM, no actual files), this is a baseline runner issue, not a melange2 bug. Compare PKGINFO `size` fields to verify.
+If a package exists in wolfi-dev/os but not in the Wolfi repository, it will be skipped. This can happen for:
+- New packages not yet published
+- Packages that have been removed
 
-## Test File Location
+### Version Drift
+
+When the wolfi-dev/os config has been updated but new packages haven't been built yet, you'll see version mismatches. The comparison still runs but results should be interpreted with caution.
+
+## Test File Locations
 
 The comparison test implementation is at:
 - `test/compare/compare_test.go` - Main test logic
-- `test/compare/run-comparison.sh` - Helper script
+- `test/compare/apkindex.go` - APKINDEX parsing
+- `test/compare/fetch.go` - Package downloading from Wolfi repo
 
 ## Tracking Progress
 

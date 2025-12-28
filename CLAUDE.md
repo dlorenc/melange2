@@ -351,7 +351,7 @@ Key dependencies:
 
 ## Comparison Testing
 
-The comparison test harness validates melange2 against upstream melange by building the same packages and comparing results. See [docs/COMPARISON-TESTING.md](docs/COMPARISON-TESTING.md) for full documentation.
+The comparison test harness validates melange2 by building packages and comparing them against pre-built packages from the Wolfi APK repository (https://packages.wolfi.dev/os/). See [docs/COMPARISON-TESTING.md](docs/COMPARISON-TESTING.md) for full documentation.
 
 ### Quick Start
 
@@ -360,10 +360,12 @@ The comparison test harness validates melange2 against upstream melange by build
 docker run -d --name buildkitd --privileged -p 8372:8372 \
   moby/buildkit:latest --addr tcp://0.0.0.0:8372
 
+# Clone wolfi-dev/os for build configs
+git clone --depth 1 https://github.com/wolfi-dev/os /tmp/melange-compare/os
+
 # Run comparison (use aarch64 on ARM Macs for speed)
 go test -v -tags=compare ./test/compare/... \
-  -wolfi-repo="/tmp/melange-compare/os" \
-  -baseline-melange="/tmp/melange-compare/melange-upstream" \
+  -wolfi-os-path="/tmp/melange-compare/os" \
   -buildkit-addr="tcp://localhost:8372" \
   -arch="aarch64" \
   -packages="pkgconf,scdoc,jq"
@@ -371,6 +373,8 @@ go test -v -tags=compare ./test/compare/... \
 
 Key files:
 - `test/compare/compare_test.go` - Comparison test implementation
+- `test/compare/apkindex.go` - APKINDEX parsing
+- `test/compare/fetch.go` - Package downloading from Wolfi repo
 - `docs/COMPARISON-TESTING.md` - Full documentation
 
 Progress tracking: [GitHub Issue #32](https://github.com/dlorenc/melange2/issues/32)
