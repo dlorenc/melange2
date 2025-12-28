@@ -12,8 +12,9 @@ test:
     - name: basic-commands
       runs: |
         echo "Running basic test commands"
-        mkdir -p /tmp/test-output
-        echo "test data" > /tmp/test-output/data.txt
+        # Use /home/build instead of /tmp to avoid permission issues
+        mkdir -p /home/build/test-output
+        echo "test data" > /home/build/test-output/data.txt
 
     - name: verify-environment
       runs: |

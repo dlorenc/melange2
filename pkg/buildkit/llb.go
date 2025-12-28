@@ -40,6 +40,16 @@ const (
 
 	// CacheLocalName is the name used for the cache directory local mount.
 	CacheLocalName = "cache"
+
+	// BuildUserUID is the UID for the build user.
+	// This matches baseline melange and ensures consistent file permissions.
+	BuildUserUID = 1000
+
+	// BuildUserGID is the GID for the build user/group.
+	BuildUserGID = 1000
+
+	// BuildUserName is the username for the build user.
+	BuildUserName = "build"
 )
 
 // PipelineBuilder converts melange pipelines to BuildKit LLB.
@@ -114,9 +124,14 @@ func (b *PipelineBuilder) BuildPipeline(base llb.State, p *config.Pipeline) (llb
 		env := MergeEnv(b.BaseEnv, p.Environment)
 
 		// Build run options
+		// Run as build user (UID 1000) for permission parity with baseline melange.
+		// Some installers (like Perl's ExtUtils::MakeMaker) set different permissions
+		// when running as root (444/555) vs a regular user (644/755).
+		// The workspace directories are created with proper ownership before this runs.
 		opts := []llb.RunOption{
 			llb.Args([]string{"/bin/sh", "-c", script}),
 			llb.Dir(workdir),
+			llb.User(BuildUserName),
 		}
 
 		// Add sorted environment variables for determinism
@@ -187,14 +202,47 @@ func WorkspaceOutputDir(pkgName string) string {
 	return filepath.Join(DefaultWorkDir, MelangeOutDir, pkgName)
 }
 
+// SetupBuildUser creates the build user and group in the base image.
+// This is needed for images that don't already have the build user (e.g., alpine).
+// The build user (UID/GID 1000) matches baseline melange behavior.
+// Also ensures /tmp exists with proper permissions for temporary files.
+func SetupBuildUser(base llb.State) llb.State {
+	// Create group and user, ensure home directory exists with proper ownership,
+	// and create /tmp with world-writable permissions (standard Linux behavior)
+	script := fmt.Sprintf(`addgroup -g %d %s 2>/dev/null || true
+adduser -D -u %d -G %s -h %s %s 2>/dev/null || true
+mkdir -p %s
+chown %d:%d %s
+mkdir -p /tmp
+chmod 1777 /tmp`,
+		BuildUserGID, BuildUserName,
+		BuildUserUID, BuildUserName, DefaultWorkDir, BuildUserName,
+		DefaultWorkDir,
+		BuildUserUID, BuildUserGID, DefaultWorkDir,
+	)
+
+	return base.Run(
+		llb.Args([]string{"/bin/sh", "-c", script}),
+		llb.WithCustomName("setup build user"),
+	).Root()
+}
+
 // PrepareWorkspace creates the initial workspace structure.
 // Returns a state with workspace and melange-out directories created.
+// All directories are owned by the build user (UID/GID 1000) to match
+// baseline melange behavior and ensure consistent file permissions.
 func PrepareWorkspace(base llb.State, pkgName string) llb.State {
 	return base.File(
-		llb.Mkdir(DefaultWorkDir, 0755, llb.WithParents(true)),
+		llb.Mkdir(DefaultWorkDir, 0755,
+			llb.WithParents(true),
+			llb.WithUIDGID(BuildUserUID, BuildUserGID),
+		),
 		llb.WithCustomName("create workspace"),
 	).File(
-		llb.Mkdir(WorkspaceOutputDir(pkgName), 0755, llb.WithParents(true)),
+		llb.Mkdir(WorkspaceOutputDir(pkgName), 0755,
+			llb.WithParents(true),
+			llb.WithUIDGID(BuildUserUID, BuildUserGID),
+		),
 		llb.WithCustomName("create output directory"),
 	)
 }

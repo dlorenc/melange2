@@ -169,10 +169,13 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 		localDirs[CacheLocalName] = cfg.CacheDir
 	}
 
-	// Create subpackage output directories
+	// Create subpackage output directories with proper ownership
 	for _, sp := range cfg.Subpackages {
 		state = state.File(
-			llb.Mkdir(WorkspaceOutputDir(sp.Name), 0755, llb.WithParents(true)),
+			llb.Mkdir(WorkspaceOutputDir(sp.Name), 0755,
+				llb.WithParents(true),
+				llb.WithUIDGID(BuildUserUID, BuildUserGID),
+			),
 			llb.WithCustomName(fmt.Sprintf("create output directory for %s", sp.Name)),
 		)
 	}
@@ -359,9 +362,17 @@ func (b *Builder) runTestPipelines(ctx context.Context, layer v1.Layer, pkgName 
 		llb.WithCustomName(fmt.Sprintf("copy test environment for %s", pkgName)),
 	)
 
+	// Ensure build user exists (for images that don't have it, like plain alpine)
+	// This is idempotent - if the user already exists, adduser/addgroup will succeed silently
+	state = SetupBuildUser(state)
+
 	// Prepare workspace (simpler than build - no output dirs needed)
+	// Owned by build user for permission parity with baseline melange
 	state = state.File(
-		llb.Mkdir(DefaultWorkDir, 0755, llb.WithParents(true)),
+		llb.Mkdir(DefaultWorkDir, 0755,
+			llb.WithParents(true),
+			llb.WithUIDGID(BuildUserUID, BuildUserGID),
+		),
 		llb.WithCustomName("create workspace"),
 	)
 
