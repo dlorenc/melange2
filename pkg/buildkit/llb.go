@@ -81,6 +81,7 @@ func NewPipelineBuilder() *PipelineBuilder {
 	return &PipelineBuilder{
 		BaseEnv: map[string]string{
 			"PATH": DefaultPath,
+			"HOME": DefaultWorkDir,
 		},
 	}
 }
