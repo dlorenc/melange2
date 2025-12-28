@@ -15,8 +15,8 @@ pipeline:
   - name: fetch-with-checksum
     runs: |
       # Test HTTP fetch with checksum validation
-      # Download a small, stable file
-      wget -q -O /tmp/fetch-test/downloaded.txt https://www.google.com/robots.txt
+      # Download a small, stable file (use curl since wget isn't in wolfi-base)
+      curl -sS -o /tmp/fetch-test/downloaded.txt https://www.google.com/robots.txt
       test -f /tmp/fetch-test/downloaded.txt || exit 1
 
       # Calculate and store checksum (proves sha256sum works)
