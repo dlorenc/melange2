@@ -264,68 +264,63 @@ docs-pipeline:
 		go run ../../../docs/cmd/pipeline-reference-gen/main.go --pipeline-dir .
 
 ##################
-# compare - Compare melange2 builds against baseline melange
+# compare - Compare melange2 builds against Wolfi APK repository
 ##################
 
 # Required variables:
-#   WOLFI_REPO       - Path to wolfi-dev/os repository clone
-#   BASELINE_MELANGE - Path to baseline melange binary
+#   WOLFI_OS_PATH    - Path to wolfi-dev/os repository clone (for build configs)
 #
 # Optional variables:
 #   PACKAGES         - Space-separated list of packages to test (e.g., "jq tzdata scdoc")
 #   PACKAGES_FILE    - Path to file containing packages (one per line)
+#   WOLFI_REPO_URL   - URL to Wolfi APK repository (default: https://packages.wolfi.dev/os)
 #   BUILDKIT_ADDR    - BuildKit daemon address (default: tcp://localhost:8372)
-#   BASELINE_ARGS    - Additional args to pass to baseline melange
 #   MELANGE2_ARGS    - Additional args to pass to melange2
 #   BUILD_ARCH       - Architecture to build for (default: x86_64)
 #   KEEP_OUTPUTS     - Set to 1 to keep output directories
 #
 # Examples:
-#   make compare WOLFI_REPO=/path/to/os BASELINE_MELANGE=/path/to/melange PACKAGES="jq tzdata"
-#   make compare WOLFI_REPO=/path/to/os BASELINE_MELANGE=/path/to/melange PACKAGES_FILE=packages.txt
+#   make compare WOLFI_OS_PATH=/path/to/os PACKAGES="jq tzdata"
+#   make compare WOLFI_OS_PATH=/path/to/os PACKAGES_FILE=packages.txt
 
 BUILDKIT_ADDR ?= tcp://localhost:8372
 BUILD_ARCH ?= x86_64
+WOLFI_REPO_URL ?= https://packages.wolfi.dev/os
 
 .PHONY: compare
-compare: ## Compare melange2 builds against baseline melange
-ifndef WOLFI_REPO
-	$(error WOLFI_REPO is required - path to wolfi-dev/os repository)
-endif
-ifndef BASELINE_MELANGE
-	$(error BASELINE_MELANGE is required - path to baseline melange binary)
+compare: ## Compare melange2 builds against Wolfi APK repository
+ifndef WOLFI_OS_PATH
+	$(error WOLFI_OS_PATH is required - path to wolfi-dev/os repository)
 endif
 ifndef PACKAGES
 ifndef PACKAGES_FILE
 	$(error Either PACKAGES or PACKAGES_FILE is required)
 endif
 endif
-	@echo "=== Comparing melange2 vs baseline melange ==="
-	@echo "Wolfi repo: $(WOLFI_REPO)"
-	@echo "Baseline melange: $(BASELINE_MELANGE)"
+	@echo "=== Comparing melange2 vs Wolfi APK repository ==="
+	@echo "Wolfi OS path: $(WOLFI_OS_PATH)"
+	@echo "Wolfi repo URL: $(WOLFI_REPO_URL)"
 	@echo "BuildKit address: $(BUILDKIT_ADDR)"
 ifdef PACKAGES
 	@echo "Packages: $(PACKAGES)"
 	go test -v -tags=compare ./test/compare/... \
 		-timeout 4h \
-		-wolfi-repo="$(WOLFI_REPO)" \
-		-baseline-melange="$(BASELINE_MELANGE)" \
+		-wolfi-os-path="$(WOLFI_OS_PATH)" \
+		-wolfi-repo-url="$(WOLFI_REPO_URL)" \
 		-buildkit-addr="$(BUILDKIT_ADDR)" \
 		-arch="$(BUILD_ARCH)" \
 		-packages="$(subst $(space),$(comma),$(PACKAGES))" \
-		$(if $(BASELINE_ARGS),-baseline-args="$(BASELINE_ARGS)") \
 		$(if $(MELANGE2_ARGS),-melange2-args="$(MELANGE2_ARGS)") \
 		$(if $(filter 1,$(KEEP_OUTPUTS)),-keep-outputs)
 else
 	@echo "Packages file: $(PACKAGES_FILE)"
 	go test -v -tags=compare ./test/compare/... \
 		-timeout 4h \
-		-wolfi-repo="$(WOLFI_REPO)" \
-		-baseline-melange="$(BASELINE_MELANGE)" \
+		-wolfi-os-path="$(WOLFI_OS_PATH)" \
+		-wolfi-repo-url="$(WOLFI_REPO_URL)" \
 		-buildkit-addr="$(BUILDKIT_ADDR)" \
 		-arch="$(BUILD_ARCH)" \
 		-packages-file="$(PACKAGES_FILE)" \
-		$(if $(BASELINE_ARGS),-baseline-args="$(BASELINE_ARGS)") \
 		$(if $(MELANGE2_ARGS),-melange2-args="$(MELANGE2_ARGS)") \
 		$(if $(filter 1,$(KEEP_OUTPUTS)),-keep-outputs)
 endif

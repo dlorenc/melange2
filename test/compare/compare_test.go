@@ -14,19 +14,18 @@
 
 //go:build compare
 
-// Package compare provides a test harness for comparing builds between
-// upstream melange and melange2 (BuildKit-based).
+// Package compare provides a test harness for comparing melange2 builds
+// against packages in the Wolfi APK repository.
 //
 // Run with:
 //
 //	go test -tags=compare ./test/compare/... \
-//	  -wolfi-repo=/path/to/wolfi-dev/os \
-//	  -baseline-melange=/path/to/upstream/melange \
+//	  -wolfi-os-path=/path/to/wolfi-dev/os \
 //	  -packages=jq,tzdata,scdoc
 //
 // Or via make:
 //
-//	make compare WOLFI_REPO=/path/to/os BASELINE_MELANGE=/path/to/melange PACKAGES="jq tzdata"
+//	make compare WOLFI_OS_PATH=/path/to/os PACKAGES="jq tzdata"
 package compare
 
 import (
@@ -47,38 +46,39 @@ import (
 
 var (
 	// Required flags
-	wolfiRepo       = flag.String("wolfi-repo", "", "Path to wolfi-dev/os repository clone (required)")
-	baselineMelange = flag.String("baseline-melange", "", "Path to baseline melange binary to compare against (required)")
+	wolfiOSPath = flag.String("wolfi-os-path", "", "Path to wolfi-dev/os repository clone (for build configs)")
 
 	// Optional flags
-	buildkitAddr    = flag.String("buildkit-addr", "tcp://localhost:8372", "BuildKit daemon address")
-	keepOutputs     = flag.Bool("keep-outputs", false, "Keep output directories after test")
-	packages        = flag.String("packages", "", "Comma-separated list of packages to test")
-	packagesFile    = flag.String("packages-file", "", "File containing list of packages to test (one per line)")
-	baselineArgs    = flag.String("baseline-args", "", "Additional args to pass to baseline melange (space-separated)")
-	melange2Args    = flag.String("melange2-args", "", "Additional args to pass to melange2 (space-separated)")
-	arch            = flag.String("arch", "x86_64", "Architecture to build for")
+	wolfiRepoURL = flag.String("wolfi-repo-url", DefaultWolfiRepoURL, "URL to Wolfi APK repository")
+	buildkitAddr = flag.String("buildkit-addr", "tcp://localhost:8372", "BuildKit daemon address")
+	keepOutputs  = flag.Bool("keep-outputs", false, "Keep output directories after test")
+	packages     = flag.String("packages", "", "Comma-separated list of packages to test")
+	packagesFile = flag.String("packages-file", "", "File containing list of packages to test (one per line)")
+	melange2Args = flag.String("melange2-args", "", "Additional args to pass to melange2 (space-separated)")
+	arch         = flag.String("arch", "x86_64", "Architecture to build for")
 )
 
 func TestCompareBuilds(t *testing.T) {
 	// Validate required flags
-	if *wolfiRepo == "" {
-		t.Fatal("--wolfi-repo is required")
-	}
-	if *baselineMelange == "" {
-		t.Fatal("--baseline-melange is required")
+	if *wolfiOSPath == "" {
+		t.Fatal("--wolfi-os-path is required")
 	}
 
 	// Verify paths exist
-	if _, err := os.Stat(*wolfiRepo); err != nil {
-		t.Fatalf("wolfi-repo path does not exist: %s", *wolfiRepo)
-	}
-	if _, err := os.Stat(*baselineMelange); err != nil {
-		t.Fatalf("baseline-melange binary does not exist: %s", *baselineMelange)
+	if _, err := os.Stat(*wolfiOSPath); err != nil {
+		t.Fatalf("wolfi-os-path does not exist: %s", *wolfiOSPath)
 	}
 
 	// Build melange2 from current source
 	melange2Binary := buildMelange2(t)
+
+	// Initialize Wolfi repository
+	t.Logf("Fetching APKINDEX from %s/%s...", *wolfiRepoURL, *arch)
+	wolfiRepo, err := NewWolfiRepo(*wolfiRepoURL, *arch)
+	if err != nil {
+		t.Fatalf("failed to initialize Wolfi repository: %v", err)
+	}
+	t.Logf("Loaded %d packages from Wolfi repository", len(wolfiRepo.Index.Packages))
 
 	// Determine packages to test
 	pkgList := getPackageList(t)
@@ -86,25 +86,29 @@ func TestCompareBuilds(t *testing.T) {
 		t.Fatal("no packages specified; use --packages or --packages-file")
 	}
 
-	// Filter to only packages that exist in the repo
+	// Filter to packages that exist both in wolfi-dev/os configs and in the repo
 	var validPackages []string
 	for _, pkg := range pkgList {
-		yamlPath := filepath.Join(*wolfiRepo, pkg+".yaml")
-		if _, err := os.Stat(yamlPath); err == nil {
-			validPackages = append(validPackages, pkg)
-		} else {
-			t.Logf("Skipping %s: %s.yaml not found", pkg, pkg)
+		yamlPath := filepath.Join(*wolfiOSPath, pkg+".yaml")
+		if _, err := os.Stat(yamlPath); err != nil {
+			t.Logf("Skipping %s: %s.yaml not found in wolfi-os-path", pkg, pkg)
+			continue
 		}
+		if !wolfiRepo.HasPackage(pkg) {
+			t.Logf("Skipping %s: not found in Wolfi repository", pkg)
+			continue
+		}
+		validPackages = append(validPackages, pkg)
 	}
 
 	if len(validPackages) == 0 {
-		t.Fatal("no valid packages found in wolfi-repo")
+		t.Fatal("no valid packages found (need both config in wolfi-os-path and package in Wolfi repo)")
 	}
 
 	t.Logf("Testing %d packages: %v", len(validPackages), validPackages)
-	t.Logf("Baseline melange: %s", *baselineMelange)
 	t.Logf("Melange2 binary: %s", melange2Binary)
 	t.Logf("BuildKit address: %s", *buildkitAddr)
+	t.Logf("Wolfi repo: %s", *wolfiRepoURL)
 
 	// Create output directories
 	baseDir, err := os.MkdirTemp("", "melange-compare-*")
@@ -121,7 +125,7 @@ func TestCompareBuilds(t *testing.T) {
 
 	for _, pkg := range validPackages {
 		t.Run(pkg, func(t *testing.T) {
-			result := comparePackage(t, pkg, baseDir, melange2Binary)
+			result := comparePackage(t, pkg, baseDir, melange2Binary, wolfiRepo)
 			results[pkg] = result
 		})
 	}
@@ -198,42 +202,48 @@ func getPackageList(t *testing.T) []string {
 	return nil
 }
 
+// CompareResult holds the results of comparing a package.
 type CompareResult struct {
-	Package            string
-	BaselineBuildError error
+	Package           string
 	Melange2BuildError error
-	Identical          bool
-	Differences        []string
-	BaselineAPKPath    string
-	Melange2APKPath    string
+	WolfiDownloadError error
+	Identical         bool
+	Differences       []string
+	Melange2APKPath   string
+	WolfiAPKPath      string
+	VersionMatch      bool
+	Melange2Version   string
+	WolfiVersion      string
 }
 
-func comparePackage(t *testing.T, pkg string, baseDir string, melange2Binary string) *CompareResult {
+func comparePackage(t *testing.T, pkg string, baseDir string, melange2Binary string, wolfiRepo *WolfiRepo) *CompareResult {
 	result := &CompareResult{Package: pkg}
 
-	yamlPath := filepath.Join(*wolfiRepo, pkg+".yaml")
-	baselineOutDir := filepath.Join(baseDir, "baseline", pkg)
+	yamlPath := filepath.Join(*wolfiOSPath, pkg+".yaml")
 	melange2OutDir := filepath.Join(baseDir, "melange2", pkg)
+	wolfiOutDir := filepath.Join(baseDir, "wolfi", pkg)
 
-	if err := os.MkdirAll(baselineOutDir, 0755); err != nil {
-		t.Fatalf("failed to create baseline output dir: %v", err)
-	}
 	if err := os.MkdirAll(melange2OutDir, 0755); err != nil {
 		t.Fatalf("failed to create melange2 output dir: %v", err)
 	}
-
-	pipelineDir := filepath.Join(*wolfiRepo, "pipelines")
-	sourceDir := filepath.Join(*wolfiRepo, pkg)
-
-	// Build with baseline melange
-	t.Logf("Building %s with baseline melange...", pkg)
-	baselineCmd := buildBaselineCommand(yamlPath, baselineOutDir, pipelineDir, sourceDir)
-	baselineCmd.Dir = *wolfiRepo
-	baselineOutput, err := baselineCmd.CombinedOutput()
-	if err != nil {
-		result.BaselineBuildError = fmt.Errorf("baseline build failed: %w\n%s", err, string(baselineOutput))
-		t.Logf("Baseline build failed for %s: %v", pkg, err)
+	if err := os.MkdirAll(wolfiOutDir, 0755); err != nil {
+		t.Fatalf("failed to create wolfi output dir: %v", err)
 	}
+
+	pipelineDir := filepath.Join(*wolfiOSPath, "pipelines")
+	sourceDir := filepath.Join(*wolfiOSPath, pkg)
+
+	// Download package from Wolfi repository
+	t.Logf("Downloading %s from Wolfi repository...", pkg)
+	wolfiAPKPath, wolfiPkg, err := wolfiRepo.DownloadPackageByName(pkg, wolfiOutDir)
+	if err != nil {
+		result.WolfiDownloadError = fmt.Errorf("failed to download from Wolfi repo: %w", err)
+		t.Logf("Wolfi download failed for %s: %v", pkg, err)
+		return result
+	}
+	result.WolfiAPKPath = wolfiAPKPath
+	result.WolfiVersion = wolfiPkg.Version
+	t.Logf("Downloaded %s version %s", pkg, wolfiPkg.Version)
 
 	// Build with melange2
 	t.Logf("Building %s with melange2...", pkg)
@@ -242,36 +252,47 @@ func comparePackage(t *testing.T, pkg string, baseDir string, melange2Binary str
 		t.Fatalf("failed to create cache dir: %v", err)
 	}
 	melange2Cmd := buildMelange2Command(melange2Binary, yamlPath, melange2OutDir, pipelineDir, sourceDir, cacheDir)
-	melange2Cmd.Dir = *wolfiRepo
+	melange2Cmd.Dir = *wolfiOSPath
 	melange2Output, err := melange2Cmd.CombinedOutput()
 	if err != nil {
 		result.Melange2BuildError = fmt.Errorf("melange2 build failed: %w\n%s", err, string(melange2Output))
 		t.Logf("Melange2 build failed for %s: %v", pkg, err)
-	}
-
-	// If either build failed, we can't compare
-	if result.BaselineBuildError != nil || result.Melange2BuildError != nil {
 		return result
 	}
 
-	// Find APK files
-	baselineAPKs, err := filepath.Glob(filepath.Join(baselineOutDir, *arch, "*.apk"))
-	if err != nil || len(baselineAPKs) == 0 {
-		result.BaselineBuildError = fmt.Errorf("no APK found in baseline output")
-		return result
-	}
-
+	// Find melange2 APK files
 	melange2APKs, err := filepath.Glob(filepath.Join(melange2OutDir, *arch, "*.apk"))
 	if err != nil || len(melange2APKs) == 0 {
 		result.Melange2BuildError = fmt.Errorf("no APK found in melange2 output")
 		return result
 	}
 
-	// Compare APKs
-	result.BaselineAPKPath = baselineAPKs[0]
-	result.Melange2APKPath = melange2APKs[0]
+	// Find the main package APK (not subpackages)
+	var mainAPK string
+	for _, apk := range melange2APKs {
+		base := filepath.Base(apk)
+		if strings.HasPrefix(base, pkg+"-") {
+			mainAPK = apk
+			break
+		}
+	}
+	if mainAPK == "" {
+		mainAPK = melange2APKs[0]
+	}
 
-	diffs, err := compareAPKs(result.BaselineAPKPath, result.Melange2APKPath)
+	result.Melange2APKPath = mainAPK
+
+	// Extract version from melange2 APK filename
+	melange2Version := extractVersionFromFilename(filepath.Base(mainAPK), pkg)
+	result.Melange2Version = melange2Version
+	result.VersionMatch = melange2Version == wolfiPkg.Version
+
+	if !result.VersionMatch {
+		t.Logf("Version mismatch: melange2=%s, wolfi=%s", melange2Version, wolfiPkg.Version)
+	}
+
+	// Compare APKs
+	diffs, err := compareAPKs(result.WolfiAPKPath, result.Melange2APKPath)
 	if err != nil {
 		t.Errorf("failed to compare APKs: %v", err)
 		result.Differences = []string{fmt.Sprintf("comparison error: %v", err)}
@@ -293,23 +314,16 @@ func comparePackage(t *testing.T, pkg string, baseDir string, melange2Binary str
 	return result
 }
 
-func buildBaselineCommand(yamlPath, outDir, pipelineDir, sourceDir string) *exec.Cmd {
-	args := []string{"build", yamlPath,
-		"--arch", *arch,
-		"--signing-key=",
-		"--out-dir", outDir,
-		"--repository-append", "https://packages.wolfi.dev/os",
-		"--keyring-append", "https://packages.wolfi.dev/os/wolfi-signing.rsa.pub",
-		"--pipeline-dir", pipelineDir,
-		"--source-dir", sourceDir,
+// extractVersionFromFilename extracts the version from an APK filename.
+// Format: name-version.apk (e.g., jq-1.7.1-r0.apk -> 1.7.1-r0)
+func extractVersionFromFilename(filename, pkgName string) string {
+	// Remove .apk extension
+	name := strings.TrimSuffix(filename, ".apk")
+	// Remove package name prefix
+	if strings.HasPrefix(name, pkgName+"-") {
+		return name[len(pkgName)+1:]
 	}
-
-	// Add any additional baseline args
-	if *baselineArgs != "" {
-		args = append(args, strings.Fields(*baselineArgs)...)
-	}
-
-	return exec.Command(*baselineMelange, args...)
+	return name
 }
 
 func buildMelange2Command(binary, yamlPath, outDir, pipelineDir, sourceDir, cacheDir string) *exec.Cmd {
@@ -335,12 +349,12 @@ func buildMelange2Command(binary, yamlPath, outDir, pipelineDir, sourceDir, cach
 
 // compareAPKs compares two APK files and returns a list of differences.
 // APK files are tar.gz archives, so we extract and compare contents.
-func compareAPKs(baselinePath, melange2Path string) ([]string, error) {
+func compareAPKs(wolfiPath, melange2Path string) ([]string, error) {
 	var diffs []string
 
-	baselineFiles, err := extractAPKContents(baselinePath)
+	wolfiFiles, err := extractAPKContents(wolfiPath)
 	if err != nil {
-		return nil, fmt.Errorf("extracting baseline APK: %w", err)
+		return nil, fmt.Errorf("extracting Wolfi APK: %w", err)
 	}
 
 	melange2Files, err := extractAPKContents(melange2Path)
@@ -350,7 +364,7 @@ func compareAPKs(baselinePath, melange2Path string) ([]string, error) {
 
 	// Get all file names
 	allFiles := make(map[string]bool)
-	for name := range baselineFiles {
+	for name := range wolfiFiles {
 		allFiles[name] = true
 	}
 	for name := range melange2Files {
@@ -364,38 +378,39 @@ func compareAPKs(baselinePath, melange2Path string) ([]string, error) {
 	sort.Strings(sortedFiles)
 
 	for _, name := range sortedFiles {
-		baselineInfo, baselineExists := baselineFiles[name]
+		wolfiInfo, wolfiExists := wolfiFiles[name]
 		melange2Info, melange2Exists := melange2Files[name]
 
-		if !baselineExists {
+		if !wolfiExists {
 			diffs = append(diffs, fmt.Sprintf("+ %s (only in melange2)", name))
 			continue
 		}
 		if !melange2Exists {
-			diffs = append(diffs, fmt.Sprintf("- %s (only in baseline)", name))
+			diffs = append(diffs, fmt.Sprintf("- %s (only in Wolfi)", name))
 			continue
 		}
 
 		// Compare file contents
-		if baselineInfo.Hash != melange2Info.Hash {
+		if wolfiInfo.Hash != melange2Info.Hash {
 			// Skip known non-deterministic files
 			if isNonDeterministicFile(name) {
 				continue
 			}
-			diffs = append(diffs, fmt.Sprintf("~ %s (hash differs: baseline=%s melange2=%s)",
-				name, baselineInfo.Hash[:16], melange2Info.Hash[:16]))
+			diffs = append(diffs, fmt.Sprintf("~ %s (hash differs: wolfi=%s melange2=%s)",
+				name, wolfiInfo.Hash[:16], melange2Info.Hash[:16]))
 		}
 
 		// Compare modes
-		if baselineInfo.Mode != melange2Info.Mode {
-			diffs = append(diffs, fmt.Sprintf("~ %s (mode differs: baseline=%o melange2=%o)",
-				name, baselineInfo.Mode, melange2Info.Mode))
+		if wolfiInfo.Mode != melange2Info.Mode {
+			diffs = append(diffs, fmt.Sprintf("~ %s (mode differs: wolfi=%o melange2=%o)",
+				name, wolfiInfo.Mode, melange2Info.Mode))
 		}
 	}
 
 	return diffs, nil
 }
 
+// FileInfo holds metadata about a file in an APK.
 type FileInfo struct {
 	Hash string
 	Mode int64
@@ -484,7 +499,7 @@ func loadPackagesFromFile(path string) ([]string, error) {
 }
 
 func printSummary(t *testing.T, results map[string]*CompareResult) {
-	var identical, different, baselineFailed, melange2Failed int
+	var identical, different, wolfiDownloadFailed, melange2Failed, versionMismatch int
 
 	t.Log("\n=== COMPARISON SUMMARY ===")
 
@@ -499,27 +514,38 @@ func printSummary(t *testing.T, results map[string]*CompareResult) {
 		var status string
 
 		switch {
-		case result.BaselineBuildError != nil:
-			baselineFailed++
-			status = "BASELINE_FAILED"
+		case result.WolfiDownloadError != nil:
+			wolfiDownloadFailed++
+			status = "WOLFI_DOWNLOAD_FAILED"
 		case result.Melange2BuildError != nil:
 			melange2Failed++
 			status = "MELANGE2_FAILED"
 		case result.Identical:
 			identical++
-			status = "IDENTICAL"
+			if !result.VersionMatch {
+				versionMismatch++
+				status = "IDENTICAL (version mismatch)"
+			} else {
+				status = "IDENTICAL"
+			}
 		default:
 			different++
-			status = "DIFFERENT"
+			if !result.VersionMatch {
+				versionMismatch++
+				status = "DIFFERENT (version mismatch)"
+			} else {
+				status = "DIFFERENT"
+			}
 		}
 
 		t.Logf("  %-30s %s", pkg, status)
 	}
 
 	t.Log("\n=== TOTALS ===")
-	t.Logf("  Identical:        %d", identical)
-	t.Logf("  Different:        %d", different)
-	t.Logf("  Baseline Failed:  %d", baselineFailed)
-	t.Logf("  Melange2 Failed:  %d", melange2Failed)
-	t.Logf("  Total:            %d", len(results))
+	t.Logf("  Identical:             %d", identical)
+	t.Logf("  Different:             %d", different)
+	t.Logf("  Wolfi Download Failed: %d", wolfiDownloadFailed)
+	t.Logf("  Melange2 Build Failed: %d", melange2Failed)
+	t.Logf("  Version Mismatches:    %d", versionMismatch)
+	t.Logf("  Total:                 %d", len(results))
 }
