@@ -213,8 +213,8 @@ pipeline.BaseEnv["CUSTOM_VAR"] = "value"
 ### LLB Construction
 
 ```go
-// Start from base image
-state := llb.Image("alpine:latest")
+// Start from base image (prefer cgr.dev images to avoid Docker Hub rate limits)
+state := llb.Image("cgr.dev/chainguard/wolfi-base:latest")
 
 // Run commands
 state = state.Run(

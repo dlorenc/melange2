@@ -466,12 +466,13 @@ func extractAPKContents(apkPath string) (map[string]FileInfo, error) {
 // between builds due to timestamps or other non-deterministic content.
 func isNonDeterministicFile(name string) bool {
 	nonDeterministic := []string{
-		".PKGINFO",   // Contains build timestamp
-		".SIGN.",     // Signature files
-		"APKINDEX",   // Index with timestamps
-		".spdx.json", // SBOM with timestamps
-		".cdx.json",  // CycloneDX SBOM
-		"buildinfo",  // Build info with timestamps
+		".PKGINFO",      // Contains build timestamp
+		".SIGN.",        // Signature files
+		"APKINDEX",      // Index with timestamps
+		".spdx.json",    // SBOM with timestamps
+		".cdx.json",     // CycloneDX SBOM
+		"buildinfo",     // Build info with timestamps
+		".melange.yaml", // Build config with timestamps and metadata
 	}
 
 	for _, pattern := range nonDeterministic {

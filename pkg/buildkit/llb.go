@@ -55,11 +55,6 @@ const (
 	// Uses wolfi-base to avoid Docker Hub rate limits and because it already
 	// has the build user (UID 1000) configured.
 	TestBaseImage = "cgr.dev/chainguard/wolfi-base:latest"
-
-	// TestExportableBaseImage is used for tests that need to export a full rootfs
-	// to a local directory. Uses alpine because wolfi-base contains device files
-	// in /dev/ that can't be exported without elevated privileges.
-	TestExportableBaseImage = "alpine:latest"
 )
 
 // PipelineBuilder converts melange pipelines to BuildKit LLB.
@@ -243,14 +238,25 @@ chmod 1777 /tmp`,
 // Returns a state with workspace and melange-out directories created.
 // All directories are owned by the build user (UID/GID 1000) to match
 // baseline melange behavior and ensure consistent file permissions.
+//
+// Note: llb.Mkdir doesn't change ownership of existing directories, so we
+// explicitly run chown to ensure proper ownership when the directory already
+// exists (e.g., when apko creates /home/build for the build user).
 func PrepareWorkspace(base llb.State, pkgName string) llb.State {
-	return base.File(
-		llb.Mkdir(DefaultWorkDir, 0755,
-			llb.WithParents(true),
-			llb.WithUIDGID(BuildUserUID, BuildUserGID),
-		),
+	// First ensure the workspace directory exists with correct ownership via chown.
+	// This handles the case where apko already created /home/build with
+	// incorrect ownership (root:root instead of build:build).
+	// Also ensure /tmp exists with world-writable permissions (standard Linux behavior)
+	// so that mktemp and other tools work properly.
+	state := base.Run(
+		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(
+			"mkdir -p %s && chown %d:%d %s && mkdir -p /tmp && chmod 1777 /tmp",
+			DefaultWorkDir, BuildUserUID, BuildUserGID, DefaultWorkDir,
+		)}),
 		llb.WithCustomName("create workspace"),
-	).File(
+	).Root()
+
+	return state.File(
 		llb.Mkdir(WorkspaceOutputDir(pkgName), 0755,
 			llb.WithParents(true),
 			llb.WithUIDGID(BuildUserUID, BuildUserGID),
