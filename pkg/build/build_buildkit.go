@@ -345,10 +345,13 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 	if maxLayers == 0 {
 		maxLayers = 50
 	}
+	// Use "origin" strategy which partitions packages by their origin
+	// This groups related packages together for better cache efficiency
 	imgConfig.Layering = &apko_types.Layering{
-		Budget: maxLayers,
+		Strategy: "origin",
+		Budget:   maxLayers,
 	}
-	log.Infof("using layer budget of %d", maxLayers)
+	log.Infof("using layer budget of %d with origin strategy", maxLayers)
 
 	opts := []apko_build.Option{
 		apko_build.WithImageConfiguration(imgConfig),
@@ -400,14 +403,8 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 	bc.Summarize(ctx)
 	log.Infof("auth configured for: %v", maps.Keys(b.Auth))
 
-	// Build the image
-	if err := bc.BuildImage(ctx); err != nil {
-		cleanup()
-		return nil, nil, nil, fmt.Errorf("unable to generate image: %w", err)
-	}
-
-	// Always use BuildLayers - apko respects the Layering.Budget setting
-	// and will return the appropriate number of layers
+	// Use BuildLayers which internally calls buildImage and handles layering
+	// We don't call BuildImage separately as BuildLayers does it internally
 	layers, err := bc.BuildLayers(ctx)
 	if err != nil {
 		cleanup()
