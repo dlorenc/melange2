@@ -298,22 +298,6 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 	return nil
 }
 
-// buildGuestLayer builds the apko image and returns the layer for BuildKit.
-// The returned cleanup function should be called after the layer has been loaded.
-func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.ReleaseData, func(), error) {
-	layers, releaseData, cleanup, err := b.buildGuestLayers(ctx)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if len(layers) == 0 {
-		cleanup()
-		return nil, nil, nil, errors.New("no layers returned from buildGuestLayers")
-	}
-	// Return only the first layer for backward compatibility
-	// If multi-layer mode is enabled, use buildGuestLayers directly
-	return layers[0], releaseData, cleanup, nil
-}
-
 // buildGuestLayers builds the apko image and returns layers for BuildKit.
 // The number of layers is controlled by MaxLayers:
 // - MaxLayers == 1: single layer (original behavior)

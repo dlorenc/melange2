@@ -275,7 +275,7 @@ func (l *ImageLoader) LoadLayers(ctx context.Context, layers []v1.Layer, baseNam
 	}
 
 	localDirs := make(map[string]string, len(layers))
-	var cleanupFuncs []func() error
+	cleanupFuncs := make([]func() error, 0, len(layers))
 
 	// Extract each layer
 	for i, layer := range layers {
