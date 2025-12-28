@@ -13,12 +13,13 @@ pipeline:
   - name: Test npm cache path
     runs: |
       # Verify npm cache directory is writable and persists
-      mkdir -p /root/.npm
+      # Use /home/build paths since builds run as build user (UID 1000)
+      mkdir -p /home/build/.npm
 
       # Write build marker
-      echo "build-$BUILD_ID" >> /root/.npm/.build-marker.txt
+      echo "build-$BUILD_ID" >> /home/build/.npm/.build-marker.txt
 
       # Copy results to output
       mkdir -p ${{targets.destdir}}/usr/share/node-cache-test
-      cp /root/.npm/.build-marker.txt ${{targets.destdir}}/usr/share/node-cache-test/builds.txt
-      wc -l < /root/.npm/.build-marker.txt > ${{targets.destdir}}/usr/share/node-cache-test/count.txt
+      cp /home/build/.npm/.build-marker.txt ${{targets.destdir}}/usr/share/node-cache-test/builds.txt
+      wc -l < /home/build/.npm/.build-marker.txt > ${{targets.destdir}}/usr/share/node-cache-test/count.txt

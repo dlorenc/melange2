@@ -615,7 +615,6 @@ func TestE2E_FetchSource(t *testing.T) {
 
 // TestE2E_GitCheckout tests git clone and checkout operations
 func TestE2E_GitCheckout(t *testing.T) {
-	t.Skip("skipping: requires apk add which needs root - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "14-git-operations.yaml")
 
@@ -689,6 +688,19 @@ func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, c
 	// Prepare workspace
 	state = PrepareWorkspace(state, cfg.Package.Name)
 
+	// Create parent directories for cache mounts (must run before pipelines as root)
+	// Cache mounts require their parent directories to exist
+	for _, cm := range cacheMounts {
+		parentDir := filepath.Dir(cm.Target)
+		state = state.Run(
+			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(
+				"mkdir -p %s && chown %d:%d %s",
+				parentDir, BuildUserUID, BuildUserGID, parentDir,
+			)}),
+			llb.WithCustomName(fmt.Sprintf("create cache parent directory %s", parentDir)),
+		).Root()
+	}
+
 	// Perform variable substitution on pipelines
 	pipelines := substituteVariables(cfg, cfg.Pipeline, "")
 
@@ -727,13 +739,13 @@ func (e *e2eTestContext) buildConfigWithCacheMounts(cfg *config.Configuration, c
 
 // TestE2E_CacheMountIsolation verifies that different cache IDs are isolated
 func TestE2E_CacheMountIsolation(t *testing.T) {
-	t.Skip("skipping: cache directories need root access - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "16-cache-mounts.yaml")
 
 	// First build with cache ID "cache-a"
+	// Use /home/build/cache since builds run as build user (UID 1000)
 	cacheMountsA := []CacheMount{
-		{ID: "e2e-test-cache-isolation-a", Target: "/cache", Mode: llb.CacheMountShared},
+		{ID: "e2e-test-cache-isolation-a", Target: "/home/build/cache", Mode: llb.CacheMountShared},
 	}
 	outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMountsA, map[string]string{
 		"BUILD_ID": "from-cache-a",
@@ -744,7 +756,7 @@ func TestE2E_CacheMountIsolation(t *testing.T) {
 
 	// Second build with different cache ID "cache-b" - should NOT see cache-a data
 	cacheMountsB := []CacheMount{
-		{ID: "e2e-test-cache-isolation-b", Target: "/cache", Mode: llb.CacheMountShared},
+		{ID: "e2e-test-cache-isolation-b", Target: "/home/build/cache", Mode: llb.CacheMountShared},
 	}
 	outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMountsB, map[string]string{
 		"BUILD_ID": "from-cache-b",
@@ -761,7 +773,6 @@ func TestE2E_CacheMountIsolation(t *testing.T) {
 
 // TestE2E_GoCacheMounts verifies Go cache mount paths persist across builds
 func TestE2E_GoCacheMounts(t *testing.T) {
-	t.Skip("skipping: cache directories need root access - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "17-go-cache.yaml")
 
@@ -791,7 +802,6 @@ func TestE2E_GoCacheMounts(t *testing.T) {
 
 // TestE2E_PythonCacheMounts verifies Python pip cache mount path persists
 func TestE2E_PythonCacheMounts(t *testing.T) {
-	t.Skip("skipping: cache directories need root access - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "18-python-cache.yaml")
 
@@ -815,7 +825,6 @@ func TestE2E_PythonCacheMounts(t *testing.T) {
 
 // TestE2E_NodeCacheMounts verifies Node.js npm cache mount path persists
 func TestE2E_NodeCacheMounts(t *testing.T) {
-	t.Skip("skipping: cache directories need root access - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "19-node-cache.yaml")
 
@@ -839,7 +848,6 @@ func TestE2E_NodeCacheMounts(t *testing.T) {
 
 // TestE2E_RustCacheMounts verifies Rust cargo cache mount paths persist
 func TestE2E_RustCacheMounts(t *testing.T) {
-	t.Skip("skipping: cache directories need root access - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "20-rust-cache.yaml")
 
@@ -868,7 +876,6 @@ func TestE2E_RustCacheMounts(t *testing.T) {
 
 // TestE2E_ApkCacheMounts verifies APK package cache mount path persists
 func TestE2E_ApkCacheMounts(t *testing.T) {
-	t.Skip("skipping: cache directories need root access - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "21-apk-cache.yaml")
 
@@ -894,7 +901,6 @@ func TestE2E_ApkCacheMounts(t *testing.T) {
 
 // TestE2E_DefaultCacheMounts verifies all default cache mounts work together
 func TestE2E_DefaultCacheMounts(t *testing.T) {
-	t.Skip("skipping: cache directories need root access - see issue #41")
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "17-go-cache.yaml") // Use Go cache test which writes to default paths
 

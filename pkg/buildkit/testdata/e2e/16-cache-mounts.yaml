@@ -13,11 +13,15 @@ pipeline:
   - name: Write to cache
     runs: |
       # Write a marker file to the cache directory
-      mkdir -p /cache
-      echo "build-$BUILD_ID" >> /cache/builds.txt
-      wc -l < /cache/builds.txt > /cache/count.txt
+      # Use /home/build/cache since builds run as build user (UID 1000)
+      # Create the cache directory if it doesn't exist (cache mount may not auto-create)
+      mkdir -p /home/build/cache
+
+      # Write build marker
+      echo "build-$BUILD_ID" >> /home/build/cache/builds.txt
+      wc -l < /home/build/cache/builds.txt > /home/build/cache/count.txt
 
       # Copy cache contents to output for verification
       mkdir -p ${{targets.destdir}}/usr/share/cache-test
-      cp /cache/builds.txt ${{targets.destdir}}/usr/share/cache-test/
-      cp /cache/count.txt ${{targets.destdir}}/usr/share/cache-test/
+      cp /home/build/cache/builds.txt ${{targets.destdir}}/usr/share/cache-test/
+      cp /home/build/cache/count.txt ${{targets.destdir}}/usr/share/cache-test/

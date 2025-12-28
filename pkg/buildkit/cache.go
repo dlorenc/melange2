@@ -32,8 +32,18 @@ type CacheMount struct {
 }
 
 // CacheMountOption returns the LLB run option for this cache mount.
+// The cache directory is created with build user ownership (UID/GID 1000)
+// so that pipeline steps running as the build user can write to the cache.
 func (c CacheMount) CacheMountOption() llb.RunOption {
-	return llb.AddMount(c.Target, llb.Scratch(), llb.AsPersistentCacheDir(c.ID, c.Mode))
+	// Create a scratch state with a directory owned by the build user.
+	// This follows the same pattern as Docker's RUN --mount=type=cache,uid=X,gid=X
+	cacheState := llb.Scratch().File(
+		llb.Mkdir("/cache", 0755, llb.WithUIDGID(BuildUserUID, BuildUserGID)),
+	)
+	return llb.AddMount(c.Target, cacheState,
+		llb.AsPersistentCacheDir(c.ID, c.Mode),
+		llb.SourcePath("/cache"),
+	)
 }
 
 // CacheMountOptions returns LLB run options for multiple cache mounts.
