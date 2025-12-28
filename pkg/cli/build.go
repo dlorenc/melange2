@@ -61,7 +61,7 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.StringVar(&flags.Libc, "override-host-triplet-libc-substitution-flavor", "gnu", "override the flavor of libc for ${{host.triplet.*}} substitutions (e.g. gnu,musl) -- default is gnu")
 	fs.StringSliceVar(&flags.BuildOption, "build-option", []string{}, "build options to enable")
 	fs.StringVar(&flags.BuildKitAddr, "buildkit-addr", buildkit.DefaultAddr, "BuildKit daemon address (e.g., tcp://localhost:1234)")
-	fs.BoolVar(&flags.EnableMultiLayer, "enable-multi-layer", false, "enable multi-layer mode for better BuildKit cache efficiency")
+	fs.IntVar(&flags.MaxLayers, "max-layers", 50, "maximum number of layers for build environment (1 for single layer, higher for better cache efficiency)")
 	fs.StringSliceVarP(&flags.ExtraKeys, "keyring-append", "k", []string{}, "path to extra keys to include in the build environment keyring")
 	fs.StringSliceVarP(&flags.ExtraRepos, "repository-append", "r", []string{}, "path to extra repositories to include in the build environment")
 	fs.StringSliceVar(&flags.ExtraPackages, "package-append", []string{}, "extra packages to install for each of the build environments")
@@ -110,7 +110,7 @@ type BuildFlags struct {
 	Debug              bool
 	Remove             bool
 	BuildKitAddr       string
-	EnableMultiLayer   bool
+	MaxLayers          int
 	ExtraPackages      []string
 	Libc                 string
 	LintRequire          []string
@@ -202,7 +202,7 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 		build.WithConfigFileLicense(flags.ConfigFileLicense),
 		build.WithGenerateProvenance(flags.GenerateProvenance),
 		build.WithBuildKitAddr(flags.BuildKitAddr),
-		build.WithEnableMultiLayer(flags.EnableMultiLayer),
+		build.WithMaxLayers(flags.MaxLayers),
 	}
 
 	if len(args) > 0 {

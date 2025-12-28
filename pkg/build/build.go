@@ -108,11 +108,13 @@ type Build struct {
 
 	EnabledBuildOptions []string
 
-	// EnableMultiLayer enables apko's multi-layer mode for better BuildKit
-	// cache efficiency. When enabled, the build environment is split into
+	// MaxLayers controls the maximum number of layers for the build environment.
+	// When set to 1, a single layer is used (original behavior).
+	// When set to a higher value (default 50), apko's multi-layer mode is used
+	// for better BuildKit cache efficiency, splitting the environment into
 	// multiple layers (base OS, compilers, package-specific deps) which
 	// can be cached independently.
-	EnableMultiLayer bool
+	MaxLayers int
 
 	// SBOMGenerator is the generator used to create SBOMs for this build.
 	// If not set, defaults to DefaultSBOMGenerator.

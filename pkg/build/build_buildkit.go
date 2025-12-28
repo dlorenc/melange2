@@ -314,11 +314,12 @@ func (b *Build) buildGuestLayer(ctx context.Context) (v1.Layer, *apko_build.Rele
 	return layers[0], releaseData, cleanup, nil
 }
 
-// buildGuestLayers builds the apko image and returns multiple layers for BuildKit.
-// This enables better cache efficiency by splitting the build environment into
-// separate layers that can be cached independently.
+// buildGuestLayers builds the apko image and returns layers for BuildKit.
+// The number of layers is controlled by MaxLayers:
+// - MaxLayers == 1: single layer (original behavior)
+// - MaxLayers > 1: multiple layers for better cache efficiency
 //
-// The layers are ordered from base to top:
+// When using multiple layers, they are ordered from base to top:
 // - Base OS layers (glibc, busybox) - change rarely
 // - Compiler layers (gcc, binutils) - change occasionally
 // - Package-specific dependencies - change frequently
@@ -337,6 +338,17 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 
 	imgConfig := b.Configuration.Environment
 	imgConfig.Archs = []apko_types.Architecture{b.Arch}
+
+	// Set the layer budget based on MaxLayers configuration
+	// Default to 50 if not set
+	maxLayers := b.MaxLayers
+	if maxLayers == 0 {
+		maxLayers = 50
+	}
+	imgConfig.Layering = &apko_types.Layering{
+		Budget: maxLayers,
+	}
+	log.Infof("using layer budget of %d", maxLayers)
 
 	opts := []apko_build.Option{
 		apko_build.WithImageConfiguration(imgConfig),
@@ -365,6 +377,8 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 		return nil, nil, nil, errors.New("missing locked config")
 	}
 
+	// Preserve the layering configuration in the locked config
+	locked.Layering = imgConfig.Layering
 	b.Configuration.Environment = *locked
 	opts = append(opts, apko_build.WithImageConfiguration(*locked))
 
@@ -392,26 +406,14 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 		return nil, nil, nil, fmt.Errorf("unable to generate image: %w", err)
 	}
 
-	// Get the layers using apko's multi-layer support
-	// This splits the image into multiple layers for better cache efficiency
-	var layers []v1.Layer
-	if b.EnableMultiLayer {
-		log.Info("using multi-layer mode for better cache efficiency")
-		layers, err = bc.BuildLayers(ctx)
-		if err != nil {
-			cleanup()
-			return nil, nil, nil, fmt.Errorf("building layers: %w", err)
-		}
-		log.Infof("apko generated %d layer(s)", len(layers))
-	} else {
-		// Fall back to single layer mode
-		_, layer, err := bc.ImageLayoutToLayer(ctx)
-		if err != nil {
-			cleanup()
-			return nil, nil, nil, err
-		}
-		layers = []v1.Layer{layer}
+	// Always use BuildLayers - apko respects the Layering.Budget setting
+	// and will return the appropriate number of layers
+	layers, err := bc.BuildLayers(ctx)
+	if err != nil {
+		cleanup()
+		return nil, nil, nil, fmt.Errorf("building layers: %w", err)
 	}
+	log.Infof("apko generated %d layer(s)", len(layers))
 
 	// Get release data
 	releaseData := &apko_build.ReleaseData{
