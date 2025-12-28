@@ -164,6 +164,15 @@ func (e *e2eTestContext) buildConfig(cfg *config.Configuration) (string, error) 
 	// Set up build user (idempotent - wolfi-base already has it)
 	state = SetupBuildUser(state)
 
+	// Install any packages needed for the build (runs as root before switching to build user)
+	// Check for packages in environment (convention: TEST_INSTALL_PACKAGES)
+	if pkgs, ok := cfg.Environment.Environment["TEST_INSTALL_PACKAGES"]; ok && pkgs != "" {
+		state = state.Run(
+			llb.Args([]string{"/bin/sh", "-c", "apk add --no-cache " + pkgs}),
+			llb.WithCustomName("install test dependencies"),
+		).Root()
+	}
+
 	// Prepare workspace
 	state = PrepareWorkspace(state, cfg.Package.Name)
 

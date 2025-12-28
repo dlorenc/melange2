@@ -6,6 +6,11 @@ package:
   copyright:
     - license: MIT
 
+environment:
+  environment:
+    # Install curl for HTTP fetch test (runs as root before build user pipelines)
+    TEST_INSTALL_PACKAGES: curl
+
 pipeline:
   - name: setup
     runs: |
