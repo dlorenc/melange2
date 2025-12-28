@@ -266,6 +266,181 @@ func TestIsValidPath(t *testing.T) {
 	}
 }
 
+// TestLoadLayersSingleLayer verifies LoadLayers works with a single layer
+func TestLoadLayersSingleLayer(t *testing.T) {
+	loader := NewImageLoader("")
+
+	layer := createTestLayer(t, map[string][]byte{
+		"etc/test-file": []byte("single layer content\n"),
+	})
+
+	result, err := loader.LoadLayers(context.Background(), []v1.Layer{layer}, "single")
+	require.NoError(t, err)
+	defer result.Cleanup()
+
+	// Verify extraction
+	require.Equal(t, 1, result.LayerCount)
+	require.Len(t, result.LocalDirs, 1)
+
+	// Find the extracted dir
+	var extractDir string
+	for _, dir := range result.LocalDirs {
+		extractDir = dir
+		break
+	}
+
+	content, err := os.ReadFile(filepath.Join(extractDir, "etc", "test-file"))
+	require.NoError(t, err)
+	require.Equal(t, "single layer content\n", string(content))
+
+	// Verify the LLB state is valid
+	def, err := result.State.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+	require.NotEmpty(t, def.Def)
+}
+
+// TestLoadLayersMultipleLayers verifies LoadLayers works with multiple layers
+func TestLoadLayersMultipleLayers(t *testing.T) {
+	loader := NewImageLoader("")
+
+	// Create three layers with different files
+	layer1 := createTestLayer(t, map[string][]byte{
+		"etc/base-config": []byte("base config\n"),
+	})
+	layer2 := createTestLayer(t, map[string][]byte{
+		"usr/bin/compiler": []byte("compiler binary\n"),
+	})
+	layer3 := createTestLayer(t, map[string][]byte{
+		"home/build/source.c": []byte("int main() { return 0; }\n"),
+	})
+
+	result, err := loader.LoadLayers(context.Background(), []v1.Layer{layer1, layer2, layer3}, "multi")
+	require.NoError(t, err)
+	defer result.Cleanup()
+
+	// Verify three layers were extracted
+	require.Equal(t, 3, result.LayerCount)
+	require.Len(t, result.LocalDirs, 3)
+
+	// All three local dirs should be present
+	expectedNames := map[string]bool{
+		"apko-multi-layer-0": true,
+		"apko-multi-layer-1": true,
+		"apko-multi-layer-2": true,
+	}
+	for name := range result.LocalDirs {
+		require.True(t, expectedNames[name], "unexpected local name: %s", name)
+	}
+
+	// Verify the LLB state is valid
+	def, err := result.State.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+	require.NotEmpty(t, def.Def)
+}
+
+// TestLoadLayersCleanup verifies cleanup works for multiple layers
+func TestLoadLayersCleanup(t *testing.T) {
+	loader := NewImageLoader("")
+
+	layer1 := createTestLayer(t, map[string][]byte{
+		"file1.txt": []byte("content1"),
+	})
+	layer2 := createTestLayer(t, map[string][]byte{
+		"file2.txt": []byte("content2"),
+	})
+
+	result, err := loader.LoadLayers(context.Background(), []v1.Layer{layer1, layer2}, "cleanup-multi")
+	require.NoError(t, err)
+
+	// All directories should exist
+	for _, dir := range result.LocalDirs {
+		_, err := os.Stat(dir)
+		require.NoError(t, err, "directory should exist before cleanup: %s", dir)
+	}
+
+	// Cleanup should remove all of them
+	require.NoError(t, result.Cleanup())
+
+	for _, dir := range result.LocalDirs {
+		_, err := os.Stat(dir)
+		require.True(t, os.IsNotExist(err), "directory should not exist after cleanup: %s", dir)
+	}
+}
+
+// TestLoadLayersWithCustomDir verifies LoadLayers uses custom directory
+func TestLoadLayersWithCustomDir(t *testing.T) {
+	customDir := t.TempDir()
+	loader := NewImageLoader(customDir)
+
+	layer1 := createTestLayer(t, map[string][]byte{
+		"test1.txt": []byte("content1"),
+	})
+	layer2 := createTestLayer(t, map[string][]byte{
+		"test2.txt": []byte("content2"),
+	})
+
+	result, err := loader.LoadLayers(context.Background(), []v1.Layer{layer1, layer2}, "custom-multi")
+	require.NoError(t, err)
+	defer result.Cleanup()
+
+	// All directories should be under customDir
+	for _, dir := range result.LocalDirs {
+		require.True(t, strings.HasPrefix(dir, customDir), "dir should be under custom dir: %s", dir)
+	}
+}
+
+// TestLoadLayersIntegration verifies LoadLayers works with BuildKit
+func TestLoadLayersIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	c, err := client.New(ctx, bk.Addr)
+	require.NoError(t, err)
+	defer c.Close()
+
+	// Create two layers simulating base + compiler
+	layer1 := createTestLayer(t, map[string][]byte{
+		"etc/base-config": []byte("base=true\n"),
+	})
+	layer2 := createTestLayer(t, map[string][]byte{
+		"usr/local/config": []byte("compiler=gcc\n"),
+	})
+
+	loader := NewImageLoader("")
+	result, err := loader.LoadLayers(ctx, []v1.Layer{layer1, layer2}, "integration-multi")
+	require.NoError(t, err)
+	defer result.Cleanup()
+
+	// Use alpine as base and overlay our files from each layer
+	state := llb.Image(TestBaseImage)
+
+	// Copy files from each layer
+	for localName := range result.LocalDirs {
+		state = state.File(
+			llb.Copy(llb.Local(localName), "/", "/", &llb.CopyInfo{
+				AllowWildcard: true,
+			}),
+		)
+	}
+
+	// Run a command that reads our files
+	state = state.Run(
+		llb.Args([]string{"/bin/sh", "-c", "cat /etc/base-config && cat /usr/local/config"}),
+	).Root()
+
+	def, err := state.Marshal(ctx, llb.LinuxAmd64)
+	require.NoError(t, err)
+
+	_, err = c.Solve(ctx, def, client.SolveOpt{
+		LocalDirs: result.LocalDirs,
+	}, nil)
+	require.NoError(t, err)
+}
+
 // Ensure the LoadResult state can be used in a real build
 func TestLoadResultUsage(t *testing.T) {
 	if testing.Short() {

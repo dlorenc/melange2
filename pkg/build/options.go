@@ -392,3 +392,22 @@ func WithBuildKitAddr(addr string) Option {
 		return nil
 	}
 }
+
+// WithEnableMultiLayer enables apko's multi-layer mode for better BuildKit
+// cache efficiency. When enabled, the build environment is split into multiple
+// layers (base OS, compilers, package-specific deps) which can be cached
+// independently by BuildKit.
+//
+// This provides several benefits:
+// - Better cache hits: changes to package-specific deps don't invalidate compiler layer
+// - Faster rebuilds: only changed layers need to be rebuilt/transferred
+// - Smaller transfers: BuildKit can skip unchanged layers when exporting
+// - Parallel builds: multiple builds sharing base layers benefit from shared cache
+//
+// This option only has effect when BuildKit is enabled via WithBuildKitAddr.
+func WithEnableMultiLayer(enable bool) Option {
+	return func(b *Build) error {
+		b.EnableMultiLayer = enable
+		return nil
+	}
+}

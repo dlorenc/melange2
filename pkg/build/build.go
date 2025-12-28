@@ -108,6 +108,12 @@ type Build struct {
 
 	EnabledBuildOptions []string
 
+	// EnableMultiLayer enables apko's multi-layer mode for better BuildKit
+	// cache efficiency. When enabled, the build environment is split into
+	// multiple layers (base OS, compilers, package-specific deps) which
+	// can be cached independently.
+	EnableMultiLayer bool
+
 	// SBOMGenerator is the generator used to create SBOMs for this build.
 	// If not set, defaults to DefaultSBOMGenerator.
 	SBOMGenerator sbom.Generator

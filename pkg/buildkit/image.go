@@ -223,3 +223,140 @@ func isValidPath(destDir, target, name string) bool {
 
 	return true
 }
+
+// MultiLayerResult contains the result of loading multiple layers.
+type MultiLayerResult struct {
+	// State is the combined LLB state representing all loaded layers.
+	State llb.State
+
+	// LocalDirs maps local names to their extracted directories.
+	// These must all be provided to SolveOpt.LocalDirs when solving.
+	LocalDirs map[string]string
+
+	// LayerCount is the number of layers that were loaded.
+	LayerCount int
+
+	// Cleanup removes all extracted directories.
+	// Should be called when the build is complete.
+	Cleanup func() error
+}
+
+// LoadLayers loads multiple v1.Layer objects (as produced by apko's BuildLayers)
+// into BuildKit. Each layer is extracted and loaded separately, allowing BuildKit
+// to cache each layer independently for better cache efficiency.
+//
+// The approach is:
+// 1. Extract each layer tar to its own local directory
+// 2. Use llb.Local() to reference each layer
+// 3. Progressively copy each layer on top of scratch to create the base state
+//
+// This enables better caching because:
+// - Base OS layers (glibc, busybox) change rarely
+// - Compiler layers (gcc, binutils) change occasionally
+// - Package-specific dependencies change more frequently
+// By splitting into layers, only changed layers need to be rebuilt/transferred.
+//
+// The caller must:
+// - Include all result.LocalDirs entries in SolveOpt.LocalDirs
+// - Call result.Cleanup() when done
+func (l *ImageLoader) LoadLayers(ctx context.Context, layers []v1.Layer, baseName string) (*MultiLayerResult, error) {
+	// If only one layer, use the simpler single-layer path
+	if len(layers) == 1 {
+		result, err := l.LoadLayer(ctx, layers[0], baseName)
+		if err != nil {
+			return nil, err
+		}
+		return &MultiLayerResult{
+			State:      result.State,
+			LocalDirs:  map[string]string{result.LocalName: result.ExtractDir},
+			LayerCount: 1,
+			Cleanup:    result.Cleanup,
+		}, nil
+	}
+
+	localDirs := make(map[string]string, len(layers))
+	var cleanupFuncs []func() error
+
+	// Extract each layer
+	for i, layer := range layers {
+		layerName := fmt.Sprintf("%s-layer-%d", baseName, i)
+
+		// Create extraction directory
+		var extractDir string
+		var cleanup func() error
+
+		if l.extractDir != "" {
+			extractDir = filepath.Join(l.extractDir, layerName)
+			if err := os.MkdirAll(extractDir, 0755); err != nil {
+				// Clean up any previously extracted layers
+				for _, cf := range cleanupFuncs {
+					_ = cf()
+				}
+				return nil, fmt.Errorf("creating extract dir for layer %d: %w", i, err)
+			}
+			cleanup = func() error {
+				return os.RemoveAll(extractDir)
+			}
+		} else {
+			var err error
+			extractDir, err = os.MkdirTemp("", fmt.Sprintf("melange-apko-%s-*", layerName))
+			if err != nil {
+				// Clean up any previously extracted layers
+				for _, cf := range cleanupFuncs {
+					_ = cf()
+				}
+				return nil, fmt.Errorf("creating temp dir for layer %d: %w", i, err)
+			}
+			cleanup = func() error {
+				return os.RemoveAll(extractDir)
+			}
+		}
+		cleanupFuncs = append(cleanupFuncs, cleanup)
+
+		// Extract the layer
+		if err := extractLayer(layer, extractDir); err != nil {
+			// Clean up all extracted layers on error
+			for _, cf := range cleanupFuncs {
+				_ = cf()
+			}
+			return nil, fmt.Errorf("extracting layer %d: %w", i, err)
+		}
+
+		localName := fmt.Sprintf("apko-%s", layerName)
+		localDirs[localName] = extractDir
+	}
+
+	// Build the combined LLB state by progressively copying each layer
+	state := llb.Scratch()
+	for i := range layers {
+		layerName := fmt.Sprintf("%s-layer-%d", baseName, i)
+		localName := fmt.Sprintf("apko-%s", layerName)
+		local := llb.Local(localName)
+
+		state = state.File(
+			llb.Copy(local, "/", "/"),
+			llb.WithCustomName(fmt.Sprintf("copy apko layer %d/%d", i+1, len(layers))),
+		)
+	}
+
+	// Create combined cleanup function
+	cleanup := func() error {
+		var errs []error
+		for _, cf := range cleanupFuncs {
+			if err := cf(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if len(errs) > 0 {
+			return fmt.Errorf("cleanup errors: %v", errs)
+		}
+		return nil
+	}
+
+	return &MultiLayerResult{
+		State:      state,
+		LocalDirs:  localDirs,
+		LayerCount: len(layers),
+		Cleanup:    cleanup,
+	}, nil
+}

@@ -126,15 +126,33 @@ type BuildConfig struct {
 }
 
 // Build executes a build using BuildKit.
-// It takes an apko layer, runs the pipelines, and exports the workspace.
+// It takes a single apko layer, runs the pipelines, and exports the workspace.
+// For better cache efficiency, consider using BuildWithLayers instead.
 func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) error {
+	return b.BuildWithLayers(ctx, []v1.Layer{layer}, cfg)
+}
+
+// BuildWithLayers executes a build using BuildKit with multi-layer support.
+// It takes multiple apko layers (as produced by apko's BuildLayers), runs the
+// pipelines, and exports the workspace.
+//
+// Using multiple layers provides better BuildKit cache efficiency:
+// - Base OS layers (glibc, busybox) change rarely and can be cached
+// - Compiler layers (gcc, binutils) change occasionally
+// - Package-specific dependencies change more frequently
+// Only changed layers need to be rebuilt/transferred.
+func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *BuildConfig) error {
 	log := clog.FromContext(ctx)
 
-	// Load the apko layer
-	log.Info("loading apko layer into BuildKit")
-	loadResult, err := b.loader.LoadLayer(ctx, layer, cfg.PackageName)
+	if len(layers) == 0 {
+		return fmt.Errorf("at least one layer is required")
+	}
+
+	// Load the apko layers
+	log.Infof("loading %d apko layer(s) into BuildKit", len(layers))
+	loadResult, err := b.loader.LoadLayers(ctx, layers, cfg.PackageName)
 	if err != nil {
-		return fmt.Errorf("loading apko layer: %w", err)
+		return fmt.Errorf("loading apko layers: %w", err)
 	}
 	defer func() {
 		if err := loadResult.Cleanup(); err != nil {
@@ -142,19 +160,18 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 		}
 	}()
 
-	// Start from scratch and copy the apko rootfs
-	log.Info("building LLB graph")
-	state := llb.Scratch().File(
-		llb.Copy(llb.Local(loadResult.LocalName), "/", "/"),
-		llb.WithCustomName("copy apko rootfs"),
-	)
+	// Use the pre-built state from LoadLayers which already combines all layers
+	log.Infof("building LLB graph with %d layer(s)", loadResult.LayerCount)
+	state := loadResult.State
 
 	// Prepare workspace directories
 	state = PrepareWorkspace(state, cfg.PackageName)
 
 	// If we have source files, copy them to the workspace
-	localDirs := map[string]string{
-		loadResult.LocalName: loadResult.ExtractDir,
+	// Start with the layer local dirs from LoadLayers
+	localDirs := make(map[string]string, len(loadResult.LocalDirs)+2)
+	for k, v := range loadResult.LocalDirs {
+		localDirs[k] = v
 	}
 
 	if cfg.SourceDir != "" {
@@ -314,12 +331,27 @@ type SubpackageTestConfig struct {
 // - Each subpackage test runs in a FRESH container (isolation)
 // - Exports test result markers instead of package files
 func (b *Builder) Test(ctx context.Context, layer v1.Layer, cfg *TestConfig) error {
+	return b.TestWithLayers(ctx, []v1.Layer{layer}, cfg)
+}
+
+// TestWithLayers executes tests using BuildKit with multi-layer support.
+// Unlike Build, Test:
+// - Runs in an environment with the package already installed
+// - Each subpackage test runs in a FRESH container (isolation)
+// - Exports test result markers instead of package files
+//
+// Using multiple layers provides better BuildKit cache efficiency.
+func (b *Builder) TestWithLayers(ctx context.Context, layers []v1.Layer, cfg *TestConfig) error {
 	log := clog.FromContext(ctx)
+
+	if len(layers) == 0 {
+		return fmt.Errorf("at least one layer is required")
+	}
 
 	// Run main package tests if any
 	if len(cfg.TestPipelines) > 0 {
 		log.Info("running main package tests")
-		if err := b.runTestPipelines(ctx, layer, cfg.PackageName, cfg.TestPipelines, cfg); err != nil {
+		if err := b.runTestPipelinesWithLayers(ctx, layers, cfg.PackageName, cfg.TestPipelines, cfg); err != nil {
 			return fmt.Errorf("main package tests failed: %w", err)
 		}
 		log.Info("main package tests passed")
@@ -334,7 +366,7 @@ func (b *Builder) Test(ctx context.Context, layer v1.Layer, cfg *TestConfig) err
 		}
 
 		log.Infof("running tests for subpackage %s", spTest.Name)
-		if err := b.runTestPipelines(ctx, layer, spTest.Name, spTest.Pipelines, cfg); err != nil {
+		if err := b.runTestPipelinesWithLayers(ctx, layers, spTest.Name, spTest.Pipelines, cfg); err != nil {
 			return fmt.Errorf("subpackage %s tests failed: %w", spTest.Name, err)
 		}
 		log.Infof("subpackage %s tests passed", spTest.Name)
@@ -382,6 +414,150 @@ func (b *Builder) runTestPipelines(ctx context.Context, layer v1.Layer, pkgName 
 
 	localDirs := map[string]string{
 		loadResult.LocalName: loadResult.ExtractDir,
+	}
+
+	// Copy test fixtures from source directory if provided
+	if cfg.SourceDir != "" {
+		// Only mount source directory if it exists
+		if _, err := os.Stat(cfg.SourceDir); err == nil {
+			sourceLocalName := "test-source"
+			state = state.File(
+				llb.Copy(llb.Local(sourceLocalName), "/", DefaultWorkDir, &llb.CopyInfo{
+					CopyDirContentsOnly: true,
+				}),
+				llb.WithCustomName("copy test fixtures"),
+			)
+			localDirs[sourceLocalName] = cfg.SourceDir
+		}
+	}
+
+	// Copy cache directory if provided
+	if cfg.CacheDir != "" {
+		state = CopyCacheToWorkspace(state, CacheLocalName)
+		localDirs[CacheLocalName] = cfg.CacheDir
+	}
+
+	// Configure pipeline builder for this test run
+	pipelineBuilder := NewPipelineBuilder()
+	pipelineBuilder.Debug = cfg.Debug
+	if cfg.BaseEnv != nil {
+		pipelineBuilder.BaseEnv = MergeEnv(pipelineBuilder.BaseEnv, cfg.BaseEnv)
+	}
+	pipelineBuilder.CacheMounts = b.pipeline.CacheMounts
+
+	// Run test pipelines
+	state, err = pipelineBuilder.BuildPipelines(state, pipelines)
+	if err != nil {
+		return fmt.Errorf("building test pipelines: %w", err)
+	}
+
+	// Create a marker file to indicate test success
+	// This allows e2e tests to verify that tests actually ran
+	testResultDir := fmt.Sprintf("/test-results/%s", pkgName)
+	state = state.Run(
+		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(
+			"mkdir -p %s && echo 'PASSED' > %s/status.txt",
+			testResultDir, testResultDir,
+		)}),
+		llb.WithCustomName(fmt.Sprintf("mark %s tests as passed", pkgName)),
+	).Root()
+
+	// Export test results
+	exportState := llb.Scratch().File(
+		llb.Copy(state, "/test-results/", "/", &llb.CopyInfo{
+			CopyDirContentsOnly: true,
+		}),
+		llb.WithCustomName("export test results"),
+	)
+
+	// Marshal to LLB definition
+	ociPlatform := cfg.Arch.ToOCIPlatform()
+	platform := llb.Platform(ocispecs.Platform{
+		OS:           ociPlatform.OS,
+		Architecture: ociPlatform.Architecture,
+		Variant:      ociPlatform.Variant,
+	})
+	def, err := exportState.Marshal(ctx, platform)
+	if err != nil {
+		return fmt.Errorf("marshaling LLB: %w", err)
+	}
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(cfg.WorkspaceDir, 0755); err != nil {
+		return fmt.Errorf("creating workspace dir: %w", err)
+	}
+
+	testResultsDir := filepath.Join(cfg.WorkspaceDir, "test-results")
+	if err := os.MkdirAll(testResultsDir, 0755); err != nil {
+		return fmt.Errorf("creating test-results dir: %w", err)
+	}
+
+	// Create progress writer
+	progress := NewProgressWriter(os.Stderr, b.ProgressMode, b.ShowLogs)
+
+	// Solve and export
+	statusCh := make(chan *client.SolveStatus)
+	eg, egCtx := errgroup.WithContext(ctx)
+
+	eg.Go(func() error {
+		return progress.Write(egCtx, statusCh)
+	})
+
+	eg.Go(func() error {
+		_, err := b.client.Client().Solve(ctx, def, client.SolveOpt{
+			LocalDirs: localDirs,
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterLocal,
+				OutputDir: testResultsDir,
+			}},
+		}, statusCh)
+		return err
+	})
+
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("test execution failed: %w", err)
+	}
+
+	return nil
+}
+
+// runTestPipelinesWithLayers runs test pipelines for a single package/subpackage with multi-layer support.
+// Each invocation uses fresh layers to ensure isolation.
+func (b *Builder) runTestPipelinesWithLayers(ctx context.Context, layers []v1.Layer, pkgName string, pipelines []config.Pipeline, cfg *TestConfig) error {
+	log := clog.FromContext(ctx)
+
+	// Load the apko layers (fresh for each test to ensure isolation)
+	loadResult, err := b.loader.LoadLayers(ctx, layers, pkgName+"-test")
+	if err != nil {
+		return fmt.Errorf("loading apko layers: %w", err)
+	}
+	defer func() {
+		if err := loadResult.Cleanup(); err != nil {
+			log.Warnf("cleanup failed: %v", err)
+		}
+	}()
+
+	// Use the pre-built state from LoadLayers which already combines all layers
+	state := loadResult.State
+
+	// Ensure build user exists (for images that don't have it, like plain alpine)
+	// This is idempotent - if the user already exists, adduser/addgroup will succeed silently
+	state = SetupBuildUser(state)
+
+	// Prepare workspace (simpler than build - no output dirs needed)
+	// Owned by build user for permission parity with baseline melange
+	state = state.File(
+		llb.Mkdir(DefaultWorkDir, 0755,
+			llb.WithParents(true),
+			llb.WithUIDGID(BuildUserUID, BuildUserGID),
+		),
+		llb.WithCustomName("create workspace"),
+	)
+
+	// Start with the layer local dirs from LoadLayers
+	localDirs := make(map[string]string, len(loadResult.LocalDirs)+2)
+	for k, v := range loadResult.LocalDirs {
+		localDirs[k] = v
 	}
 
 	// Copy test fixtures from source directory if provided
