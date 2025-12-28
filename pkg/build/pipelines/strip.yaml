@@ -19,5 +19,8 @@ pipeline:
 
         [ "$osabi" != "STANDALONE" ] || continue
         # scanelf may have picked up a temp file so verify that file still exists
+        # Ensure file is writable before stripping (needed when running as non-root)
+        [ ! -e "$filename" ] && continue
+        chmod u+w "${filename}" 2>/dev/null || true
         strip ${{inputs.opts}} "${filename}" || [ ! -e "$filename" ]
       done
