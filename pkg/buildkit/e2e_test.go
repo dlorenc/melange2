@@ -15,109 +15,20 @@
 package buildkit
 
 import (
-	"archive/tar"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
-	"github.com/google/go-containerregistry/pkg/v1/layout"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlorenc/melange2/pkg/config"
 )
-
-// loadLayerFromOCITar loads a v1.Layer from an OCI tar file exported by BuildKit.
-// This is used for test layers because OCI export doesn't have device file issues
-// that local export has (device files are injected by container runtime).
-func loadLayerFromOCITar(tarPath string) (v1.Layer, error) {
-	// Extract the OCI tar to a temporary directory
-	tmpDir, err := os.MkdirTemp("", "oci-extract-*")
-	if err != nil {
-		return nil, fmt.Errorf("creating temp dir: %w", err)
-	}
-
-	// Extract the tar
-	f, err := os.Open(tarPath) // #nosec G304 - Test helper reading test files
-	if err != nil {
-		return nil, fmt.Errorf("opening tar: %w", err)
-	}
-	defer f.Close()
-
-	tr := tar.NewReader(f)
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("reading tar: %w", err)
-		}
-
-		target := filepath.Join(tmpDir, header.Name) // #nosec G305 - Test helper
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return nil, err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return nil, err
-			}
-			outFile, err := os.Create(target)
-			if err != nil {
-				return nil, err
-			}
-			if _, err := io.Copy(outFile, tr); err != nil { // #nosec G110 - Test helper
-				outFile.Close()
-				return nil, err
-			}
-			outFile.Close()
-		}
-	}
-
-	// Load the OCI layout
-	idx, err := layout.ImageIndexFromPath(tmpDir)
-	if err != nil {
-		return nil, fmt.Errorf("loading OCI layout: %w", err)
-	}
-
-	// Get the first image from the index
-	manifest, err := idx.IndexManifest()
-	if err != nil {
-		return nil, fmt.Errorf("getting index manifest: %w", err)
-	}
-
-	if len(manifest.Manifests) == 0 {
-		return nil, fmt.Errorf("no images in OCI layout")
-	}
-
-	img, err := idx.Image(manifest.Manifests[0].Digest)
-	if err != nil {
-		return nil, fmt.Errorf("getting image: %w", err)
-	}
-
-	// Get layers from the image
-	layers, err := img.Layers()
-	if err != nil {
-		return nil, fmt.Errorf("getting layers: %w", err)
-	}
-
-	if len(layers) == 0 {
-		return nil, fmt.Errorf("no layers in image")
-	}
-
-	// Return the last layer (which contains the full filesystem)
-	return layers[len(layers)-1], nil
-}
 
 // e2eTestContext holds shared resources for e2e tests
 type e2eTestContext struct {
@@ -1294,47 +1205,8 @@ func (e *e2eTestContext) testConfigWithSourceDir(cfg *config.Configuration, sour
 		return outDir, nil
 	}
 
-	// Create a simple test layer - in real usage this would be an apko layer
-	// with the package installed. Use TestBaseImage (wolfi-base).
-	baseState := llb.Image(TestBaseImage)
-	// Set up build user (in case image doesn't have it)
-	state := SetupBuildUser(baseState)
-	def, err := state.Marshal(e.ctx, llb.LinuxAmd64)
-	if err != nil {
-		return "", err
-	}
-
-	// Solve to get the layer
-	c, err := client.New(e.ctx, e.bk.Addr)
-	if err != nil {
-		return "", err
-	}
-	defer c.Close()
-
-	// Export to OCI tar format to avoid device file issues
-	// Device files in /dev are injected by container runtime and can't be
-	// exported to local filesystem without elevated privileges.
-	// OCI tar export stores layers as blobs without this issue.
-	tarFile := filepath.Join(e.workingDir, "test-image.tar")
-	_, err = c.Solve(e.ctx, def, client.SolveOpt{
-		Exports: []client.ExportEntry{{
-			Type:   client.ExporterOCI,
-			Output: func(m map[string]string) (io.WriteCloser, error) {
-				return os.Create(tarFile)
-			},
-		}},
-	}, nil)
-	if err != nil {
-		return "", err
-	}
-
-	// Load the OCI image and get a layer from it
-	layer, err := loadLayerFromOCITar(tarFile)
-	if err != nil {
-		return "", err
-	}
-
-	// Configure and run tests
+	// Configure and run tests using TestWithImage
+	// This uses TestBaseImage directly instead of extracting layers
 	testCfg := &TestConfig{
 		PackageName:     cfg.Package.Name,
 		Arch:            apko_types.Architecture("amd64"),
@@ -1347,7 +1219,7 @@ func (e *e2eTestContext) testConfigWithSourceDir(cfg *config.Configuration, sour
 		WorkspaceDir: outDir,
 	}
 
-	if err := builder.Test(e.ctx, layer, testCfg); err != nil {
+	if err := builder.TestWithImage(e.ctx, TestBaseImage, testCfg); err != nil {
 		return "", err
 	}
 
@@ -1356,13 +1228,6 @@ func (e *e2eTestContext) testConfigWithSourceDir(cfg *config.Configuration, sour
 
 // TestE2E_SimpleTestPipeline tests basic test pipeline execution
 func TestE2E_SimpleTestPipeline(t *testing.T) {
-	// TODO: This test needs a more robust approach to layer creation.
-	// OCI layers are deltas/diffs, not complete filesystems. When we extract
-	// a single layer and try to run SetupBuildUser commands on it, it fails
-	// because the layer doesn't have utilities like adduser, chown, etc.
-	// See: https://github.com/dlorenc/melange2/issues/32
-	t.Skip("skipping: OCI layer extraction approach doesn't provide complete filesystem for test execution")
-
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "26-simple-test.yaml")
 
@@ -1376,11 +1241,6 @@ func TestE2E_SimpleTestPipeline(t *testing.T) {
 
 // TestE2E_SubpackageTestIsolation tests that each subpackage test runs in isolation
 func TestE2E_SubpackageTestIsolation(t *testing.T) {
-	// TODO: This test needs a more robust approach to layer creation.
-	// OCI layers are deltas/diffs, not complete filesystems.
-	// See: https://github.com/dlorenc/melange2/issues/32
-	t.Skip("skipping: OCI layer extraction approach doesn't provide complete filesystem for test execution")
-
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "27-subpackage-test-isolation.yaml")
 
@@ -1402,11 +1262,6 @@ func TestE2E_SubpackageTestIsolation(t *testing.T) {
 
 // TestE2E_TestFailureDetection tests that test failures are properly detected
 func TestE2E_TestFailureDetection(t *testing.T) {
-	// TODO: This test needs a more robust approach to layer creation.
-	// OCI layers are deltas/diffs, not complete filesystems.
-	// See: https://github.com/dlorenc/melange2/issues/32
-	t.Skip("skipping: OCI layer extraction approach doesn't provide complete filesystem for test execution")
-
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "28-test-failure.yaml")
 
@@ -1417,11 +1272,6 @@ func TestE2E_TestFailureDetection(t *testing.T) {
 
 // TestE2E_TestWithSourceDir tests that source directory is properly copied
 func TestE2E_TestWithSourceDir(t *testing.T) {
-	// TODO: This test needs a more robust approach to layer creation.
-	// OCI layers are deltas/diffs, not complete filesystems.
-	// See: https://github.com/dlorenc/melange2/issues/32
-	t.Skip("skipping: OCI layer extraction approach doesn't provide complete filesystem for test execution")
-
 	e := newE2ETestContext(t)
 	cfg := loadTestConfig(t, "29-test-with-sources.yaml")
 
