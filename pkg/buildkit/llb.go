@@ -243,15 +243,21 @@ chmod 1777 /tmp`,
 // explicitly run chown to ensure proper ownership when the directory already
 // exists (e.g., when apko creates /home/build for the build user).
 func PrepareWorkspace(base llb.State, pkgName string) llb.State {
-	// First ensure the workspace directory exists with correct ownership via chown.
+	// First ensure the workspace directory exists with correct ownership and permissions.
 	// This handles the case where apko already created /home/build with
-	// incorrect ownership (root:root instead of build:build).
+	// restricted permissions (700) or incorrect ownership (root:root).
+	// We explicitly set 755 permissions to allow the build user to create files.
 	// Also ensure /tmp exists with world-writable permissions (standard Linux behavior)
 	// so that mktemp and other tools work properly.
+	// Also set up the cache directory at /var/cache/melange with build user ownership
+	// so that package managers (go, pip, npm, etc.) can write to their cache directories.
 	state := base.Run(
 		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(
-			"mkdir -p %s && chown %d:%d %s && mkdir -p /tmp && chmod 1777 /tmp",
-			DefaultWorkDir, BuildUserUID, BuildUserGID, DefaultWorkDir,
+			"mkdir -p %s && chown %d:%d %s && chmod 755 %s && "+
+				"mkdir -p /tmp && chmod 1777 /tmp && "+
+				"mkdir -p %s && chown %d:%d %s && chmod 755 %s",
+			DefaultWorkDir, BuildUserUID, BuildUserGID, DefaultWorkDir, DefaultWorkDir,
+			DefaultCacheDir, BuildUserUID, BuildUserGID, DefaultCacheDir, DefaultCacheDir,
 		)}),
 		llb.WithCustomName("create workspace"),
 	).Root()

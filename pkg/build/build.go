@@ -131,7 +131,7 @@ type Build struct {
 func New(ctx context.Context, opts ...Option) (*Build, error) {
 	b := Build{
 		WorkspaceIgnore: ".melangeignore",
-		SourceDir:       ".",
+		SourceDir:       "", // Empty by default - use --source-dir to specify
 		OutDir:          ".",
 		CacheDir:        "./melange-cache/",
 		Arch:            apko_types.ParseArchitecture(runtime.GOARCH),
