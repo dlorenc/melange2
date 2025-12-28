@@ -1,306 +1,114 @@
 # CLAUDE.md - AI Agent Guide for melange2
 
-This document helps AI agents work effectively on the melange2 codebase.
+This document is optimized for AI agents working on the melange2 codebase.
 
-## Important: Git Workflow
+## Quick Reference
 
-**Always use branches and pull requests for changes.** Do not push directly to main.
+| Task | Command |
+|------|---------|
+| Build binary | `go build -o melange2 .` |
+| Unit tests | `go test -short ./...` |
+| E2E tests | `go test -v ./pkg/buildkit/...` |
+| All tests | `go test ./...` |
+| Lint | `go vet ./...` |
+| Build package | `./melange2 build pkg.yaml --buildkit-addr tcp://localhost:1234` |
+| Debug build | `./melange2 build pkg.yaml --buildkit-addr tcp://localhost:1234 --debug` |
+
+## Git Workflow (CRITICAL)
+
+**Never push directly to main. Always use branches and PRs.**
 
 ```bash
-# Create a feature branch
-git checkout -b descriptive-branch-name
+# Create branch
+git checkout -b feat/description
 
-# Make changes and commit
-git add -A
-git commit -m "type: description
+# Commit (use conventional prefixes: feat/fix/docs/test/refactor/ci)
+git add -A && git commit -m "feat: description"
 
-Details here.
+# Push and create PR
+git push -u origin feat/description
+gh pr create --title "feat: description" --body "## Summary
+- Changes made
+
+## Test Plan
+- How tested"
+```
+
+### Commit Message Format
+```
+type: short description
+
+Longer explanation if needed.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
-
-# Push and create PR
-git push -u origin descriptive-branch-name
-gh pr create --title "type: description" --body "## Summary
-..."
+Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 ```
-
-### Branch Protection
-
-The `main` branch has protection rules:
-- Changes must be made through pull requests
-- Required status checks must pass (Build, Test, Lint)
-- PRs should be reviewed before merging
-
-### Commit Message Format
-
-Use conventional commit prefixes:
-- `feat:` - New features
-- `fix:` - Bug fixes
-- `test:` - Adding or updating tests
-- `docs:` - Documentation changes
-- `ci:` - CI/CD changes
-- `refactor:` - Code refactoring
 
 ## Project Overview
 
-melange2 is an experimental fork of [melange](https://github.com/chainguard-dev/melange) that uses BuildKit as the execution backend for building APK packages. It converts declarative YAML pipelines into BuildKit LLB operations.
+- **What**: BuildKit-based APK package builder (experimental fork of melange)
+- **Module**: `github.com/dlorenc/melange2`
+- **Core Innovation**: Converts YAML pipelines to BuildKit LLB operations
 
-**Module path:** `github.com/dlorenc/melange2`
-
-## Repository Structure
+## Repository Map
 
 ```
 .
-├── pkg/                    # Main packages
-│   ├── buildkit/          # BuildKit integration (core of melange2)
-│   │   ├── builder.go     # Main Builder struct and Build() method
-│   │   ├── client.go      # BuildKit client connection
-│   │   ├── llb.go         # LLB graph construction
-│   │   ├── image.go       # OCI image/layer handling
-│   │   ├── progress.go    # Build progress display
-│   │   └── e2e_test.go    # E2E tests using testcontainers
-│   ├── build/             # Legacy build orchestration
-│   │   └── pipelines/     # Builtin pipeline definitions (YAML)
-│   ├── cli/               # CLI commands (build, test, etc.)
-│   ├── config/            # YAML configuration parsing
-│   ├── cond/              # Conditional expression evaluation
-│   ├── container/         # Legacy container runners (bubblewrap, docker)
-│   ├── sca/               # Software Composition Analysis
-│   ├── sbom/              # SBOM generation
-│   ├── sign/              # APK signing
-│   ├── tarball/           # APK/tar file handling
-│   └── source/            # Source fetching (fetch, git-checkout)
-├── internal/              # Internal utilities
-├── e2e-tests/             # End-to-end test packages
-├── examples/              # Example melange configurations
-├── docs/                  # Documentation
-└── hack/                  # Development scripts
+├── pkg/buildkit/          # CORE - BuildKit integration
+│   ├── builder.go         # Main Build() method
+│   ├── llb.go             # Pipeline → LLB conversion
+│   ├── cache.go           # Cache mount definitions
+│   ├── progress.go        # Build progress display
+│   └── e2e_test.go        # E2E tests
+├── pkg/build/             # Build orchestration
+│   └── pipelines/         # Built-in pipeline YAMLs
+├── pkg/cli/               # CLI commands (build, test, etc.)
+├── pkg/config/            # YAML config parsing
+├── docs/
+│   ├── user-guide/        # End-user documentation
+│   └── development/       # Developer documentation
+├── examples/              # Example build files
+└── test/compare/          # Comparison tests vs Wolfi
 ```
 
-## Key Files
+## Key Files by Task
 
-| File | Purpose |
-|------|---------|
-| `pkg/buildkit/builder.go` | Main BuildKit builder - converts configs to LLB |
-| `pkg/buildkit/llb.go` | Pipeline to LLB conversion |
-| `pkg/buildkit/progress.go` | Real-time build progress display |
-| `pkg/config/config.go` | YAML configuration structures |
-| `pkg/build/pipelines/*.yaml` | Builtin pipeline definitions |
-| `pkg/cli/build.go` | `melange build` command |
-
-## Development Commands
-
-### Building
-
-```bash
-# Build the binary
-go build -o melange2 .
-
-# Build all packages
-go build -v ./...
-```
-
-### Testing
-
-```bash
-# Run unit tests (fast, no Docker required)
-go test -short ./...
-
-# Run all tests including integration tests
-go test ./...
-
-# Run e2e tests only (requires Docker for testcontainers)
-go test -v -run "TestE2E_" ./pkg/buildkit/...
-
-# Run tests with coverage
-go test -coverprofile=coverage.out ./...
-
-# View coverage report
-go tool cover -html=coverage.out
-```
-
-### Linting
-
-```bash
-# The project uses golangci-lint (latest version)
-# Note: Local golangci-lint may have version issues
-# CI uses: golangci/golangci-lint-action@v6 with version: latest
-
-# Run go vet as alternative
-go vet ./...
-```
-
-## CI Workflow
-
-The CI runs on GitHub Actions (`.github/workflows/ci.yaml`) with these jobs:
-
-| Job | Description | Duration |
-|-----|-------------|----------|
-| **Build** | Compiles all packages and binary | ~30s |
-| **Test** | Unit tests with `-short` flag | ~2min |
-| **E2E Tests** | BuildKit integration tests | ~2min |
-| **Lint** | golangci-lint | ~1min |
-| **Verify** | Checks go.mod is tidy | ~20s |
-
-### E2E Tests in CI
-
-E2E tests use testcontainers to automatically start BuildKit:
-- Docker is available on GitHub Actions runners
-- Tests skip with `-short` flag
-- Each test gets its own BuildKit container
-
-## Testing Patterns
-
-### Unit Tests
-```go
-func TestSomething(t *testing.T) {
-    // Use testify/require for assertions
-    require.NoError(t, err)
-    require.Equal(t, expected, actual)
-}
-```
-
-### E2E Tests with BuildKit
-```go
-func TestE2E_SomeFlow(t *testing.T) {
-    if testing.Short() {
-        t.Skip("skipping e2e test in short mode")
-    }
-
-    ctx := context.Background()
-    bk := startBuildKitContainer(t, ctx)  // From apko_load_test.go
-
-    // Use bk.Addr to connect to BuildKit
-    c, err := client.New(ctx, bk.Addr)
-    require.NoError(t, err)
-    defer c.Close()
-
-    // Build and verify...
-}
-```
-
-### Test Fixtures
-
-E2E test configs are in `pkg/buildkit/testdata/e2e/`:
-- Simple YAML configs testing specific flows
-- Use alpine as base image (fast, available)
-- Avoid external dependencies
-
-## Code Patterns
-
-### Variable Substitution
-
-Melange configs use `${{...}}` syntax:
-```yaml
-${{package.name}}        # Package name
-${{package.version}}     # Package version
-${{targets.destdir}}     # Output directory (/home/build/melange-out/PKG)
-${{targets.contextdir}}  # Build context (/home/build)
-${{vars.custom}}         # Custom variables
-```
-
-### Pipeline Environment
-
-```go
-// In pkg/buildkit/llb.go
-pipeline := NewPipelineBuilder()
-pipeline.BaseEnv["HOME"] = "/home/build"
-pipeline.BaseEnv["CUSTOM_VAR"] = "value"
-```
-
-### LLB Construction
-
-```go
-// Start from base image (prefer cgr.dev images to avoid Docker Hub rate limits)
-state := llb.Image("cgr.dev/chainguard/wolfi-base:latest")
-
-// Run commands
-state = state.Run(
-    llb.Args([]string{"/bin/sh", "-c", script}),
-    llb.Dir(workdir),
-    llb.AddEnv("KEY", "value"),
-).Root()
-
-// Export results
-export := llb.Scratch().File(llb.Copy(state, "/output", "/"))
-```
+| Task | Read These Files |
+|------|------------------|
+| Modify build process | `pkg/buildkit/builder.go`, `pkg/buildkit/llb.go` |
+| Add CLI flag | `pkg/cli/build.go` |
+| Add built-in pipeline | `pkg/build/pipelines/{category}/{name}.yaml` |
+| Debug test failures | `pkg/buildkit/e2e_test.go` |
+| Understand caching | `pkg/buildkit/cache.go` |
+| Config parsing | `pkg/config/config.go` |
 
 ## Common Tasks
 
-### Submitting Changes
+### Start BuildKit
+```bash
+docker run -d --name buildkitd --privileged -p 1234:1234 \
+  moby/buildkit:latest --addr tcp://0.0.0.0:1234
+```
 
-1. **Create a branch:**
-   ```bash
-   git checkout -b feature-name
-   ```
-
-2. **Make changes and test locally:**
-   ```bash
-   go build ./...
-   go test -short ./...
-   go vet ./...
-   ```
-
-3. **Commit and push:**
-   ```bash
-   git add -A
-   git commit -m "type: description"
-   git push -u origin feature-name
-   ```
-
-4. **Create PR:**
-   ```bash
-   gh pr create --title "type: description" --body "## Summary
-   - What changed
-   - Why
-
-   ## Test Plan
-   - How it was tested
-   "
-   ```
-
-5. **Monitor CI and iterate:**
-   ```bash
-   # Watch CI status
-   gh run list --repo dlorenc/melange2 --limit 1
-
-   # View run details
-   gh run view <run-id> --repo dlorenc/melange2
-
-   # Get failure logs
-   gh run view <run-id> --repo dlorenc/melange2 --log-failed
-   ```
-
-6. **Fix any CI failures, commit, and push again.** CI will re-run automatically.
-
-7. **Merge when CI passes:**
-   ```bash
-   gh pr merge <pr-number> --repo dlorenc/melange2 --squash
-   ```
-
-### Adding a New E2E Test
-
-1. Create test fixture in `pkg/buildkit/testdata/e2e/XX-name.yaml`
+### Add E2E Test
+1. Create fixture: `pkg/buildkit/testdata/e2e/XX-name.yaml`
 2. Add test function in `pkg/buildkit/e2e_test.go`:
 ```go
-func TestE2E_NewFlow(t *testing.T) {
+func TestE2E_Name(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping e2e test in short mode")
+    }
     e := newE2ETestContext(t)
     cfg := loadTestConfig(t, "XX-name.yaml")
-
     outDir, err := e.buildConfig(cfg)
     require.NoError(t, err)
-
     verifyFileExists(t, outDir, "expected/path")
-    verifyFileContains(t, outDir, "file.txt", "expected content")
 }
 ```
 
-### Adding a New Pipeline
-
-1. Create YAML in `pkg/build/pipelines/category/name.yaml`
-2. Pipeline structure:
+### Add Built-in Pipeline
+1. Create `pkg/build/pipelines/category/name.yaml`:
 ```yaml
 name: Pipeline name
 needs:
@@ -312,81 +120,108 @@ inputs:
     default: default-value
 pipeline:
   - runs: |
-      # Commands using ${{inputs.param}}
+      echo ${{inputs.param}}
 ```
+2. Rebuild: `go build -o melange2 .`
 
-### Modifying BuildKit Integration
-
-Key files:
-- `pkg/buildkit/llb.go` - Pipeline to LLB conversion
-- `pkg/buildkit/builder.go` - Build orchestration
-- `pkg/buildkit/progress.go` - Progress display
-
-## Debugging
-
-### Build Failures
-
+### Run Comparison Tests
 ```bash
-# Run with debug flag for verbose output
-melange2 build package.yaml --buildkit-addr tcp://localhost:1234 --debug
+git clone --depth 1 https://github.com/wolfi-dev/os /tmp/wolfi-os
+go test -v -tags=compare ./test/compare/... \
+  -wolfi-os-path="/tmp/wolfi-os" \
+  -buildkit-addr="tcp://localhost:1234" \
+  -arch="aarch64" \
+  -packages="pkgconf,scdoc"
 ```
 
-### Test Failures
+## Code Patterns
 
-```bash
-# Run specific test with verbose output
-go test -v -run TestE2E_SpecificTest ./pkg/buildkit/...
-
-# Check testcontainers logs
-# Tests log BuildKit address: "BuildKit running at tcp://localhost:XXXXX"
+### Variable Substitution (YAML)
+```yaml
+${{package.name}}        # Package name
+${{package.version}}     # Package version
+${{targets.destdir}}     # Output directory
+${{build.arch}}          # Target architecture
+${{vars.custom}}         # Custom variable
 ```
+
+### LLB Construction (Go)
+```go
+// Run command
+state = state.Run(
+    llb.Args([]string{"/bin/sh", "-c", script}),
+    llb.Dir("/home/build"),
+    llb.User("build"),
+).Root()
+
+// Add cache mount
+state = state.Run(
+    llb.Args(cmd),
+    llb.AddMount("/go/pkg/mod", llb.Scratch(),
+        llb.AsPersistentCacheDir("melange-go-mod-cache", llb.CacheMountShared)),
+).Root()
+```
+
+### Environment Variables (deterministic)
+```go
+// Sort keys for reproducible LLB
+keys := slices.Sorted(maps.Keys(env))
+for _, k := range keys {
+    opts = append(opts, llb.AddEnv(k, env[k]))
+}
+```
+
+## CI Jobs
+
+| Job | Command | Duration |
+|-----|---------|----------|
+| Build | `go build -v ./...` | ~30s |
+| Test | `go test -short ./...` | ~2min |
+| E2E | `go test ./pkg/buildkit/...` | ~2min |
+| Lint | `golangci-lint run` | ~1min |
+| Verify | `go mod tidy && git diff` | ~20s |
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "connection reset by peer" | Wrong BuildKit command | `docker rm -f buildkitd && docker run -d --name buildkitd --privileged -p 1234:1234 moby/buildkit:latest --addr tcp://0.0.0.0:1234` |
+| "connection refused" | BuildKit not running | `docker start buildkitd` |
+| Test timeout | BuildKit unresponsive | `docker restart buildkitd` |
+| E2E test skipped | Using `-short` flag | Remove `-short` to run E2E tests |
+| Rate limit errors | Docker Hub limits | Use `cgr.dev/chainguard/wolfi-base` images |
+| Permission denied in cache | Cache mount ownership | Cache mounts use build user (UID 1000) |
+
+## What NOT to Do
+
+- **Don't push to main** - Always use PRs
+- **Don't use `-i` with git** - Interactive mode not supported
+- **Don't skip hooks** - No `--no-verify`
+- **Don't force push to main** - Even if asked
+- **Don't include timestamps** - Breaks cache determinism
+- **Don't use Docker Hub for tests** - Rate limits; use cgr.dev
+
+## Current Focus Areas
+
+- Issue #32: Comparison testing validation
+- Issue #4: Test coverage improvements
 
 ## Dependencies
 
-Key dependencies:
-- `github.com/moby/buildkit` - BuildKit client and LLB
-- `chainguard.dev/apko` - OCI image building
-- `github.com/testcontainers/testcontainers-go` - E2E test infrastructure
-- `github.com/stretchr/testify` - Test assertions
+| Package | Purpose |
+|---------|---------|
+| `github.com/moby/buildkit` | BuildKit client and LLB |
+| `chainguard.dev/apko` | OCI image building |
+| `github.com/testcontainers/testcontainers-go` | E2E test infrastructure |
+| `github.com/stretchr/testify` | Test assertions |
 
-## Comparison Testing
+## File Locations
 
-The comparison test harness validates melange2 by building packages and comparing them against pre-built packages from the Wolfi APK repository (https://packages.wolfi.dev/os/). See [docs/COMPARISON-TESTING.md](docs/COMPARISON-TESTING.md) for full documentation.
-
-### Quick Start
-
-```bash
-# Start BuildKit (correct command - don't double 'buildkitd')
-docker run -d --name buildkitd --privileged -p 8372:8372 \
-  moby/buildkit:latest --addr tcp://0.0.0.0:8372
-
-# Clone wolfi-dev/os for build configs
-git clone --depth 1 https://github.com/wolfi-dev/os /tmp/melange-compare/os
-
-# Run comparison (use aarch64 on ARM Macs for speed)
-go test -v -tags=compare ./test/compare/... \
-  -wolfi-os-path="/tmp/melange-compare/os" \
-  -buildkit-addr="tcp://localhost:8372" \
-  -arch="aarch64" \
-  -packages="pkgconf,scdoc,jq"
-```
-
-Key files:
-- `test/compare/compare_test.go` - Comparison test implementation
-- `test/compare/apkindex.go` - APKINDEX parsing
-- `test/compare/fetch.go` - Package downloading from Wolfi repo
-- `docs/COMPARISON-TESTING.md` - Full documentation
-
-Progress tracking: [GitHub Issue #32](https://github.com/dlorenc/melange2/issues/32)
-
-## Open Issues
-
-Check GitHub issues for current work:
-```bash
-gh issue list --repo dlorenc/melange2 --state open
-```
-
-Key tracking issues:
-- #4 - Test coverage improvements
-- #8-12 - Specific test additions needed
-- #32 - Comparison testing validation
+| What | Where |
+|------|-------|
+| E2E test fixtures | `pkg/buildkit/testdata/e2e/*.yaml` |
+| Built-in pipelines | `pkg/build/pipelines/**/*.yaml` |
+| CLI commands | `pkg/cli/*.go` |
+| Example configs | `examples/*.yaml` |
+| User docs | `docs/user-guide/` |
+| Dev docs | `docs/development/` |
