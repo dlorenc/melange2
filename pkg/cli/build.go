@@ -77,7 +77,7 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.StringVar(&flags.ConfigFileGitRepoURL, "git-repo-url", "", "URL of the git repository containing the build config file (defaults to detecting from configured git remotes)")
 	fs.StringVar(&flags.ConfigFileLicense, "license", "NOASSERTION", "license to use for the build config file itself")
 	fs.BoolVar(&flags.GenerateProvenance, "generate-provenance", false, "generate SLSA provenance for builds (included in a separate .attest.tar.gz file next to the APK)")
-	fs.StringVar(&flags.ExportOnFailure, "export-on-failure", "none", "export build environment on failure: none, tarball, docker, or registry")
+	fs.StringVar(&flags.ExportOnFailure, "export-on-failure", "none", "export build environment on failure: none, tarball, docker, or registry (registry requires docker login)")
 	fs.StringVar(&flags.ExportRef, "export-ref", "", "path (for tarball) or image reference (for docker/registry) for debug image export")
 
 	_ = fs.Bool("fail-on-lint-warning", false, "DEPRECATED: DO NOT USE")
