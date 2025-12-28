@@ -112,6 +112,15 @@ type Build struct {
 	// can be cached independently.
 	MaxLayers int
 
+	// ExportOnFailure specifies how to export the build environment on failure.
+	// Valid values: "" (disabled), "tarball", "docker", "registry"
+	ExportOnFailure string
+
+	// ExportRef is the path or image reference for debug image export.
+	// For tarball: file path (e.g., "/tmp/debug.tar")
+	// For docker/registry: image reference (e.g., "debug:failed")
+	ExportRef string
+
 	// SBOMGenerator is the generator used to create SBOMs for this build.
 	// If not set, defaults to DefaultSBOMGenerator.
 	SBOMGenerator sbom.Generator

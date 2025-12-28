@@ -149,15 +149,17 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 
 	// Run the build
 	cfg := &buildkit.BuildConfig{
-		PackageName:  b.Configuration.Package.Name,
-		Arch:         b.Arch,
-		Pipelines:    b.Configuration.Pipeline,
-		Subpackages:  b.Configuration.Subpackages,
-		BaseEnv:      baseEnv,
-		SourceDir:    b.SourceDir,
-		WorkspaceDir: b.WorkspaceDir,
-		CacheDir:     b.CacheDir,
-		Debug:        b.Debug,
+		PackageName:     b.Configuration.Package.Name,
+		Arch:            b.Arch,
+		Pipelines:       b.Configuration.Pipeline,
+		Subpackages:     b.Configuration.Subpackages,
+		BaseEnv:         baseEnv,
+		SourceDir:       b.SourceDir,
+		WorkspaceDir:    b.WorkspaceDir,
+		CacheDir:        b.CacheDir,
+		Debug:           b.Debug,
+		ExportOnFailure: b.ExportOnFailure,
+		ExportRef:       b.ExportRef,
 	}
 
 	log.Info("running build with BuildKit")

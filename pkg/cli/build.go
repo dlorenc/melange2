@@ -77,6 +77,8 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.StringVar(&flags.ConfigFileGitRepoURL, "git-repo-url", "", "URL of the git repository containing the build config file (defaults to detecting from configured git remotes)")
 	fs.StringVar(&flags.ConfigFileLicense, "license", "NOASSERTION", "license to use for the build config file itself")
 	fs.BoolVar(&flags.GenerateProvenance, "generate-provenance", false, "generate SLSA provenance for builds (included in a separate .attest.tar.gz file next to the APK)")
+	fs.StringVar(&flags.ExportOnFailure, "export-on-failure", "none", "export build environment on failure: none, tarball, docker, or registry")
+	fs.StringVar(&flags.ExportRef, "export-ref", "", "path (for tarball) or image reference (for docker/registry) for debug image export")
 
 	_ = fs.Bool("fail-on-lint-warning", false, "DEPRECATED: DO NOT USE")
 	_ = fs.MarkDeprecated("fail-on-lint-warning", "use --lint-require and --lint-warn instead")
@@ -120,6 +122,8 @@ type BuildFlags struct {
 	ConfigFileLicense    string
 	GenerateProvenance   bool
 	TraceFile            string
+	ExportOnFailure      string
+	ExportRef            string
 }
 
 // ParseBuildFlags parses build flags from the provided args and returns a BuildFlags struct
@@ -200,6 +204,7 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 		build.WithGenerateProvenance(flags.GenerateProvenance),
 		build.WithBuildKitAddr(flags.BuildKitAddr),
 		build.WithMaxLayers(flags.MaxLayers),
+		build.WithExportOnFailure(flags.ExportOnFailure, flags.ExportRef),
 	}
 
 	if len(args) > 0 {

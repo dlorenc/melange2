@@ -444,3 +444,112 @@ func TestMultipleOptions(t *testing.T) {
 	require.True(t, b.Debug)
 	require.Equal(t, apko_types.Architecture("aarch64"), b.Arch)
 }
+
+func TestWithMaxLayers(t *testing.T) {
+	tests := []struct {
+		name  string
+		input int
+		want  int
+	}{
+		{"positive value", 50, 50},
+		{"zero defaults to 1", 0, 1},
+		{"negative defaults to 1", -5, 1},
+		{"one is valid", 1, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Build{}
+			opt := WithMaxLayers(tt.input)
+			err := opt(b)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, b.MaxLayers)
+		})
+	}
+}
+
+func TestWithExportOnFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		exportType string
+		exportRef  string
+		wantType   string
+		wantRef    string
+		wantError  bool
+	}{
+		{
+			name:       "none disables export",
+			exportType: "none",
+			exportRef:  "",
+			wantType:   "",
+			wantRef:    "",
+		},
+		{
+			name:       "empty string disables export",
+			exportType: "",
+			exportRef:  "",
+			wantType:   "",
+			wantRef:    "",
+		},
+		{
+			name:       "tarball with path",
+			exportType: "tarball",
+			exportRef:  "/tmp/debug.tar",
+			wantType:   "tarball",
+			wantRef:    "/tmp/debug.tar",
+		},
+		{
+			name:       "docker with image ref",
+			exportType: "docker",
+			exportRef:  "debug:failed-build",
+			wantType:   "docker",
+			wantRef:    "debug:failed-build",
+		},
+		{
+			name:       "registry with full ref",
+			exportType: "registry",
+			exportRef:  "registry.example.com/debug:latest",
+			wantType:   "registry",
+			wantRef:    "registry.example.com/debug:latest",
+		},
+		{
+			name:       "tarball without ref is error",
+			exportType: "tarball",
+			exportRef:  "",
+			wantError:  true,
+		},
+		{
+			name:       "docker without ref is error",
+			exportType: "docker",
+			exportRef:  "",
+			wantError:  true,
+		},
+		{
+			name:       "registry without ref is error",
+			exportType: "registry",
+			exportRef:  "",
+			wantError:  true,
+		},
+		{
+			name:       "invalid type is error",
+			exportType: "invalid",
+			exportRef:  "something",
+			wantError:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Build{}
+			opt := WithExportOnFailure(tt.exportType, tt.exportRef)
+			err := opt(b)
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.wantType, b.ExportOnFailure)
+				require.Equal(t, tt.wantRef, b.ExportRef)
+			}
+		})
+	}
+}

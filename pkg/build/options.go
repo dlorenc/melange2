@@ -394,3 +394,34 @@ func WithMaxLayers(count int) Option {
 		return nil
 	}
 }
+
+// WithExportOnFailure configures export of the build environment on failure.
+// This is useful for debugging failed builds by allowing inspection of the
+// container filesystem at the point before the failing step.
+//
+// exportType can be:
+//   - "none": disabled (default)
+//   - "tarball": export as OCI tarball to the path specified by exportRef
+//   - "docker": export to local Docker daemon with image name specified by exportRef
+//   - "registry": push to registry with reference specified by exportRef
+//
+// exportRef is required when exportType is not "none":
+//   - For "tarball": file path (e.g., "/tmp/debug.tar")
+//   - For "docker" or "registry": image reference (e.g., "debug:failed" or "registry.io/debug:latest")
+func WithExportOnFailure(exportType, exportRef string) Option {
+	return func(b *Build) error {
+		switch exportType {
+		case "none", "":
+			b.ExportOnFailure = ""
+		case "tarball", "docker", "registry":
+			if exportRef == "" {
+				return fmt.Errorf("--export-ref is required when --export-on-failure=%s", exportType)
+			}
+			b.ExportOnFailure = exportType
+			b.ExportRef = exportRef
+		default:
+			return fmt.Errorf("invalid --export-on-failure value: %s (must be none, tarball, docker, or registry)", exportType)
+		}
+		return nil
+	}
+}

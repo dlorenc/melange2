@@ -81,18 +81,52 @@ func NewPipelineBuilder() *PipelineBuilder {
 	}
 }
 
+// PipelineResult contains the result of building pipelines.
+type PipelineResult struct {
+	// State is the final LLB state after all pipelines complete.
+	// On error, this contains the state before the failed pipeline.
+	State llb.State
+
+	// FailedAtIndex is the index of the pipeline that failed, or -1 if all succeeded.
+	FailedAtIndex int
+
+	// Error is the error that occurred, or nil if all pipelines succeeded.
+	Error error
+}
+
 // BuildPipelines builds LLB for multiple pipelines in sequence.
 // Each pipeline operates on the state returned by the previous one.
 func (b *PipelineBuilder) BuildPipelines(base llb.State, pipelines []config.Pipeline) (llb.State, error) {
+	result := b.BuildPipelinesWithRecovery(base, pipelines)
+	if result.Error != nil {
+		return llb.State{}, result.Error
+	}
+	return result.State, nil
+}
+
+// BuildPipelinesWithRecovery builds LLB for multiple pipelines in sequence,
+// returning the last good state on failure for debugging purposes.
+// This allows exporting a debug image of the build environment before
+// the failing step executed.
+func (b *PipelineBuilder) BuildPipelinesWithRecovery(base llb.State, pipelines []config.Pipeline) PipelineResult {
 	state := base
 	for i := range pipelines {
+		prevState := state
 		var err error
 		state, err = b.BuildPipeline(state, &pipelines[i])
 		if err != nil {
-			return llb.State{}, fmt.Errorf("pipeline %d: %w", i, err)
+			return PipelineResult{
+				State:         prevState,
+				FailedAtIndex: i,
+				Error:         fmt.Errorf("pipeline %d: %w", i, err),
+			}
 		}
 	}
-	return state, nil
+	return PipelineResult{
+		State:         state,
+		FailedAtIndex: -1,
+		Error:         nil,
+	}
 }
 
 // BuildPipeline converts a single pipeline to LLB operations.

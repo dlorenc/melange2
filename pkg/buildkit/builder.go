@@ -123,6 +123,15 @@ type BuildConfig struct {
 
 	// Debug enables shell debugging (set -x).
 	Debug bool
+
+	// ExportOnFailure specifies how to export the build environment on failure.
+	// Valid values: "" (disabled), "tarball", "docker", "registry"
+	ExportOnFailure string
+
+	// ExportRef is the path or image reference for debug image export.
+	// For tarball: file path (e.g., "/tmp/debug.tar")
+	// For docker/registry: image reference (e.g., "debug:failed")
+	ExportRef string
 }
 
 // Build executes a build using BuildKit.
@@ -207,20 +216,41 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		b.pipeline.BaseEnv = MergeEnv(b.pipeline.BaseEnv, cfg.BaseEnv)
 	}
 
-	// Run main pipelines
-	log.Info("running main pipelines")
-	state, err = b.pipeline.BuildPipelines(state, cfg.Pipelines)
-	if err != nil {
-		return fmt.Errorf("building main pipelines: %w", err)
+	// Helper to export debug image on failure
+	exportOnFailure := func(lastGoodState llb.State, pipelineErr error, context string) error {
+		if cfg.ExportOnFailure == "" {
+			return fmt.Errorf("%s: %w", context, pipelineErr)
+		}
+
+		log.Warnf("build failed at %s, exporting debug image...", context)
+		exportCfg := &ExportConfig{
+			Type:      ExportType(cfg.ExportOnFailure),
+			Ref:       cfg.ExportRef,
+			Arch:      cfg.Arch,
+			LocalDirs: localDirs,
+		}
+		if exportErr := b.ExportDebugImage(ctx, lastGoodState, exportCfg); exportErr != nil {
+			log.Errorf("failed to export debug image: %v", exportErr)
+		}
+		return fmt.Errorf("%s: %w", context, pipelineErr)
 	}
+
+	// Run main pipelines with recovery support
+	log.Info("running main pipelines")
+	result := b.pipeline.BuildPipelinesWithRecovery(state, cfg.Pipelines)
+	if result.Error != nil {
+		return exportOnFailure(result.State, result.Error, "building main pipelines")
+	}
+	state = result.State
 
 	// Run subpackage pipelines
 	for _, sp := range cfg.Subpackages {
 		log.Infof("running pipelines for subpackage %s", sp.Name)
-		state, err = b.pipeline.BuildPipelines(state, sp.Pipeline)
-		if err != nil {
-			return fmt.Errorf("building subpackage %s pipelines: %w", sp.Name, err)
+		result := b.pipeline.BuildPipelinesWithRecovery(state, sp.Pipeline)
+		if result.Error != nil {
+			return exportOnFailure(result.State, result.Error, fmt.Sprintf("building subpackage %s pipelines", sp.Name))
 		}
+		state = result.State
 	}
 
 	// Export the workspace

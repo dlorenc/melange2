@@ -507,6 +507,97 @@ func TestCacheConstants(t *testing.T) {
 	require.Equal(t, "cache", CacheLocalName)
 }
 
+func TestBuildPipelinesWithRecoverySuccess(t *testing.T) {
+	builder := NewPipelineBuilder()
+
+	pipelines := []config.Pipeline{
+		{Runs: "echo step1"},
+		{Runs: "echo step2"},
+		{Runs: "echo step3"},
+	}
+
+	base := llb.Image(TestBaseImage)
+	result := builder.BuildPipelinesWithRecovery(base, pipelines)
+
+	require.NoError(t, result.Error)
+	require.Equal(t, -1, result.FailedAtIndex)
+
+	// Verify we can marshal the final state
+	def, err := result.State.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+	require.NotEmpty(t, def.Def)
+}
+
+func TestBuildPipelinesWithRecoveryFailure(t *testing.T) {
+	builder := NewPipelineBuilder()
+
+	pipelines := []config.Pipeline{
+		{Runs: "echo step1"},
+		{Runs: "echo step2", If: "invalid condition syntax"},
+		{Runs: "echo step3"},
+	}
+
+	base := llb.Image(TestBaseImage)
+	result := builder.BuildPipelinesWithRecovery(base, pipelines)
+
+	// Should fail at pipeline index 1
+	require.Error(t, result.Error)
+	require.Equal(t, 1, result.FailedAtIndex)
+	require.Contains(t, result.Error.Error(), "pipeline 1")
+
+	// The returned state should be the state before the failed pipeline
+	// (i.e., after step1 but before step2)
+	def, err := result.State.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+	require.NotEmpty(t, def.Def)
+
+	// State should be different from base (step1 ran)
+	baseDef, _ := base.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NotEqual(t, baseDef.Def, def.Def)
+}
+
+func TestBuildPipelinesWithRecoveryFirstStepFailure(t *testing.T) {
+	builder := NewPipelineBuilder()
+
+	pipelines := []config.Pipeline{
+		{Runs: "echo step1", If: "invalid condition"},
+		{Runs: "echo step2"},
+	}
+
+	base := llb.Image(TestBaseImage)
+	result := builder.BuildPipelinesWithRecovery(base, pipelines)
+
+	// Should fail at pipeline index 0
+	require.Error(t, result.Error)
+	require.Equal(t, 0, result.FailedAtIndex)
+
+	// The returned state should be the base state (nothing ran)
+	def, err := result.State.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+
+	baseDef, _ := base.Marshal(context.Background(), llb.LinuxAmd64)
+	require.Equal(t, baseDef.Def, def.Def)
+}
+
+func TestBuildPipelinesWithRecoveryEmptyPipelines(t *testing.T) {
+	builder := NewPipelineBuilder()
+
+	pipelines := []config.Pipeline{}
+
+	base := llb.Image(TestBaseImage)
+	result := builder.BuildPipelinesWithRecovery(base, pipelines)
+
+	require.NoError(t, result.Error)
+	require.Equal(t, -1, result.FailedAtIndex)
+
+	// State should equal base
+	def, err := result.State.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+
+	baseDef, _ := base.Marshal(context.Background(), llb.LinuxAmd64)
+	require.Equal(t, baseDef.Def, def.Def)
+}
+
 // Integration test for cache directory
 func TestCacheDirectoryIntegration(t *testing.T) {
 	if testing.Short() {
