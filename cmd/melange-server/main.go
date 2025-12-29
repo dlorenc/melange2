@@ -88,7 +88,8 @@ func run(ctx context.Context) error {
 
 	// Initialize BuildKit pool
 	var pool *buildkit.Pool
-	if *backendsConfig != "" {
+	switch {
+	case *backendsConfig != "":
 		// Multi-backend mode from config file
 		log.Infof("loading backends from config: %s", *backendsConfig)
 		pool, err = buildkit.NewPoolFromConfig(*backendsConfig)
@@ -96,14 +97,14 @@ func run(ctx context.Context) error {
 			return fmt.Errorf("creating buildkit pool from config: %w", err)
 		}
 		log.Infof("loaded %d backends for architectures: %v", len(pool.List()), pool.Architectures())
-	} else if *buildkitAddr != "" {
+	case *buildkitAddr != "":
 		// Single-backend mode (backward compatibility)
 		log.Infof("using single buildkit backend: %s (arch: %s)", *buildkitAddr, *defaultArch)
 		pool, err = buildkit.NewPoolFromSingleAddr(*buildkitAddr, *defaultArch)
 		if err != nil {
 			return fmt.Errorf("creating buildkit pool: %w", err)
 		}
-	} else {
+	default:
 		// Default to localhost for development
 		log.Infof("using default buildkit backend: tcp://localhost:1234 (arch: %s)", *defaultArch)
 		pool, err = buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", *defaultArch)

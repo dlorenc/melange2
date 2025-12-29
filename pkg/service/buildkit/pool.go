@@ -120,7 +120,7 @@ func (p *Pool) Select(arch string, selector map[string]string) (*Backend, error)
 	defer p.mu.RUnlock()
 
 	// Find all matching backends
-	var matches []Backend
+	matches := make([]Backend, 0, len(p.backends))
 	for _, b := range p.backends {
 		if b.Arch != arch {
 			continue
