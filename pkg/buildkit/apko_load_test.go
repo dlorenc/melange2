@@ -401,6 +401,13 @@ func startBuildKitContainer(t *testing.T, ctx context.Context) *buildKitContaine
 	}
 }
 
+// testBaseState returns a base LLB state suitable for integration tests.
+// It sets up the build user in the test image since wolfi-base doesn't
+// include it by default.
+func testBaseState() llb.State {
+	return SetupBuildUser(llb.Image(TestBaseImage))
+}
+
 // Helper: Create a minimal tar.gz layer (simulating apko output)
 func createMinimalTarGzLayer(path string) error {
 	f, err := os.Create(path)
