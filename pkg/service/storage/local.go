@@ -97,7 +97,7 @@ func (s *LocalStorage) ListArtifacts(ctx context.Context, jobID string) ([]Artif
 		return nil, fmt.Errorf("reading artifact directory: %w", err)
 	}
 
-	var artifacts []Artifact
+	artifacts := make([]Artifact, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
