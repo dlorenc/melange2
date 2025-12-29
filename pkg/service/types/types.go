@@ -78,8 +78,18 @@ type JobSpec struct {
 }
 
 // CreateJobRequest is the request body for creating a job.
+// Supports single config (backward compatible), multiple configs, or git source.
 type CreateJobRequest struct {
-	ConfigYAML      string            `json:"config_yaml"`
+	// Single config (backward compatible)
+	ConfigYAML string `json:"config_yaml,omitempty"`
+
+	// Multiple configs (new - triggers multi-package build)
+	Configs []string `json:"configs,omitempty"`
+
+	// Git source (new - triggers multi-package build)
+	GitSource *GitSource `json:"git_source,omitempty"`
+
+	// Common fields
 	Pipelines       map[string]string `json:"pipelines,omitempty"`
 	Arch            string            `json:"arch,omitempty"`
 	BackendSelector map[string]string `json:"backend_selector,omitempty"`
@@ -90,4 +100,98 @@ type CreateJobRequest struct {
 // CreateJobResponse is the response body for creating a job.
 type CreateJobResponse struct {
 	ID string `json:"id"`
+}
+
+// BuildStatus represents the overall status of a multi-package build.
+type BuildStatus string
+
+const (
+	BuildStatusPending BuildStatus = "pending"
+	BuildStatusRunning BuildStatus = "running"
+	BuildStatusSuccess BuildStatus = "success"
+	BuildStatusFailed  BuildStatus = "failed"
+	BuildStatusPartial BuildStatus = "partial" // some succeeded, some failed due to deps
+)
+
+// PackageStatus represents the status of a single package within a build.
+type PackageStatus string
+
+const (
+	PackageStatusPending PackageStatus = "pending"
+	PackageStatusBlocked PackageStatus = "blocked" // waiting on dependencies
+	PackageStatusRunning PackageStatus = "running"
+	PackageStatusSuccess PackageStatus = "success"
+	PackageStatusFailed  PackageStatus = "failed"
+	PackageStatusSkipped PackageStatus = "skipped" // skipped due to dependency failure
+)
+
+// PackageJob represents a single package within a multi-package build.
+type PackageJob struct {
+	Name         string            `json:"name"`
+	Status       PackageStatus     `json:"status"`
+	ConfigYAML   string            `json:"config_yaml"`
+	Dependencies []string          `json:"dependencies"`
+	StartedAt    *time.Time        `json:"started_at,omitempty"`
+	FinishedAt   *time.Time        `json:"finished_at,omitempty"`
+	Error        string            `json:"error,omitempty"`
+	LogPath      string            `json:"log_path,omitempty"`
+	OutputPath   string            `json:"output_path,omitempty"`
+	Backend      *JobBackend       `json:"backend,omitempty"`
+	Pipelines    map[string]string `json:"pipelines,omitempty"`
+}
+
+// Build represents a multi-package build with dependency ordering.
+type Build struct {
+	ID         string       `json:"id"`
+	Status     BuildStatus  `json:"status"`
+	Packages   []PackageJob `json:"packages"`
+	Spec       BuildSpec    `json:"spec"`
+	CreatedAt  time.Time    `json:"created_at"`
+	StartedAt  *time.Time   `json:"started_at,omitempty"`
+	FinishedAt *time.Time   `json:"finished_at,omitempty"`
+}
+
+// BuildSpec contains the specification for a multi-package build.
+type BuildSpec struct {
+	// Configs is an array of inline YAML configurations.
+	Configs []string `json:"configs,omitempty"`
+
+	// GitSource specifies a git repository to clone for package configs.
+	GitSource *GitSource `json:"git_source,omitempty"`
+
+	// Pipelines is a map of pipeline paths to their YAML content.
+	Pipelines map[string]string `json:"pipelines,omitempty"`
+
+	// Arch is the target architecture (default: runtime arch).
+	Arch string `json:"arch,omitempty"`
+
+	// BackendSelector specifies label requirements for backend selection.
+	BackendSelector map[string]string `json:"backend_selector,omitempty"`
+
+	// WithTest runs tests after build.
+	WithTest bool `json:"with_test,omitempty"`
+
+	// Debug enables debug logging.
+	Debug bool `json:"debug,omitempty"`
+}
+
+// GitSource specifies a git repository source for package configs.
+type GitSource struct {
+	// Repository is the git repository URL.
+	Repository string `json:"repository"`
+
+	// Ref is the branch, tag, or commit to checkout (default: HEAD).
+	Ref string `json:"ref,omitempty"`
+
+	// Pattern is the glob pattern for config files (default: "*.yaml").
+	Pattern string `json:"pattern,omitempty"`
+
+	// Path is the subdirectory within the repo to search.
+	Path string `json:"path,omitempty"`
+}
+
+// CreateBuildResponse is the response body for creating a build.
+type CreateBuildResponse struct {
+	ID       string   `json:"id"`
+	Packages []string `json:"packages"` // Package names in build order
 }

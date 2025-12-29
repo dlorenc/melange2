@@ -21,23 +21,28 @@ import (
 	"strings"
 
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
+	"github.com/dlorenc/melange2/pkg/service/dag"
+	"github.com/dlorenc/melange2/pkg/service/git"
 	"github.com/dlorenc/melange2/pkg/service/store"
 	"github.com/dlorenc/melange2/pkg/service/types"
+	"gopkg.in/yaml.v3"
 )
 
 // Server is the HTTP API server.
 type Server struct {
-	store store.JobStore
-	pool  *buildkit.Pool
-	mux   *http.ServeMux
+	store      store.JobStore
+	buildStore store.BuildStore
+	pool       *buildkit.Pool
+	mux        *http.ServeMux
 }
 
 // NewServer creates a new API server.
-func NewServer(store store.JobStore, pool *buildkit.Pool) *Server {
+func NewServer(jobStore store.JobStore, buildStore store.BuildStore, pool *buildkit.Pool) *Server {
 	s := &Server{
-		store: store,
-		pool:  pool,
-		mux:   http.NewServeMux(),
+		store:      jobStore,
+		buildStore: buildStore,
+		pool:       pool,
+		mux:        http.NewServeMux(),
 	}
 	s.setupRoutes()
 	return s
@@ -46,6 +51,8 @@ func NewServer(store store.JobStore, pool *buildkit.Pool) *Server {
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/v1/jobs", s.handleJobs)
 	s.mux.HandleFunc("/api/v1/jobs/", s.handleJob)
+	s.mux.HandleFunc("/api/v1/builds", s.handleBuilds)
+	s.mux.HandleFunc("/api/v1/builds/", s.handleBuild)
 	s.mux.HandleFunc("/api/v1/backends", s.handleBackends)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 }
@@ -203,6 +210,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 const MaxBodySize = 10 << 20
 
 // createJob creates a new build job.
+// If the request contains multiple configs or a git source, it creates a multi-package build.
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	// Limit request body size to prevent OOM
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
@@ -217,12 +225,26 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is a multi-package build request
+	if len(req.Configs) > 0 || req.GitSource != nil {
+		s.createBuildFromRequest(w, r, req)
+		return
+	}
+
+	// Legacy single-config path
 	if req.ConfigYAML == "" {
 		http.Error(w, "config_yaml is required", http.StatusBadRequest)
 		return
 	}
 
-	job, err := s.store.Create(r.Context(), types.JobSpec(req))
+	job, err := s.store.Create(r.Context(), types.JobSpec{
+		ConfigYAML:      req.ConfigYAML,
+		Pipelines:       req.Pipelines,
+		Arch:            req.Arch,
+		BackendSelector: req.BackendSelector,
+		WithTest:        req.WithTest,
+		Debug:           req.Debug,
+	})
 	if err != nil {
 		http.Error(w, "failed to create job: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -243,4 +265,202 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(jobs)
+}
+
+// handleBuilds handles POST /api/v1/builds (create build) and GET /api/v1/builds (list builds).
+func (s *Server) handleBuilds(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		s.createBuild(w, r)
+	case http.MethodGet:
+		s.listBuilds(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleBuild handles GET /api/v1/builds/:id.
+func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract build ID from path
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/builds/")
+	if path == "" {
+		http.Error(w, "build ID required", http.StatusBadRequest)
+		return
+	}
+
+	build, err := s.buildStore.GetBuild(r.Context(), path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(build)
+}
+
+// createBuild creates a new multi-package build.
+func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
+	// Limit request body size to prevent OOM
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
+
+	var req types.CreateJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err.Error() == "http: request body too large" {
+			http.Error(w, "request body too large (max 10MB)", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.createBuildFromRequest(w, r, req)
+}
+
+// createBuildFromRequest creates a build from the request.
+func (s *Server) createBuildFromRequest(w http.ResponseWriter, r *http.Request, req types.CreateJobRequest) {
+	ctx := r.Context()
+
+	// Collect configs from inline or git source
+	var configs []string
+	var err error
+
+	switch {
+	case req.GitSource != nil:
+		if err := git.ValidateSource(req.GitSource); err != nil {
+			http.Error(w, "invalid git source: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		source := git.NewSourceFromGitSource(req.GitSource)
+		configs, err = source.LoadConfigs(ctx)
+		if err != nil {
+			http.Error(w, "failed to load configs from git: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	case len(req.Configs) > 0:
+		configs = req.Configs
+	default:
+		http.Error(w, "either configs or git_source is required for multi-package build", http.StatusBadRequest)
+		return
+	}
+
+	if len(configs) == 0 {
+		http.Error(w, "no configs provided", http.StatusBadRequest)
+		return
+	}
+
+	// Parse configs and build DAG
+	nodes, err := s.parseConfigDependencies(configs)
+	if err != nil {
+		http.Error(w, "failed to parse configs: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Build the DAG
+	graph := dag.NewGraph()
+	for _, node := range nodes {
+		if err := graph.AddNode(node.Name, node.ConfigYAML, node.Dependencies); err != nil {
+			http.Error(w, "failed to build dependency graph: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Topological sort
+	sorted, err := graph.TopologicalSort()
+	if err != nil {
+		http.Error(w, "dependency error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Create build spec
+	spec := types.BuildSpec{
+		Configs:         configs,
+		GitSource:       req.GitSource,
+		Pipelines:       req.Pipelines,
+		Arch:            req.Arch,
+		BackendSelector: req.BackendSelector,
+		WithTest:        req.WithTest,
+		Debug:           req.Debug,
+	}
+
+	// Create build in store
+	build, err := s.buildStore.CreateBuild(ctx, sorted, spec)
+	if err != nil {
+		http.Error(w, "failed to create build: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Collect package names for response
+	packageNames := make([]string, len(sorted))
+	for i, node := range sorted {
+		packageNames[i] = node.Name
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(types.CreateBuildResponse{
+		ID:       build.ID,
+		Packages: packageNames,
+	})
+}
+
+// configDependencies is a minimal struct for parsing package dependencies from YAML.
+type configDependencies struct {
+	Package struct {
+		Name string `yaml:"name"`
+	} `yaml:"package"`
+	Environment struct {
+		Contents struct {
+			Packages []string `yaml:"packages"`
+		} `yaml:"contents"`
+	} `yaml:"environment"`
+}
+
+// parseConfigDependencies parses configs to extract package names and their dependencies.
+func (s *Server) parseConfigDependencies(configs []string) ([]dag.Node, error) {
+	nodes := make([]dag.Node, 0, len(configs))
+
+	for _, configYAML := range configs {
+		var cfg configDependencies
+		if err := yaml.Unmarshal([]byte(configYAML), &cfg); err != nil {
+			return nil, err
+		}
+
+		if cfg.Package.Name == "" {
+			return nil, &configError{msg: "config missing package name"}
+		}
+
+		nodes = append(nodes, dag.Node{
+			Name:         cfg.Package.Name,
+			ConfigYAML:   configYAML,
+			Dependencies: cfg.Environment.Contents.Packages,
+		})
+	}
+
+	return nodes, nil
+}
+
+// configError is a simple error type for config parsing errors.
+type configError struct {
+	msg string
+}
+
+func (e *configError) Error() string {
+	return e.msg
+}
+
+// listBuilds lists all builds.
+func (s *Server) listBuilds(w http.ResponseWriter, r *http.Request) {
+	builds, err := s.buildStore.ListBuilds(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list builds: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(builds)
 }
