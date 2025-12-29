@@ -62,6 +62,184 @@ func TestInheritWorkdir(t *testing.T) {
 }
 
 
+func TestIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		pipeline config.Pipeline
+		want     string
+	}{
+		{
+			name:     "empty pipeline returns ???",
+			pipeline: config.Pipeline{},
+			want:     "???",
+		},
+		{
+			name:     "pipeline with name returns name",
+			pipeline: config.Pipeline{Name: "my-pipeline"},
+			want:     "my-pipeline",
+		},
+		{
+			name:     "pipeline with uses returns uses",
+			pipeline: config.Pipeline{Uses: "go/build"},
+			want:     "go/build",
+		},
+		{
+			name:     "name takes precedence over uses",
+			pipeline: config.Pipeline{Name: "custom-name", Uses: "go/build"},
+			want:     "custom-name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := identity(&tt.pipeline)
+			if got != tt.want {
+				t.Errorf("identity() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldRun(t *testing.T) {
+	tests := []struct {
+		name    string
+		ifs     string
+		want    bool
+		wantErr bool
+	}{
+		{
+			name: "empty string returns true",
+			ifs:  "",
+			want: true,
+		},
+		{
+			name: "equal comparison true",
+			ifs:  `"a" == "a"`,
+			want: true,
+		},
+		{
+			name: "equal comparison false",
+			ifs:  `"a" == "b"`,
+			want: false,
+		},
+		{
+			name: "not equal comparison true",
+			ifs:  `"a" != "b"`,
+			want: true,
+		},
+		{
+			name: "not equal comparison false",
+			ifs:  `"a" != "a"`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := shouldRun(tt.ifs)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("shouldRun() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("shouldRun() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGatherDeps(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("gathers packages from needs", func(t *testing.T) {
+		c := &Compiled{}
+		pipeline := &config.Pipeline{
+			Name: "test",
+			Needs: &config.Needs{
+				Packages: []string{"pkg1", "pkg2"},
+			},
+		}
+
+		err := c.gatherDeps(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(c.Needs) != 2 {
+			t.Fatalf("expected 2 needs, got %d", len(c.Needs))
+		}
+		if c.Needs[0] != "pkg1" || c.Needs[1] != "pkg2" {
+			t.Errorf("unexpected needs: %v", c.Needs)
+		}
+	})
+
+	t.Run("skips pipeline with false if condition", func(t *testing.T) {
+		c := &Compiled{}
+		pipeline := &config.Pipeline{
+			Name: "test",
+			If:   `"skip" == "run"`, // evaluates to false
+			Needs: &config.Needs{
+				Packages: []string{"should-not-appear"},
+			},
+		}
+
+		err := c.gatherDeps(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(c.Needs) != 0 {
+			t.Errorf("expected 0 needs for skipped pipeline, got %d", len(c.Needs))
+		}
+	})
+
+	t.Run("clears needs after gathering", func(t *testing.T) {
+		c := &Compiled{}
+		pipeline := &config.Pipeline{
+			Name: "test",
+			Needs: &config.Needs{
+				Packages: []string{"pkg1"},
+			},
+		}
+
+		err := c.gatherDeps(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if pipeline.Needs != nil {
+			t.Error("expected pipeline.Needs to be nil after gathering")
+		}
+	})
+
+	t.Run("recursively gathers from nested pipelines", func(t *testing.T) {
+		c := &Compiled{}
+		pipeline := &config.Pipeline{
+			Name: "parent",
+			Needs: &config.Needs{
+				Packages: []string{"parent-pkg"},
+			},
+			Pipeline: []config.Pipeline{
+				{
+					Name: "child",
+					Needs: &config.Needs{
+						Packages: []string{"child-pkg"},
+					},
+				},
+			},
+		}
+
+		err := c.gatherDeps(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if len(c.Needs) != 2 {
+			t.Fatalf("expected 2 needs, got %d: %v", len(c.Needs), c.Needs)
+		}
+	})
+}
+
 func Test_stripComments(t *testing.T) {
 	tests := []struct {
 		in, want string
