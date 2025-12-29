@@ -272,3 +272,115 @@ func (c *Client) RemoveBackend(ctx context.Context, addr string) error {
 
 	return nil
 }
+
+// SubmitBuild submits a multi-package build.
+func (c *Client) SubmitBuild(ctx context.Context, req types.CreateJobRequest) (*types.CreateBuildResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/builds", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result types.CreateBuildResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// GetBuild retrieves a build by ID.
+func (c *Client) GetBuild(ctx context.Context, buildID string) (*types.Build, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/builds/"+buildID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("build not found: %s", buildID)
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var build types.Build
+	if err := json.NewDecoder(resp.Body).Decode(&build); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return &build, nil
+}
+
+// ListBuilds lists all builds.
+func (c *Client) ListBuilds(ctx context.Context) ([]types.Build, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/builds", nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var builds []types.Build
+	if err := json.NewDecoder(resp.Body).Decode(&builds); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return builds, nil
+}
+
+// WaitForBuild waits for a build to complete, polling at the given interval.
+func (c *Client) WaitForBuild(ctx context.Context, buildID string, pollInterval time.Duration) (*types.Build, error) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			build, err := c.GetBuild(ctx, buildID)
+			if err != nil {
+				return nil, err
+			}
+
+			switch build.Status {
+			case types.BuildStatusSuccess, types.BuildStatusFailed, types.BuildStatusPartial:
+				return build, nil
+			case types.BuildStatusPending, types.BuildStatusRunning:
+				// Continue waiting
+			}
+		}
+	}
+}

@@ -47,9 +47,12 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `POST /api/v1/jobs` | POST | Submit a new build job |
+| `POST /api/v1/jobs` | POST | Submit a new build job (single or multi-package) |
 | `GET /api/v1/jobs` | GET | List all jobs |
 | `GET /api/v1/jobs/:id` | GET | Get job status and details |
+| `POST /api/v1/builds` | POST | Submit a multi-package build |
+| `GET /api/v1/builds` | GET | List all builds |
+| `GET /api/v1/builds/:id` | GET | Get build status with per-package details |
 | `GET /api/v1/backends` | GET | List available BuildKit backends |
 | `POST /api/v1/backends` | POST | Add a new backend |
 | `DELETE /api/v1/backends` | DELETE | Remove a backend |
@@ -57,6 +60,7 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 
 ### Job Request Format
 
+**Single package build:**
 ```json
 {
   "config_yaml": "package:\n  name: hello\n  version: 1.0.0\n...",
@@ -72,14 +76,42 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 }
 ```
 
+**Multi-package build (inline configs):**
+```json
+{
+  "configs": [
+    "package:\n  name: lib-a\n  version: 1.0.0\n...",
+    "package:\n  name: lib-b\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - lib-a\n..."
+  ],
+  "arch": "x86_64"
+}
+```
+
+**Multi-package build (git source):**
+```json
+{
+  "git_source": {
+    "repository": "https://github.com/wolfi-dev/os",
+    "ref": "main",
+    "pattern": "*.yaml",
+    "path": ""
+  },
+  "arch": "x86_64"
+}
+```
+
 ### CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `melange remote submit <config>` | Submit a build job |
+| `melange remote submit <config>` | Submit a single-package build job |
+| `melange remote submit <config1> <config2> ...` | Submit multi-package build |
+| `melange remote submit --git-repo <url>` | Submit build from git repository |
 | `melange remote status <job-id>` | Get job status |
 | `melange remote list` | List all jobs |
 | `melange remote wait <job-id>` | Wait for job completion |
+| `melange remote build-status <build-id>` | Get multi-package build status |
+| `melange remote list-builds` | List all multi-package builds |
 | `melange remote backends list` | List available BuildKit backends |
 | `melange remote backends add` | Add a new backend |
 | `melange remote backends remove` | Remove a backend |
@@ -99,6 +131,92 @@ melange remote submit pkg.yaml \
 ```
 
 Pipelines are sent inline with the request and made available during the build.
+
+### Multi-Package Builds (DAG-Based)
+
+The server supports building multiple interdependent packages with automatic dependency ordering based on `environment.contents.packages`. Packages build in parallel where possible, respecting dependency order.
+
+**How it works:**
+1. Configs are parsed to extract package names and dependencies from `environment.contents.packages`
+2. A directed acyclic graph (DAG) is constructed
+3. Topological sort determines build order
+4. Packages with satisfied dependencies build in parallel
+5. Failed packages mark their dependents as "skipped"
+
+**Submit multiple configs:**
+```bash
+# Build multiple packages with automatic dependency resolution
+melange remote submit lib-a.yaml lib-b.yaml app.yaml --server http://localhost:8080
+
+# Wait for the entire build to complete
+melange remote submit lib-a.yaml lib-b.yaml app.yaml --wait
+```
+
+**Submit from git repository:**
+```bash
+# Build all YAML configs from a git repo
+melange remote submit --git-repo https://github.com/wolfi-dev/os --server http://localhost:8080
+
+# Build from specific branch/tag
+melange remote submit --git-repo https://github.com/wolfi-dev/os --git-ref v1.0.0
+
+# Build with glob pattern
+melange remote submit --git-repo https://github.com/wolfi-dev/os --git-pattern "packages/*.yaml"
+
+# Build from subdirectory
+melange remote submit --git-repo https://github.com/wolfi-dev/os --git-path packages/
+```
+
+**Check build status:**
+```bash
+# Get detailed status of a multi-package build
+melange remote build-status bld-abc123
+
+# List all builds
+melange remote list-builds
+```
+
+**Build response:**
+```json
+{
+  "id": "bld-abc123",
+  "packages": ["lib-a", "lib-b", "app"]
+}
+```
+
+**Build status response:**
+```json
+{
+  "id": "bld-abc123",
+  "status": "running",
+  "packages": [
+    {"name": "lib-a", "status": "success", "dependencies": []},
+    {"name": "lib-b", "status": "running", "dependencies": ["lib-a"]},
+    {"name": "app", "status": "blocked", "dependencies": ["lib-a", "lib-b"]}
+  ],
+  "created_at": "2024-01-15T10:30:00Z",
+  "started_at": "2024-01-15T10:30:01Z"
+}
+```
+
+**Package statuses:**
+| Status | Description |
+|--------|-------------|
+| `pending` | Package not yet started |
+| `blocked` | Waiting for dependencies to complete |
+| `running` | Currently building |
+| `success` | Build completed successfully |
+| `failed` | Build failed |
+| `skipped` | Skipped because a dependency failed |
+
+**Build statuses:**
+| Status | Description |
+|--------|-------------|
+| `pending` | Build not yet started |
+| `running` | Build in progress |
+| `success` | All packages built successfully |
+| `failed` | All packages failed |
+| `partial` | Some packages succeeded, some failed |
 
 ### Storage Backends
 
@@ -249,21 +367,12 @@ environment:
 - [ ] **Live log streaming** - WebSocket endpoint for real-time build logs
 - [ ] **Authentication** - API key or OAuth2 authentication
 
-### Phase 2: Multi-Package Builds
+### Phase 2: Multi-Package Builds (COMPLETED)
 
-- [ ] **Git source support** - Clone repos and build from git
-  ```json
-  {
-    "git_source": {
-      "url": "https://github.com/wolfi-dev/os",
-      "ref": "main",
-      "glob": "*.yaml"
-    }
-  }
-  ```
-- [ ] **DAG-based parallelism** - Build dependency graph, parallel execution
-- [ ] **Package status tracking** - Per-package status within multi-package jobs
-- [ ] **Glob pattern expansion** - Build multiple packages matching patterns
+- [x] **Git source support** - Clone repos and build from git
+- [x] **DAG-based parallelism** - Build dependency graph, parallel execution
+- [x] **Package status tracking** - Per-package status within multi-package builds
+- [x] **Glob pattern expansion** - Build multiple packages matching patterns
 
 ### Phase 3: Production Features
 
@@ -284,10 +393,10 @@ environment:
 
 ## API Evolution
 
-Future API versions may include:
+Multi-package builds are now available in the v1 API. Future API versions may include:
 
 ```json
-// v2 API - Multi-package builds
+// v2 API - Enhanced multi-package builds with additional options
 POST /api/v2/builds
 {
   "source": {
@@ -303,16 +412,6 @@ POST /api/v2/builds
     "extra_repos": ["https://my-repo.example.com"]
   }
 }
-
-// Response
-{
-  "build_id": "build-abc123",
-  "packages": [
-    {"name": "hello-wolfi", "status": "pending", "job_id": "job-1"},
-    {"name": "zstd", "status": "pending", "job_id": "job-2"},
-    {"name": "brotli", "status": "blocked", "blocked_by": ["zstd"]}
-  ]
-}
 ```
 
 ## Contributing
@@ -322,6 +421,10 @@ See the [Development Guide](development/) for information on contributing to mel
 Key files:
 - `cmd/melange-server/main.go` - Server entry point
 - `pkg/service/api/server.go` - HTTP API handlers
-- `pkg/service/scheduler/scheduler.go` - Job execution
+- `pkg/service/scheduler/scheduler.go` - Job and build execution
+- `pkg/service/store/memory.go` - Job and build stores
+- `pkg/service/dag/dag.go` - DAG construction and topological sort
+- `pkg/service/git/git.go` - Git source handling
+- `pkg/service/types/types.go` - API types
 - `pkg/service/storage/` - Storage backends
 - `pkg/cli/remote.go` - CLI client

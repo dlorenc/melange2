@@ -31,7 +31,7 @@ func newTestServer(t *testing.T, backends []buildkit.Backend) *Server {
 	t.Helper()
 	pool, err := buildkit.NewPool(backends)
 	require.NoError(t, err)
-	return NewServer(store.NewMemoryStore(), pool)
+	return NewServer(store.NewMemoryStore(), store.NewMemoryBuildStore(), pool)
 }
 
 func TestListBackends(t *testing.T) {
