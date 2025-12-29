@@ -294,8 +294,8 @@ echo "hello from pipeline" > /home/build/melange-out/test-pkg/output.txt
 		},
 	}
 
-	// Start with alpine and prepare workspace
-	base := llb.Image(TestBaseImage)
+	// Start with test base state (with build user) and prepare workspace
+	base := testBaseState()
 	state := PrepareWorkspace(base, "test-pkg")
 
 	// Run pipelines
@@ -355,7 +355,7 @@ echo "step1" >> /home/build/melange-out/test-pkg/log.txt
 		},
 	}
 
-	base := llb.Image(TestBaseImage)
+	base := testBaseState()
 	state := PrepareWorkspace(base, "test-pkg")
 	state, err = builder.BuildPipeline(state, &pipeline)
 	require.NoError(t, err)
@@ -409,7 +409,7 @@ echo "LOCAL_VAR=$LOCAL_VAR" >> /home/build/melange-out/test-pkg/env.txt
 		},
 	}
 
-	base := llb.Image(TestBaseImage)
+	base := testBaseState()
 	state := PrepareWorkspace(base, "test-pkg")
 	state, err = builder.BuildPipeline(state, &pipeline)
 	require.NoError(t, err)
@@ -468,7 +468,7 @@ echo "setup done" > /home/build/melange-out/test-pkg/status.txt
 		},
 	}
 
-	base := llb.Image(TestBaseImage)
+	base := testBaseState()
 	state := PrepareWorkspace(base, "test-pkg")
 	state, err = builder.BuildPipelines(state, pipelines)
 	require.NoError(t, err)
@@ -628,7 +628,7 @@ cat /var/cache/melange/cached-artifact.txt > /home/build/melange-out/test-pkg/fr
 	}
 
 	// Build the LLB graph
-	base := llb.Image(TestBaseImage)
+	base := testBaseState()
 	state := PrepareWorkspace(base, "test-pkg")
 	state = CopyCacheToWorkspace(state, CacheLocalName)
 	state, err = builder.BuildPipeline(state, &pipeline)

@@ -226,7 +226,7 @@ cp /cache/data.txt /home/build/melange-out/cache-test/
 		},
 	}
 
-	base := llb.Image(TestBaseImage)
+	base := testBaseState()
 	state := PrepareWorkspace(base, "cache-test")
 	state, err = builder.BuildPipelines(state, pipelines)
 	require.NoError(t, err)
@@ -283,7 +283,7 @@ echo "done" > /home/build/melange-out/pkg1/status.txt
 		},
 	}
 
-	base := llb.Image(TestBaseImage)
+	base := testBaseState()
 	state1 := PrepareWorkspace(base, "pkg1")
 	state1, err = builder1.BuildPipelines(state1, pipelines1)
 	require.NoError(t, err)
