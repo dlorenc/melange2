@@ -155,14 +155,6 @@ func WithCacheDir(cacheDir string) Option {
 	}
 }
 
-// WithCacheSource sets the cache source directory to use.  The cache will be
-// pre-populated from this source directory.
-func WithCacheSource(sourceDir string) Option {
-	return func(b *Build) error {
-		b.CacheSource = sourceDir
-		return nil
-	}
-}
 
 // WithSigningKey sets the signing key path to use.
 func WithSigningKey(signingKey string) Option {
@@ -226,14 +218,6 @@ func WithDependencyLog(logFile string) Option {
 	}
 }
 
-// WithBinShOverlay sets a filename to copy from when installing /bin/sh
-// into a build environment.
-func WithBinShOverlay(binShOverlay string) Option {
-	return func(b *Build) error {
-		b.BinShOverlay = binShOverlay
-		return nil
-	}
-}
 
 // WithStripOriginName determines whether the origin name should be stripped
 // from generated packages.  The APK solver uses origin names to flatten
@@ -383,9 +367,7 @@ func WithSBOMGenerator(generator sbom.Generator) Option {
 }
 
 // WithBuildKitAddr sets the BuildKit daemon address to use for builds.
-// When set, builds will use BuildKit instead of the container runner.
 // The address should be in the form "tcp://host:port" or "unix:///path/to/socket".
-// If empty, the traditional runner-based build is used.
 func WithBuildKitAddr(addr string) Option {
 	return func(b *Build) error {
 		b.BuildKitAddr = addr

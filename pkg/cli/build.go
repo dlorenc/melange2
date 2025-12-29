@@ -46,7 +46,6 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.StringVar(&flags.PipelineDir, "pipeline-dir", "", "directory used to extend defined built-in pipelines")
 	fs.StringVar(&flags.SourceDir, "source-dir", "", "directory used for included sources")
 	fs.StringVar(&flags.CacheDir, "cache-dir", "./melange-cache/", "directory used for cached inputs")
-	fs.StringVar(&flags.CacheSource, "cache-source", "", "directory or bucket used for preloading the cache")
 	fs.StringVar(&flags.ApkCacheDir, "apk-cache-dir", "", "directory used for cached apk packages (default is system-defined cache directory)")
 	fs.StringVar(&flags.SigningKey, "signing-key", "", "key to use for signing")
 	fs.StringVar(&flags.EnvFile, "env-file", "", "file to use for preloaded environment variables")
@@ -88,10 +87,9 @@ type BuildFlags struct {
 	BuildDate            string
 	WorkspaceDir         string
 	PipelineDir          string
-	SourceDir            string
-	CacheDir             string
-	CacheSource          string
-	ApkCacheDir          string
+	SourceDir   string
+	CacheDir    string
+	ApkCacheDir string
 	SigningKey           string
 	GenerateIndex        bool
 	EmptyWorkspace       bool
@@ -174,7 +172,6 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 		build.WithPipelineDir(flags.PipelineDir),
 		build.WithPipelineDir(BuiltinPipelineDir),
 		build.WithCacheDir(flags.CacheDir),
-		build.WithCacheSource(flags.CacheSource),
 		build.WithPackageCacheDir(flags.ApkCacheDir),
 		build.WithSigningKey(flags.SigningKey),
 		build.WithGenerateIndex(flags.GenerateIndex),

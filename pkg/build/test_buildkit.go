@@ -50,10 +50,9 @@ type TestBuildKit struct {
 	ExtraKeys         []string
 	ExtraRepos        []string
 	ExtraTestPackages []string
-	CacheDir          string
-	ApkCacheDir       string
-	CacheSource       string
-	EnvFile           string
+	CacheDir    string
+	ApkCacheDir string
+	EnvFile     string
 	Debug             bool
 	Auth              map[string]options.Auth
 	IgnoreSignatures  bool

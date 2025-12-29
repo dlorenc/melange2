@@ -34,7 +34,6 @@ import (
 	apkofs "chainguard.dev/apko/pkg/apk/fs"
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"chainguard.dev/apko/pkg/options"
-	"chainguard.dev/apko/pkg/tarfs"
 	"github.com/chainguard-dev/clog"
 	purl "github.com/package-url/packageurl-go"
 	"github.com/zealic/xignore"
@@ -74,7 +73,6 @@ type Build struct {
 	WorkspaceDir    string
 	WorkspaceDirFS  apkofs.FullFS
 	WorkspaceIgnore string
-	GuestFS         apkofs.FullFS
 	// Ordered directories where to find 'uses' pipelines.
 	PipelineDirs          []string
 	SourceDir             string
@@ -89,13 +87,11 @@ type Build struct {
 	ExtraKeys             []string
 	ExtraRepos            []string
 	ExtraPackages         []string
-	DependencyLog         string
-	BinShOverlay          string
-	CreateBuildLog        bool
+	DependencyLog  string
+	CreateBuildLog bool
 	PersistLintResults    bool
-	CacheDir              string
-	ApkCacheDir           string
-	CacheSource           string
+	CacheDir        string
+	ApkCacheDir     string
 	StripOriginName bool
 	EnvFile               string
 	VarsFile              string
@@ -143,7 +139,6 @@ func New(ctx context.Context, opts ...Option) (*Build, error) {
 		OutDir:          ".",
 		CacheDir:        "./melange-cache/",
 		Arch:            apko_types.ParseArchitecture(runtime.GOARCH),
-		GuestFS:         tarfs.New(),
 		Start:           time.Now(),
 		SBOMGenerator:   &spdx.Generator{},
 	}

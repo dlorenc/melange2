@@ -499,8 +499,9 @@ func (pc *PackageBuild) EmitPackage(ctx context.Context) error {
 		return fmt.Errorf("failed to return filesystem for workspace subtree: %w", err)
 	}
 
-	// provide the tar writer etc/passwd and etc/group of guest filesystem
-	userinfofs := pc.Build.GuestFS
+	// Use WorkspaceDirFS for user/group info lookups.
+	// The tarball writer will gracefully handle missing etc/passwd and etc/group.
+	userinfofs := pc.Build.WorkspaceDirFS
 
 	hdl := &SCABuildInterface{
 		PackageBuild: pc,

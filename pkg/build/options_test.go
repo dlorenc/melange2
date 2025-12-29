@@ -193,14 +193,6 @@ func TestWithCacheDir(t *testing.T) {
 	require.Equal(t, "/cache", b.CacheDir)
 }
 
-func TestWithCacheSource(t *testing.T) {
-	b := &Build{}
-	opt := WithCacheSource("/cache/source")
-	err := opt(b)
-	require.NoError(t, err)
-	require.Equal(t, "/cache/source", b.CacheSource)
-}
-
 func TestWithSigningKey(t *testing.T) {
 	t.Run("empty key is allowed", func(t *testing.T) {
 		b := &Build{}
@@ -278,14 +270,6 @@ func TestWithDependencyLog(t *testing.T) {
 	err := opt(b)
 	require.NoError(t, err)
 	require.Equal(t, "/var/log/deps.log", b.DependencyLog)
-}
-
-func TestWithBinShOverlay(t *testing.T) {
-	b := &Build{}
-	opt := WithBinShOverlay("/custom/sh")
-	err := opt(b)
-	require.NoError(t, err)
-	require.Equal(t, "/custom/sh", b.BinShOverlay)
 }
 
 func TestWithStripOriginName(t *testing.T) {
