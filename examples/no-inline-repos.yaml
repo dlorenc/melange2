@@ -1,0 +1,21 @@
+# Example package without inline repository configuration.
+# The server will auto-inject default Wolfi repos.
+package:
+  name: no-inline-repos-test
+  version: "1.0.0"
+  epoch: 0
+  description: "Test package without inline repos"
+  copyright:
+    - license: Apache-2.0
+
+environment:
+  contents:
+    # Note: no repositories or keyring specified here
+    # The server will automatically inject Wolfi repos
+    packages:
+      - busybox
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/test"
+      echo "Hello from no-inline-repos test" > "${{targets.destdir}}/usr/share/test/hello.txt"
