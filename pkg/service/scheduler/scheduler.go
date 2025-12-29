@@ -28,6 +28,7 @@ import (
 	"github.com/chainguard-dev/clog"
 
 	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
 	"github.com/dlorenc/melange2/pkg/service/types"
 )
@@ -36,7 +37,7 @@ import (
 type Config struct {
 	// BuildKitAddr is the address of the BuildKit daemon.
 	BuildKitAddr string
-	// OutputDir is the base directory for build outputs.
+	// OutputDir is the base directory for build outputs (used with local storage).
 	OutputDir string
 	// PollInterval is how often to check for new jobs.
 	PollInterval time.Duration
@@ -44,12 +45,13 @@ type Config struct {
 
 // Scheduler processes build jobs.
 type Scheduler struct {
-	store  store.JobStore
-	config Config
+	store   store.JobStore
+	storage storage.Storage
+	config  Config
 }
 
 // New creates a new scheduler.
-func New(store store.JobStore, config Config) *Scheduler {
+func New(jobStore store.JobStore, storageBackend storage.Storage, config Config) *Scheduler {
 	if config.PollInterval == 0 {
 		config.PollInterval = time.Second
 	}
@@ -57,8 +59,9 @@ func New(store store.JobStore, config Config) *Scheduler {
 		config.OutputDir = "/var/lib/melange/output"
 	}
 	return &Scheduler{
-		store:  store,
-		config: config,
+		store:   jobStore,
+		storage: storageBackend,
+		config:  config,
 	}
 }
 
@@ -136,10 +139,14 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
-	// Create output directory for this job
-	outputDir := filepath.Join(s.config.OutputDir, job.ID)
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return fmt.Errorf("creating output dir: %w", err)
+	// Get output directory from storage backend
+	outputDir, err := s.storage.OutputDir(ctx, job.ID)
+	if err != nil {
+		return fmt.Errorf("getting output dir: %w", err)
+	}
+	// Clean up temp output dir if storage created one
+	if outputDir != filepath.Join(s.config.OutputDir, job.ID) {
+		defer os.RemoveAll(outputDir)
 	}
 	job.OutputPath = outputDir
 
@@ -220,11 +227,20 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 	if err := bc.BuildPackage(ctx); err != nil {
 		logBuf.WriteString(fmt.Sprintf("\nERROR: %v\n", err))
 		_, _ = logFile.Write(logBuf.Bytes())
+		// Still sync logs to storage on error
+		if syncErr := s.storage.SyncOutputDir(ctx, job.ID, outputDir); syncErr != nil {
+			log.Errorf("failed to sync output on error: %v", syncErr)
+		}
 		return fmt.Errorf("building package: %w", err)
 	}
 
 	logBuf.WriteString(fmt.Sprintf("\nBuild completed successfully at %s\n", time.Now().Format(time.RFC3339)))
 	_, _ = logFile.Write(logBuf.Bytes())
+
+	// Sync output to storage backend (uploads to GCS if using GCS storage)
+	if err := s.storage.SyncOutputDir(ctx, job.ID, outputDir); err != nil {
+		return fmt.Errorf("syncing output to storage: %w", err)
+	}
 
 	return nil
 }

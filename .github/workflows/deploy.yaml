@@ -1,0 +1,87 @@
+name: Deploy to GKE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: dlorenc-chainguard
+  CLUSTER_NAME: melange-server
+  CLUSTER_ZONE: us-central1-a
+  AR_REPO: clusterlange
+  AR_LOCATION: us-central1
+  GCS_BUCKET: dlorenc-chainguard-melange-builds
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install ko
+        uses: ko-build/setup-ko@v0.7
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/320310132788/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-actions@dlorenc-chainguard.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.AR_LOCATION }}-docker.pkg.dev --quiet
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.CLUSTER_ZONE }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Deploy BuildKit
+        run: |
+          kubectl apply -f deploy/gke/namespace.yaml
+          kubectl apply -f deploy/gke/buildkit.yaml
+
+      - name: Deploy ConfigMap
+        run: |
+          kubectl create configmap melange-config \
+            --namespace=melange \
+            --from-literal=gcs-bucket="${{ env.GCS_BUCKET }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Build and Deploy melange-server
+        env:
+          KO_DOCKER_REPO: ${{ env.AR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}
+        run: |
+          cat deploy/gke/melange-server.yaml | \
+            sed "s|iam.gke.io/gcp-service-account: \"\"|iam.gke.io/gcp-service-account: melange-server@${{ env.PROJECT_ID }}.iam.gserviceaccount.com|" | \
+            ko apply -f -
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/buildkit -n melange --timeout=180s
+          kubectl rollout status deployment/melange-server -n melange --timeout=180s
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n melange
+          echo "Deployment successful!"
