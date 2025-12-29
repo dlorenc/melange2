@@ -34,7 +34,7 @@ spec:
         image: ko://github.com/dlorenc/melange2/cmd/melange-server
         args:
         - --listen-addr=:8080
-        - --buildkit-addr=tcp://buildkit:1234
+        - --backends-config=/etc/melange/backends.yaml
         - --gcs-bucket=$(GCS_BUCKET)
         env:
         - name: GCS_BUCKET
@@ -64,6 +64,17 @@ spec:
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 5
+        volumeMounts:
+        - name: backends-config
+          mountPath: /etc/melange
+          readOnly: true
+      volumes:
+      - name: backends-config
+        configMap:
+          name: melange-config
+          items:
+          - key: backends.yaml
+            path: backends.yaml
 ---
 apiVersion: v1
 kind: Service

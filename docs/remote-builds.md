@@ -50,6 +50,7 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 | `POST /api/v1/jobs` | POST | Submit a new build job |
 | `GET /api/v1/jobs` | GET | List all jobs |
 | `GET /api/v1/jobs/:id` | GET | Get job status and details |
+| `GET /api/v1/backends` | GET | List available BuildKit backends |
 | `GET /healthz` | GET | Health check |
 
 ### Job Request Format
@@ -62,6 +63,9 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
     "custom/my-pipeline.yaml": "..."
   },
   "arch": "x86_64",
+  "backend_selector": {
+    "tier": "high-memory"
+  },
   "debug": false
 }
 ```
@@ -74,6 +78,7 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 | `melange remote status <job-id>` | Get job status |
 | `melange remote list` | List all jobs |
 | `melange remote wait <job-id>` | Wait for job completion |
+| `melange remote backends` | List available BuildKit backends |
 
 ### Inline Pipelines
 
@@ -123,9 +128,64 @@ See [GKE Setup Guide](deployment/gke-setup.md) for detailed deployment instructi
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--listen-addr` | `:8080` | HTTP listen address |
-| `--buildkit-addr` | `tcp://localhost:1234` | BuildKit daemon address |
+| `--buildkit-addr` | (none) | BuildKit daemon address (single-backend mode) |
+| `--backends-config` | (none) | Path to backends config file (multi-backend mode) |
+| `--default-arch` | `x86_64` | Default architecture for single-backend mode |
 | `--output-dir` | `/var/lib/melange/output` | Local storage directory |
 | `--gcs-bucket` | (none) | GCS bucket for storage |
+
+### Multi-Backend Support
+
+The server supports multiple BuildKit backends with architecture-specific pools and label-based selection.
+
+**Configuration file (`backends.yaml`):**
+```yaml
+backends:
+  # x86_64 backends
+  - addr: tcp://amd64-standard:1234
+    arch: x86_64
+    labels:
+      tier: standard
+  - addr: tcp://amd64-highmem:1234
+    arch: x86_64
+    labels:
+      tier: high-memory
+  # aarch64 backends
+  - addr: tcp://arm64-standard:1234
+    arch: aarch64
+    labels:
+      tier: standard
+```
+
+**Start server with config:**
+```bash
+melange-server --backends-config backends.yaml --gcs-bucket my-bucket
+```
+
+**Submit jobs with backend selection:**
+```bash
+# Build for specific architecture
+melange remote submit pkg.yaml --arch aarch64
+
+# Build with label requirements
+melange remote submit pkg.yaml --backend-selector tier=high-memory
+
+# Combine architecture and label selection
+melange remote submit pkg.yaml --arch x86_64 --backend-selector tier=high-memory
+```
+
+**List available backends:**
+```bash
+melange remote backends
+
+# Filter by architecture
+melange remote backends --arch aarch64
+```
+
+The scheduler selects backends using:
+1. **Architecture matching**: Backend must support the requested architecture
+2. **Label matching**: All requested labels must match (AND semantics)
+3. **Round-robin**: Among matching backends, selects in round-robin order
 
 ### Build Defaults
 
@@ -195,7 +255,7 @@ environment:
 ### Phase 4: Advanced Features
 
 - [ ] **Build queue priorities** - Priority-based job scheduling
-- [ ] **Distributed BuildKit** - Multiple BuildKit workers for scaling
+- [x] **Multi-backend BuildKit pools** - Multiple BuildKit workers with arch-based selection and labels
 - [ ] **Build reproductions** - Re-run builds with same inputs
 - [ ] **SBOM generation** - Generate and store SBOMs for builds
 - [ ] **Provenance attestations** - SLSA provenance for built packages

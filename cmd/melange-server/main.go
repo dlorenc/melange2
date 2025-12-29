@@ -30,16 +30,19 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/dlorenc/melange2/pkg/service/api"
+	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/scheduler"
 	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
 )
 
 var (
-	listenAddr   = flag.String("listen-addr", ":8080", "HTTP listen address")
-	buildkitAddr = flag.String("buildkit-addr", "tcp://localhost:1234", "BuildKit daemon address")
-	outputDir    = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
-	gcsBucket    = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
+	listenAddr     = flag.String("listen-addr", ":8080", "HTTP listen address")
+	buildkitAddr   = flag.String("buildkit-addr", "", "BuildKit daemon address (for single-backend mode, mutually exclusive with --backends-config)")
+	backendsConfig = flag.String("backends-config", "", "Path to backends config file (YAML) for multi-backend mode")
+	defaultArch    = flag.String("default-arch", "x86_64", "Default architecture for single-backend mode")
+	outputDir      = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
+	gcsBucket      = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
 )
 
 func main() {
@@ -83,8 +86,34 @@ func run(ctx context.Context) error {
 		}
 	}
 
+	// Initialize BuildKit pool
+	var pool *buildkit.Pool
+	if *backendsConfig != "" {
+		// Multi-backend mode from config file
+		log.Infof("loading backends from config: %s", *backendsConfig)
+		pool, err = buildkit.NewPoolFromConfig(*backendsConfig)
+		if err != nil {
+			return fmt.Errorf("creating buildkit pool from config: %w", err)
+		}
+		log.Infof("loaded %d backends for architectures: %v", len(pool.List()), pool.Architectures())
+	} else if *buildkitAddr != "" {
+		// Single-backend mode (backward compatibility)
+		log.Infof("using single buildkit backend: %s (arch: %s)", *buildkitAddr, *defaultArch)
+		pool, err = buildkit.NewPoolFromSingleAddr(*buildkitAddr, *defaultArch)
+		if err != nil {
+			return fmt.Errorf("creating buildkit pool: %w", err)
+		}
+	} else {
+		// Default to localhost for development
+		log.Infof("using default buildkit backend: tcp://localhost:1234 (arch: %s)", *defaultArch)
+		pool, err = buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", *defaultArch)
+		if err != nil {
+			return fmt.Errorf("creating buildkit pool: %w", err)
+		}
+	}
+
 	// Create API server
-	apiServer := api.NewServer(jobStore)
+	apiServer := api.NewServer(jobStore, pool)
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
 		Handler:           apiServer,
@@ -95,8 +124,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Create scheduler
-	sched := scheduler.New(jobStore, storageBackend, scheduler.Config{
-		BuildKitAddr: *buildkitAddr,
+	sched := scheduler.New(jobStore, storageBackend, pool, scheduler.Config{
 		OutputDir:    *outputDir,
 		PollInterval: time.Second,
 	})

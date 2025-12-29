@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -40,6 +41,7 @@ func remoteCmd() *cobra.Command {
 	cmd.AddCommand(remoteStatusCmd())
 	cmd.AddCommand(remoteListCmd())
 	cmd.AddCommand(remoteWaitCmd())
+	cmd.AddCommand(remoteBackendsCmd())
 
 	return cmd
 }
@@ -51,6 +53,7 @@ func remoteSubmitCmd() *cobra.Command {
 	var debug bool
 	var wait bool
 	var pipelineDirs []string
+	var backendSelector []string
 
 	cmd := &cobra.Command{
 		Use:   "submit <config.yaml>",
@@ -66,7 +69,10 @@ func remoteSubmitCmd() *cobra.Command {
   melange remote submit mypackage.yaml --arch aarch64
 
   # Submit with custom pipelines directory
-  melange remote submit mypackage.yaml --pipeline-dir ./pipelines`,
+  melange remote submit mypackage.yaml --pipeline-dir ./pipelines
+
+  # Submit with backend selector (requires specific backend labels)
+  melange remote submit mypackage.yaml --backend-selector tier=high-memory`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath := args[0]
@@ -83,15 +89,19 @@ func remoteSubmitCmd() *cobra.Command {
 				return fmt.Errorf("loading pipelines: %w", err)
 			}
 
+			// Parse backend selector
+			selector := parseSelector(backendSelector)
+
 			c := client.New(serverURL)
 
 			// Submit the job
 			resp, err := c.SubmitJob(cmd.Context(), types.CreateJobRequest{
-				ConfigYAML: string(configData),
-				Pipelines:  pipelines,
-				Arch:       arch,
-				WithTest:   withTest,
-				Debug:      debug,
+				ConfigYAML:      string(configData),
+				Pipelines:       pipelines,
+				Arch:            arch,
+				BackendSelector: selector,
+				WithTest:        withTest,
+				Debug:           debug,
 			})
 			if err != nil {
 				return fmt.Errorf("submitting job: %w", err)
@@ -100,6 +110,9 @@ func remoteSubmitCmd() *cobra.Command {
 			fmt.Printf("Job submitted: %s\n", resp.ID)
 			if len(pipelines) > 0 {
 				fmt.Printf("Included %d pipeline(s)\n", len(pipelines))
+			}
+			if len(selector) > 0 {
+				fmt.Printf("Backend selector: %v\n", selector)
 			}
 
 			if wait {
@@ -124,8 +137,24 @@ func remoteSubmitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job to complete")
 	cmd.Flags().StringSliceVar(&pipelineDirs, "pipeline-dir", nil, "directory containing pipeline YAML files (can be specified multiple times)")
+	cmd.Flags().StringSliceVar(&backendSelector, "backend-selector", nil, "backend label selector in key=value format (can be specified multiple times)")
 
 	return cmd
+}
+
+// parseSelector parses key=value pairs into a map.
+func parseSelector(selectors []string) map[string]string {
+	if len(selectors) == 0 {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, s := range selectors {
+		parts := strings.SplitN(s, "=", 2)
+		if len(parts) == 2 {
+			result[parts[0]] = parts[1]
+		}
+	}
+	return result
 }
 
 // loadPipelinesFromDirs reads all YAML files from the given directories and returns
@@ -286,6 +315,59 @@ func remoteWaitCmd() *cobra.Command {
 	return cmd
 }
 
+func remoteBackendsCmd() *cobra.Command {
+	var serverURL string
+	var arch string
+
+	cmd := &cobra.Command{
+		Use:   "backends",
+		Short: "List available BuildKit backends",
+		Long:  `List all available BuildKit backends on the server, with their architectures and labels.`,
+		Example: `  # List all backends
+  melange remote backends
+
+  # List backends for a specific architecture
+  melange remote backends --arch aarch64`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := client.New(serverURL)
+			resp, err := c.ListBackends(cmd.Context(), arch)
+			if err != nil {
+				return fmt.Errorf("listing backends: %w", err)
+			}
+
+			if len(resp.Backends) == 0 {
+				fmt.Println("No backends found")
+				return nil
+			}
+
+			fmt.Printf("Available architectures: %v\n\n", resp.Architectures)
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "ADDR\tARCH\tLABELS")
+			for _, b := range resp.Backends {
+				labels := "-"
+				if len(b.Labels) > 0 {
+					var parts []string
+					for k, v := range b.Labels {
+						parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+					}
+					labels = strings.Join(parts, ",")
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\n", b.Addr, b.Arch, labels)
+			}
+			w.Flush()
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&serverURL, "server", defaultServerURL, "melange-server URL")
+	cmd.Flags().StringVar(&arch, "arch", "", "filter by architecture")
+
+	return cmd
+}
+
 func printJobDetails(job *types.Job) {
 	fmt.Printf("Job ID:     %s\n", job.ID)
 	fmt.Printf("Status:     %s\n", job.Status)
@@ -293,6 +375,17 @@ func printJobDetails(job *types.Job) {
 
 	if job.Spec.Arch != "" {
 		fmt.Printf("Arch:       %s\n", job.Spec.Arch)
+	}
+
+	if job.Backend != nil {
+		fmt.Printf("Backend:    %s (%s)\n", job.Backend.Addr, job.Backend.Arch)
+		if len(job.Backend.Labels) > 0 {
+			var parts []string
+			for k, v := range job.Backend.Labels {
+				parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+			}
+			fmt.Printf("Labels:     %s\n", strings.Join(parts, ", "))
+		}
 	}
 
 	if job.StartedAt != nil {

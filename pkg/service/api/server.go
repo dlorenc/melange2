@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/store"
 	"github.com/dlorenc/melange2/pkg/service/types"
 )
@@ -27,13 +28,15 @@ import (
 // Server is the HTTP API server.
 type Server struct {
 	store store.JobStore
+	pool  *buildkit.Pool
 	mux   *http.ServeMux
 }
 
 // NewServer creates a new API server.
-func NewServer(store store.JobStore) *Server {
+func NewServer(store store.JobStore, pool *buildkit.Pool) *Server {
 	s := &Server{
 		store: store,
+		pool:  pool,
 		mux:   http.NewServeMux(),
 	}
 	s.setupRoutes()
@@ -43,6 +46,7 @@ func NewServer(store store.JobStore) *Server {
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/v1/jobs", s.handleJobs)
 	s.mux.HandleFunc("/api/v1/jobs/", s.handleJob)
+	s.mux.HandleFunc("/api/v1/backends", s.handleBackends)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 }
 
@@ -55,6 +59,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleBackends handles GET /api/v1/backends (list available backends).
+func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Support optional architecture filter
+	arch := r.URL.Query().Get("arch")
+
+	var backends []buildkit.Backend
+	if arch != "" {
+		backends = s.pool.ListByArch(arch)
+	} else {
+		backends = s.pool.List()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"backends":      backends,
+		"architectures": s.pool.Architectures(),
+	})
 }
 
 // handleJobs handles POST /api/v1/jobs (create job) and GET /api/v1/jobs (list jobs).
