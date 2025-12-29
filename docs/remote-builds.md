@@ -130,9 +130,20 @@ See [GKE Setup Guide](deployment/gke-setup.md) for detailed deployment instructi
 ### Build Defaults
 
 The server automatically configures builds with:
-- Wolfi OS repository and signing key
+- Wolfi OS repository and signing key (auto-injected if not specified)
 - Signature verification disabled (for MVP)
 - `wolfi` namespace for package URLs
+
+Packages without inline repository configuration will automatically use the default Wolfi repos:
+```yaml
+# These are auto-injected if your config doesn't specify repositories:
+environment:
+  contents:
+    repositories:
+      - https://packages.wolfi.dev/os
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+```
 
 ## Limitations
 
@@ -144,22 +155,6 @@ The server automatically configures builds with:
 4. **No job cancellation**: Running jobs cannot be cancelled
 5. **No live log streaming**: Logs available only after completion
 
-### Package Requirements
-
-Packages submitted to the server must include inline repository configuration:
-
-```yaml
-environment:
-  contents:
-    repositories:
-      - https://packages.wolfi.dev/os
-    keyring:
-      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
-    packages:
-      - build-base
-      - ...
-```
-
 ---
 
 ## Roadmap
@@ -167,7 +162,7 @@ environment:
 ### Phase 1: Core Improvements (Next)
 
 - [ ] **PostgreSQL job store** - Persistent job storage across restarts
-- [ ] **Default repository injection** - Auto-add Wolfi repos for packages without inline repos
+- [x] **Default repository injection** - Auto-add Wolfi repos for packages without inline repos
 - [ ] **Job cancellation** - API endpoint to cancel running jobs
 - [ ] **Live log streaming** - WebSocket endpoint for real-time build logs
 - [ ] **Authentication** - API key or OAuth2 authentication

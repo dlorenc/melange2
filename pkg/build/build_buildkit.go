@@ -326,6 +326,17 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 	imgConfig := b.Configuration.Environment
 	imgConfig.Archs = []apko_types.Architecture{b.Arch}
 
+	// Inject default repositories if none are specified in the config
+	// This allows packages without inline repos to use the default Wolfi repos
+	if len(imgConfig.Contents.Repositories) == 0 && len(b.ExtraRepos) > 0 {
+		log.Infof("no repositories in config, using default repos: %v", b.ExtraRepos)
+		imgConfig.Contents.Repositories = append(imgConfig.Contents.Repositories, b.ExtraRepos...)
+	}
+	if len(imgConfig.Contents.Keyring) == 0 && len(b.ExtraKeys) > 0 {
+		log.Infof("no keyring in config, using default keys: %v", b.ExtraKeys)
+		imgConfig.Contents.Keyring = append(imgConfig.Contents.Keyring, b.ExtraKeys...)
+	}
+
 	// Set the layer budget based on MaxLayers configuration
 	// Default to 50 if not set
 	maxLayers := b.MaxLayers
