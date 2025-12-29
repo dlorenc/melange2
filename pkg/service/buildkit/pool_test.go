@@ -211,3 +211,96 @@ func TestPoolListByArch(t *testing.T) {
 	riscv := pool.ListByArch("riscv64")
 	require.Len(t, riscv, 0)
 }
+
+func TestPoolAdd(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	})
+	require.NoError(t, err)
+	require.Len(t, pool.List(), 1)
+
+	// Add a new backend
+	err = pool.Add(Backend{
+		Addr:   "tcp://arm64-1:1234",
+		Arch:   "aarch64",
+		Labels: map[string]string{"tier": "standard"},
+	})
+	require.NoError(t, err)
+	require.Len(t, pool.List(), 2)
+
+	// Verify new architecture is available
+	archs := pool.Architectures()
+	require.Len(t, archs, 2)
+
+	// Should be able to select the new backend
+	backend, err := pool.Select("aarch64", nil)
+	require.NoError(t, err)
+	require.Equal(t, "tcp://arm64-1:1234", backend.Addr)
+}
+
+func TestPoolAddValidation(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	})
+	require.NoError(t, err)
+
+	// Missing addr
+	err = pool.Add(Backend{Arch: "x86_64"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "addr is required")
+
+	// Missing arch
+	err = pool.Add(Backend{Addr: "tcp://new:1234"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "arch is required")
+
+	// Duplicate addr
+	err = pool.Add(Backend{Addr: "tcp://amd64-1:1234", Arch: "x86_64"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists")
+}
+
+func TestPoolRemove(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+		{Addr: "tcp://amd64-2:1234", Arch: "x86_64"},
+		{Addr: "tcp://arm64-1:1234", Arch: "aarch64"},
+	})
+	require.NoError(t, err)
+	require.Len(t, pool.List(), 3)
+
+	// Remove a backend
+	err = pool.Remove("tcp://amd64-2:1234")
+	require.NoError(t, err)
+	require.Len(t, pool.List(), 2)
+
+	// Verify it's gone
+	for _, b := range pool.List() {
+		require.NotEqual(t, "tcp://amd64-2:1234", b.Addr)
+	}
+}
+
+func TestPoolRemoveValidation(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	})
+	require.NoError(t, err)
+
+	// Cannot remove last backend
+	err = pool.Remove("tcp://amd64-1:1234")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot remove the last backend")
+
+	// Add another backend first
+	err = pool.Add(Backend{Addr: "tcp://amd64-2:1234", Arch: "x86_64"})
+	require.NoError(t, err)
+
+	// Non-existent backend (need 2+ backends to test this)
+	err = pool.Remove("tcp://nonexistent:1234")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
+
+	// Now can remove one of the backends
+	err = pool.Remove("tcp://amd64-1:1234")
+	require.NoError(t, err)
+}

@@ -192,3 +192,60 @@ func (p *Pool) Architectures() []string {
 	}
 	return archs
 }
+
+// Add adds a new backend to the pool.
+// Returns an error if the backend is invalid or already exists.
+func (p *Pool) Add(backend Backend) error {
+	if backend.Addr == "" {
+		return errors.New("addr is required")
+	}
+	if backend.Arch == "" {
+		return errors.New("arch is required")
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Check for duplicates
+	for _, b := range p.backends {
+		if b.Addr == backend.Addr {
+			return fmt.Errorf("backend with addr %s already exists", backend.Addr)
+		}
+	}
+
+	// Initialize labels if nil
+	if backend.Labels == nil {
+		backend.Labels = map[string]string{}
+	}
+
+	// Add the backend
+	p.backends = append(p.backends, backend)
+
+	// Initialize counter for new architecture if needed
+	if _, exists := p.counters[backend.Arch]; !exists {
+		p.counters[backend.Arch] = &atomic.Uint64{}
+	}
+
+	return nil
+}
+
+// Remove removes a backend from the pool by its address.
+// Returns an error if the backend is not found or if it's the last backend.
+func (p *Pool) Remove(addr string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if len(p.backends) == 1 {
+		return errors.New("cannot remove the last backend")
+	}
+
+	// Find and remove the backend
+	for i, b := range p.backends {
+		if b.Addr == addr {
+			p.backends = append(p.backends[:i], p.backends[i+1:]...)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("backend with addr %s not found", addr)
+}

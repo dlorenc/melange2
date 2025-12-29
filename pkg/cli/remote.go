@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/client"
 	"github.com/dlorenc/melange2/pkg/service/types"
 )
@@ -316,18 +317,32 @@ func remoteWaitCmd() *cobra.Command {
 }
 
 func remoteBackendsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "backends",
+		Short: "Manage BuildKit backends",
+		Long:  `Commands for listing, adding, and removing BuildKit backends on the server.`,
+	}
+
+	cmd.AddCommand(remoteBackendsListCmd())
+	cmd.AddCommand(remoteBackendsAddCmd())
+	cmd.AddCommand(remoteBackendsRemoveCmd())
+
+	return cmd
+}
+
+func remoteBackendsListCmd() *cobra.Command {
 	var serverURL string
 	var arch string
 
 	cmd := &cobra.Command{
-		Use:   "backends",
+		Use:   "list",
 		Short: "List available BuildKit backends",
 		Long:  `List all available BuildKit backends on the server, with their architectures and labels.`,
 		Example: `  # List all backends
-  melange remote backends
+  melange remote backends list
 
   # List backends for a specific architecture
-  melange remote backends --arch aarch64`,
+  melange remote backends list --arch aarch64`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := client.New(serverURL)
@@ -364,6 +379,101 @@ func remoteBackendsCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&serverURL, "server", defaultServerURL, "melange-server URL")
 	cmd.Flags().StringVar(&arch, "arch", "", "filter by architecture")
+
+	return cmd
+}
+
+func remoteBackendsAddCmd() *cobra.Command {
+	var serverURL string
+	var addr string
+	var arch string
+	var labels []string
+
+	cmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a new BuildKit backend",
+		Long:  `Add a new BuildKit backend to the server's pool.`,
+		Example: `  # Add a basic backend
+  melange remote backends add --addr tcp://buildkit:1234 --arch x86_64
+
+  # Add a backend with labels
+  melange remote backends add --addr tcp://buildkit:1234 --arch aarch64 --label tier=high-memory --label sandbox=privileged`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if addr == "" {
+				return fmt.Errorf("--addr is required")
+			}
+			if arch == "" {
+				return fmt.Errorf("--arch is required")
+			}
+
+			// Parse labels
+			labelMap := parseSelector(labels)
+
+			c := client.New(serverURL)
+			backend, err := c.AddBackend(cmd.Context(), buildkit.Backend{
+				Addr:   addr,
+				Arch:   arch,
+				Labels: labelMap,
+			})
+			if err != nil {
+				return fmt.Errorf("adding backend: %w", err)
+			}
+
+			fmt.Printf("Added backend: %s (arch: %s)\n", backend.Addr, backend.Arch)
+			if len(backend.Labels) > 0 {
+				var parts []string
+				for k, v := range backend.Labels {
+					parts = append(parts, fmt.Sprintf("%s=%s", k, v))
+				}
+				fmt.Printf("Labels: %s\n", strings.Join(parts, ", "))
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&serverURL, "server", defaultServerURL, "melange-server URL")
+	cmd.Flags().StringVar(&addr, "addr", "", "BuildKit daemon address (e.g., tcp://buildkit:1234)")
+	cmd.Flags().StringVar(&arch, "arch", "", "architecture (e.g., x86_64, aarch64)")
+	cmd.Flags().StringSliceVar(&labels, "label", nil, "backend label in key=value format (can be specified multiple times)")
+
+	_ = cmd.MarkFlagRequired("addr")
+	_ = cmd.MarkFlagRequired("arch")
+
+	return cmd
+}
+
+func remoteBackendsRemoveCmd() *cobra.Command {
+	var serverURL string
+	var addr string
+
+	cmd := &cobra.Command{
+		Use:   "remove",
+		Short: "Remove a BuildKit backend",
+		Long:  `Remove a BuildKit backend from the server's pool.`,
+		Example: `  # Remove a backend by address
+  melange remote backends remove --addr tcp://buildkit:1234`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if addr == "" {
+				return fmt.Errorf("--addr is required")
+			}
+
+			c := client.New(serverURL)
+			if err := c.RemoveBackend(cmd.Context(), addr); err != nil {
+				return fmt.Errorf("removing backend: %w", err)
+			}
+
+			fmt.Printf("Removed backend: %s\n", addr)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&serverURL, "server", defaultServerURL, "melange-server URL")
+	cmd.Flags().StringVar(&addr, "addr", "", "BuildKit daemon address to remove")
+
+	_ = cmd.MarkFlagRequired("addr")
 
 	return cmd
 }

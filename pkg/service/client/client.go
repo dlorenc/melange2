@@ -213,3 +213,62 @@ func (c *Client) ListBackends(ctx context.Context, arch string) (*BackendsRespon
 
 	return &result, nil
 }
+
+// AddBackend adds a new backend to the pool.
+func (c *Client) AddBackend(ctx context.Context, backend buildkit.Backend) (*buildkit.Backend, error) {
+	body, err := json.Marshal(backend)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/backends", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result buildkit.Backend
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// RemoveBackend removes a backend from the pool by its address.
+func (c *Client) RemoveBackend(ctx context.Context, addr string) error {
+	body, err := json.Marshal(map[string]string{"addr": addr})
+	if err != nil {
+		return fmt.Errorf("marshaling request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/api/v1/backends", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}

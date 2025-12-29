@@ -51,6 +51,8 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 | `GET /api/v1/jobs` | GET | List all jobs |
 | `GET /api/v1/jobs/:id` | GET | Get job status and details |
 | `GET /api/v1/backends` | GET | List available BuildKit backends |
+| `POST /api/v1/backends` | POST | Add a new backend |
+| `DELETE /api/v1/backends` | DELETE | Remove a backend |
 | `GET /healthz` | GET | Health check |
 
 ### Job Request Format
@@ -78,7 +80,9 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 | `melange remote status <job-id>` | Get job status |
 | `melange remote list` | List all jobs |
 | `melange remote wait <job-id>` | Wait for job completion |
-| `melange remote backends` | List available BuildKit backends |
+| `melange remote backends list` | List available BuildKit backends |
+| `melange remote backends add` | Add a new backend |
+| `melange remote backends remove` | Remove a backend |
 
 ### Inline Pipelines
 
@@ -176,10 +180,28 @@ melange remote submit pkg.yaml --arch x86_64 --backend-selector tier=high-memory
 
 **List available backends:**
 ```bash
-melange remote backends
+melange remote backends list
 
 # Filter by architecture
-melange remote backends --arch aarch64
+melange remote backends list --arch aarch64
+```
+
+**Dynamically add backends:**
+```bash
+# Add a basic backend
+melange remote backends add --addr tcp://new-buildkit:1234 --arch x86_64
+
+# Add a backend with labels
+melange remote backends add \
+  --addr tcp://high-memory-buildkit:1234 \
+  --arch x86_64 \
+  --label tier=high-memory \
+  --label sandbox=privileged
+```
+
+**Remove backends:**
+```bash
+melange remote backends remove --addr tcp://old-buildkit:1234
 ```
 
 The scheduler selects backends using:

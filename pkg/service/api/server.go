@@ -61,13 +61,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleBackends handles GET /api/v1/backends (list available backends).
+// handleBackends handles backend management:
+// GET /api/v1/backends - list available backends
+// POST /api/v1/backends - add a new backend
+// DELETE /api/v1/backends - remove a backend
 func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		s.listBackends(w, r)
+	case http.MethodPost:
+		s.addBackend(w, r)
+	case http.MethodDelete:
+		s.removeBackend(w, r)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
+}
 
+// listBackends lists available backends.
+func (s *Server) listBackends(w http.ResponseWriter, r *http.Request) {
 	// Support optional architecture filter
 	arch := r.URL.Query().Get("arch")
 
@@ -83,6 +95,72 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		"backends":      backends,
 		"architectures": s.pool.Architectures(),
 	})
+}
+
+// AddBackendRequest is the request body for adding a backend.
+type AddBackendRequest struct {
+	Addr   string            `json:"addr"`
+	Arch   string            `json:"arch"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// addBackend adds a new backend to the pool.
+func (s *Server) addBackend(w http.ResponseWriter, r *http.Request) {
+	var req AddBackendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	backend := buildkit.Backend{
+		Addr:   req.Addr,
+		Arch:   req.Arch,
+		Labels: req.Labels,
+	}
+
+	if err := s.pool.Add(backend); err != nil {
+		// Check if it's a validation error vs duplicate
+		if strings.Contains(err.Error(), "already exists") {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(backend)
+}
+
+// RemoveBackendRequest is the request body for removing a backend.
+type RemoveBackendRequest struct {
+	Addr string `json:"addr"`
+}
+
+// removeBackend removes a backend from the pool.
+func (s *Server) removeBackend(w http.ResponseWriter, r *http.Request) {
+	var req RemoveBackendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Addr == "" {
+		http.Error(w, "addr is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.pool.Remove(req.Addr); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleJobs handles POST /api/v1/jobs (create job) and GET /api/v1/jobs (list jobs).
