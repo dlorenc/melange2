@@ -89,6 +89,9 @@ func run(ctx context.Context) error {
 		Addr:              *listenAddr,
 		Handler:           apiServer,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
 	// Create scheduler

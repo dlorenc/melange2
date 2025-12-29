@@ -93,10 +93,20 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(job)
 }
 
+// MaxBodySize is the maximum allowed request body size (10MB).
+const MaxBodySize = 10 << 20
+
 // createJob creates a new build job.
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
+	// Limit request body size to prevent OOM
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
+
 	var req types.CreateJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err.Error() == "http: request body too large" {
+			http.Error(w, "request body too large (max 10MB)", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
