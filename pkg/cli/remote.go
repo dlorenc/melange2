@@ -217,7 +217,7 @@ func submitGitBuild(cmd *cobra.Command, c *client.Client, repo, ref, pattern, pa
 
 // submitMultiConfigBuild submits a build with multiple config files.
 func submitMultiConfigBuild(cmd *cobra.Command, c *client.Client, configPaths []string, arch string, selector, pipelines map[string]string, withTest, debug, wait bool) error {
-	var configs []string
+	configs := make([]string, 0, len(configPaths))
 	for _, path := range configPaths {
 		data, err := os.ReadFile(path)
 		if err != nil {

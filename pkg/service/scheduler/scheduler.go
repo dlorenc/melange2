@@ -399,7 +399,7 @@ func (s *Scheduler) processBuild(ctx context.Context, build *types.Build) {
 		// Release the claimed package back to pending
 		pkg.Status = types.PackageStatusPending
 		pkg.StartedAt = nil
-		s.buildStore.UpdatePackageJob(ctx, build.ID, pkg)
+		_ = s.buildStore.UpdatePackageJob(ctx, build.ID, pkg)
 		return
 	}
 
@@ -602,7 +602,7 @@ func (s *Scheduler) markPackageFailed(ctx context.Context, buildID string, pkg *
 	pkg.Status = types.PackageStatusFailed
 	pkg.FinishedAt = &now
 	pkg.Error = err.Error()
-	s.buildStore.UpdatePackageJob(ctx, buildID, pkg)
+	_ = s.buildStore.UpdatePackageJob(ctx, buildID, pkg)
 	s.cascadeFailure(ctx, buildID, pkg.Name)
 }
 
@@ -685,13 +685,14 @@ func (s *Scheduler) updateBuildStatus(ctx context.Context, buildID string) {
 
 	// Determine overall status
 	var newStatus types.BuildStatus
-	if running > 0 || pending > 0 {
+	switch {
+	case running > 0 || pending > 0:
 		newStatus = types.BuildStatusRunning
-	} else if success == total {
+	case success == total:
 		newStatus = types.BuildStatusSuccess
-	} else if failed > 0 && success > 0 {
+	case failed > 0 && success > 0:
 		newStatus = types.BuildStatusPartial
-	} else {
+	default:
 		newStatus = types.BuildStatusFailed
 	}
 

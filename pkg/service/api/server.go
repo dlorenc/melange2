@@ -329,7 +329,8 @@ func (s *Server) createBuildFromRequest(w http.ResponseWriter, r *http.Request, 
 	var configs []string
 	var err error
 
-	if req.GitSource != nil {
+	switch {
+	case req.GitSource != nil:
 		if err := git.ValidateSource(req.GitSource); err != nil {
 			http.Error(w, "invalid git source: "+err.Error(), http.StatusBadRequest)
 			return
@@ -340,9 +341,9 @@ func (s *Server) createBuildFromRequest(w http.ResponseWriter, r *http.Request, 
 			http.Error(w, "failed to load configs from git: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-	} else if len(req.Configs) > 0 {
+	case len(req.Configs) > 0:
 		configs = req.Configs
-	} else {
+	default:
 		http.Error(w, "either configs or git_source is required for multi-package build", http.StatusBadRequest)
 		return
 	}
@@ -421,7 +422,7 @@ type configDependencies struct {
 
 // parseConfigDependencies parses configs to extract package names and their dependencies.
 func (s *Server) parseConfigDependencies(configs []string) ([]dag.Node, error) {
-	var nodes []dag.Node
+	nodes := make([]dag.Node, 0, len(configs))
 
 	for _, configYAML := range configs {
 		var cfg configDependencies

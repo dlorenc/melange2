@@ -95,7 +95,7 @@ func (s *Source) Clone(ctx context.Context) (string, func(), error) {
 			// Try to resolve as a commit hash
 			hash, err := repo.ResolveRevision(plumbing.Revision(s.Ref))
 			if err == nil {
-				w.Checkout(&git.CheckoutOptions{
+				_ = w.Checkout(&git.CheckoutOptions{
 					Hash: *hash,
 				})
 			}
@@ -146,7 +146,7 @@ func (s *Source) LoadConfigs(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("no config files found matching pattern %s in %s", pattern, s.Path)
 	}
 
-	var configs []string
+	configs := make([]string, 0, len(paths))
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
