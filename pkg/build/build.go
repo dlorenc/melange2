@@ -137,6 +137,10 @@ type Build struct {
 	// The package resolver associated with this build.
 	// Populated during buildGuestLayers when the apko environment is created.
 	PkgResolver *apk.PkgResolver
+
+	// LogWriter is an optional writer for capturing build log output.
+	// If set, build logs will be written here in addition to stderr.
+	LogWriter io.Writer
 }
 
 func New(ctx context.Context, opts ...Option) (*Build, error) {

@@ -16,6 +16,7 @@ package build
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -422,6 +423,16 @@ func WithExportOnFailure(exportType, exportRef string) Option {
 		default:
 			return fmt.Errorf("invalid --export-on-failure value: %s (must be none, tarball, docker, or registry)", exportType)
 		}
+		return nil
+	}
+}
+
+// WithLogWriter sets a writer for capturing build log output.
+// Build logs will be written to this writer in addition to stderr.
+// This is useful for capturing logs for remote/service builds.
+func WithLogWriter(w io.Writer) Option {
+	return func(b *Build) error {
+		b.LogWriter = w
 		return nil
 	}
 }
