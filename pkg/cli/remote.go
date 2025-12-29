@@ -17,6 +17,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -49,6 +50,7 @@ func remoteSubmitCmd() *cobra.Command {
 	var withTest bool
 	var debug bool
 	var wait bool
+	var pipelineDirs []string
 
 	cmd := &cobra.Command{
 		Use:   "submit <config.yaml>",
@@ -61,7 +63,10 @@ func remoteSubmitCmd() *cobra.Command {
   melange remote submit mypackage.yaml --wait
 
   # Submit with specific architecture
-  melange remote submit mypackage.yaml --arch aarch64`,
+  melange remote submit mypackage.yaml --arch aarch64
+
+  # Submit with custom pipelines directory
+  melange remote submit mypackage.yaml --pipeline-dir ./pipelines`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			configPath := args[0]
@@ -72,11 +77,18 @@ func remoteSubmitCmd() *cobra.Command {
 				return fmt.Errorf("reading config file: %w", err)
 			}
 
+			// Load pipelines from directories
+			pipelines, err := loadPipelinesFromDirs(pipelineDirs)
+			if err != nil {
+				return fmt.Errorf("loading pipelines: %w", err)
+			}
+
 			c := client.New(serverURL)
 
 			// Submit the job
 			resp, err := c.SubmitJob(cmd.Context(), types.CreateJobRequest{
 				ConfigYAML: string(configData),
+				Pipelines:  pipelines,
 				Arch:       arch,
 				WithTest:   withTest,
 				Debug:      debug,
@@ -86,6 +98,9 @@ func remoteSubmitCmd() *cobra.Command {
 			}
 
 			fmt.Printf("Job submitted: %s\n", resp.ID)
+			if len(pipelines) > 0 {
+				fmt.Printf("Included %d pipeline(s)\n", len(pipelines))
+			}
 
 			if wait {
 				fmt.Println("Waiting for job to complete...")
@@ -108,8 +123,53 @@ func remoteSubmitCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&withTest, "test", false, "run tests after build")
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job to complete")
+	cmd.Flags().StringSliceVar(&pipelineDirs, "pipeline-dir", nil, "directory containing pipeline YAML files (can be specified multiple times)")
 
 	return cmd
+}
+
+// loadPipelinesFromDirs reads all YAML files from the given directories and returns
+// a map of relative paths to their content.
+func loadPipelinesFromDirs(dirs []string) (map[string]string, error) {
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+
+	pipelines := make(map[string]string)
+	for _, dir := range dirs {
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			// Only process .yaml files
+			if filepath.Ext(path) != ".yaml" {
+				return nil
+			}
+
+			// Get relative path from the pipeline dir
+			relPath, err := filepath.Rel(dir, path)
+			if err != nil {
+				return fmt.Errorf("getting relative path: %w", err)
+			}
+
+			// Read the file content
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("reading %s: %w", path, err)
+			}
+
+			pipelines[relPath] = string(content)
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("walking %s: %w", dir, err)
+		}
+	}
+
+	return pipelines, nil
 }
 
 func remoteStatusCmd() *cobra.Command {

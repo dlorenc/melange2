@@ -139,6 +139,21 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
+	// Write inline pipelines to a temp directory
+	pipelineDir := filepath.Join(tmpDir, "pipelines")
+	if len(job.Spec.Pipelines) > 0 {
+		for pipelinePath, pipelineContent := range job.Spec.Pipelines {
+			fullPath := filepath.Join(pipelineDir, pipelinePath)
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+				return fmt.Errorf("creating pipeline dir for %s: %w", pipelinePath, err)
+			}
+			if err := os.WriteFile(fullPath, []byte(pipelineContent), 0600); err != nil {
+				return fmt.Errorf("writing pipeline %s: %w", pipelinePath, err)
+			}
+			log.Debugf("wrote inline pipeline: %s", pipelinePath)
+		}
+	}
+
 	// Get output directory from storage backend
 	outputDir, err := s.storage.OutputDir(ctx, job.ID)
 	if err != nil {
@@ -206,6 +221,11 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 		build.WithConfigFileRepositoryCommit("inline-" + job.ID),
 		build.WithConfigFileLicense("Apache-2.0"),
 		build.WithNamespace("wolfi"),
+	}
+
+	// Add inline pipelines directory if provided
+	if len(job.Spec.Pipelines) > 0 {
+		opts = append(opts, build.WithPipelineDir(pipelineDir))
 	}
 
 	// Create the build context

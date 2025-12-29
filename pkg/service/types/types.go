@@ -47,6 +47,11 @@ type JobSpec struct {
 	// ConfigYAML is the inline melange configuration.
 	ConfigYAML string `json:"config_yaml"`
 
+	// Pipelines is a map of pipeline paths to their YAML content.
+	// Keys should be relative paths like "test/docs.yaml" or "autoconf/configure.yaml".
+	// These pipelines are made available during the build.
+	Pipelines map[string]string `json:"pipelines,omitempty"`
+
 	// Arch is the target architecture (default: runtime arch).
 	Arch string `json:"arch,omitempty"`
 
@@ -59,10 +64,11 @@ type JobSpec struct {
 
 // CreateJobRequest is the request body for creating a job.
 type CreateJobRequest struct {
-	ConfigYAML string `json:"config_yaml"`
-	Arch       string `json:"arch,omitempty"`
-	WithTest   bool   `json:"with_test,omitempty"`
-	Debug      bool   `json:"debug,omitempty"`
+	ConfigYAML string            `json:"config_yaml"`
+	Pipelines  map[string]string `json:"pipelines,omitempty"`
+	Arch       string            `json:"arch,omitempty"`
+	WithTest   bool              `json:"with_test,omitempty"`
+	Debug      bool              `json:"debug,omitempty"`
 }
 
 // CreateJobResponse is the response body for creating a job.
