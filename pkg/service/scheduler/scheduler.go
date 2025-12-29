@@ -132,7 +132,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 
 	// Write the config YAML to a temp file
 	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(job.Spec.ConfigYAML), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(job.Spec.ConfigYAML), 0600); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
@@ -205,7 +205,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 	bc, err := build.New(ctx, opts...)
 	if err != nil {
 		logBuf.WriteString(fmt.Sprintf("ERROR: failed to initialize build: %v\n", err))
-		logFile.Write(logBuf.Bytes())
+		_, _ = logFile.Write(logBuf.Bytes())
 		return fmt.Errorf("initializing build: %w", err)
 	}
 	defer bc.Close(ctx)
@@ -219,12 +219,12 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 
 	if err := bc.BuildPackage(ctx); err != nil {
 		logBuf.WriteString(fmt.Sprintf("\nERROR: %v\n", err))
-		logFile.Write(logBuf.Bytes())
+		_, _ = logFile.Write(logBuf.Bytes())
 		return fmt.Errorf("building package: %w", err)
 	}
 
 	logBuf.WriteString(fmt.Sprintf("\nBuild completed successfully at %s\n", time.Now().Format(time.RFC3339)))
-	logFile.Write(logBuf.Bytes())
+	_, _ = logFile.Write(logBuf.Bytes())
 
 	return nil
 }

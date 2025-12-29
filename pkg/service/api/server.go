@@ -54,7 +54,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // handleHealth returns a simple health check response.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // handleJobs handles POST /api/v1/jobs (create job) and GET /api/v1/jobs (list jobs).
@@ -90,7 +90,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(job)
+	_ = json.NewEncoder(w).Encode(job)
 }
 
 // createJob creates a new build job.
@@ -106,14 +106,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	spec := types.JobSpec{
-		ConfigYAML: req.ConfigYAML,
-		Arch:       req.Arch,
-		WithTest:   req.WithTest,
-		Debug:      req.Debug,
-	}
-
-	job, err := s.store.Create(r.Context(), spec)
+	job, err := s.store.Create(r.Context(), types.JobSpec(req))
 	if err != nil {
 		http.Error(w, "failed to create job: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -121,7 +114,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(types.CreateJobResponse{ID: job.ID})
+	_ = json.NewEncoder(w).Encode(types.CreateJobResponse{ID: job.ID})
 }
 
 // listJobs lists all jobs.
@@ -133,5 +126,5 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(jobs)
+	_ = json.NewEncoder(w).Encode(jobs)
 }
