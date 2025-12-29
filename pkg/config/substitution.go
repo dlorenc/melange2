@@ -383,38 +383,3 @@ func replaceSubpackages(r *strings.Replacer, datas map[string]DataItems, cfg Con
 
 	return out, nil
 }
-
-func (cfg *Configuration) applySubstitutionsForPackages() error {
-	nw := buildConfigMap(cfg)
-	if err := cfg.PerformVarSubstitutions(nw); err != nil {
-		return fmt.Errorf("applying variable substitutions for packages: %w", err)
-	}
-	for i, runtime := range cfg.Environment.Contents.Packages {
-		var err error
-		cfg.Environment.Contents.Packages[i], err = util.MutateStringFromMap(nw, runtime)
-		if err != nil {
-			return fmt.Errorf("failed to apply replacement to package %q: %w", runtime, err)
-		}
-	}
-	if cfg.Test != nil {
-		for i, runtime := range cfg.Test.Environment.Contents.Packages {
-			var err error
-			cfg.Test.Environment.Contents.Packages[i], err = util.MutateStringFromMap(nw, runtime)
-			if err != nil {
-				return fmt.Errorf("failed to apply replacement to test package %q: %w", runtime, err)
-			}
-		}
-	}
-	for _, sp := range cfg.Subpackages {
-		if sp.Test != nil {
-			for i, runtime := range sp.Test.Environment.Contents.Packages {
-				var err error
-				sp.Test.Environment.Contents.Packages[i], err = util.MutateStringFromMap(nw, runtime)
-				if err != nil {
-					return fmt.Errorf("failed to apply replacement to subpackage %q test %q: %w", sp.Name, runtime, err)
-				}
-			}
-		}
-	}
-	return nil
-}
