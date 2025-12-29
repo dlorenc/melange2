@@ -7,12 +7,14 @@ This document is optimized for AI agents working on the melange2 codebase.
 | Task | Command |
 |------|---------|
 | Build binary | `go build -o melange2 .` |
+| Build server | `go build -o melange-server ./cmd/melange-server/` |
 | Unit tests | `go test -short ./...` |
 | E2E tests | `go test -v ./pkg/buildkit/...` |
 | All tests | `go test ./...` |
 | Lint | `go vet ./...` |
 | Build package | `./melange2 build pkg.yaml --buildkit-addr tcp://localhost:1234` |
 | Debug build | `./melange2 build pkg.yaml --buildkit-addr tcp://localhost:1234 --debug` |
+| Deploy to GKE | `KO_DOCKER_REPO=us-central1-docker.pkg.dev/PROJECT/REPO ko apply -f deploy/gke/` |
 
 ## Git Workflow (CRITICAL)
 
@@ -55,6 +57,8 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 
 ```
 .
+├── cmd/
+│   └── melange-server/    # Build service entry point
 ├── pkg/buildkit/          # CORE - BuildKit integration
 │   ├── builder.go         # Main Build() method
 │   ├── llb.go             # Pipeline → LLB conversion
@@ -65,6 +69,15 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 │   └── pipelines/         # Built-in pipeline YAMLs
 ├── pkg/cli/               # CLI commands (build, test, etc.)
 ├── pkg/config/            # YAML config parsing
+├── pkg/service/           # melange-server components
+│   ├── api/               # HTTP API handlers
+│   ├── scheduler/         # Job scheduling and execution
+│   ├── storage/           # Storage backends (local, GCS)
+│   ├── store/             # Job store (memory, future: postgres)
+│   └── types/             # Service types
+├── deploy/
+│   ├── kind/              # Local Kind cluster deployment
+│   └── gke/               # GKE deployment with GCS storage
 ├── docs/
 │   ├── user-guide/        # End-user documentation
 │   └── development/       # Developer documentation
@@ -82,6 +95,10 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 | Debug test failures | `pkg/buildkit/e2e_test.go` |
 | Understand caching | `pkg/buildkit/cache.go` |
 | Config parsing | `pkg/config/config.go` |
+| Modify server API | `pkg/service/api/server.go` |
+| Modify job scheduling | `pkg/service/scheduler/scheduler.go` |
+| Add storage backend | `pkg/service/storage/storage.go` |
+| GKE deployment | `deploy/gke/*.yaml`, `deploy/gke/setup.sh` |
 
 ## Common Tasks
 
@@ -89,6 +106,73 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 ```bash
 docker run -d --name buildkitd --privileged -p 1234:1234 \
   moby/buildkit:latest --addr tcp://0.0.0.0:1234
+```
+
+### Deploy with ko
+
+The project uses [ko](https://ko.build) for building and deploying container images. ko builds Go binaries and packages them into OCI images without Dockerfiles.
+
+**Setup:**
+```bash
+# Install ko
+go install github.com/google/ko@latest
+
+# Set the image registry (required)
+export KO_DOCKER_REPO=us-central1-docker.pkg.dev/dlorenc-chainguard/clusterlange
+```
+
+**Build and push images:**
+```bash
+# Build a single binary
+ko build ./cmd/melange-server
+
+# Build and get the image reference
+ko build ./cmd/melange-server --bare
+```
+
+**Deploy to Kubernetes with ko apply:**
+```bash
+# ko apply builds, pushes, and deploys in one command
+# It finds ko:// references in YAML and replaces them with built image refs
+ko apply -f deploy/gke/
+
+# Deploy with custom registry
+KO_DOCKER_REPO=my-registry.io/images ko apply -f deploy/gke/
+
+# Use with kubectl flags (after --)
+ko apply -f deploy/gke/ -- --context=my-cluster
+```
+
+**ko:// image references in YAML:**
+```yaml
+# In Kubernetes manifests, use ko:// prefix for Go import paths
+spec:
+  containers:
+  - name: server
+    image: ko://github.com/dlorenc/melange2/cmd/melange-server
+```
+
+**Common ko flags:**
+| Flag | Description |
+|------|-------------|
+| `-B, --base-import-paths` | Use base path without hash in image name |
+| `--bare` | Use KO_DOCKER_REPO without additional path |
+| `-t, --tags` | Set image tags (default: latest) |
+| `--platform` | Build for specific platforms (e.g., `linux/amd64,linux/arm64`) |
+| `-L, --local` | Load image to local Docker daemon |
+| `-R, --recursive` | Process directories recursively |
+
+**GKE Deployment:**
+```bash
+# Full GKE setup (creates cluster, bucket, deploys)
+./deploy/gke/setup.sh
+
+# Manual deployment with ko
+export KO_DOCKER_REPO=us-central1-docker.pkg.dev/dlorenc-chainguard/clusterlange
+ko apply -f deploy/gke/namespace.yaml
+ko apply -f deploy/gke/buildkit.yaml
+ko apply -f deploy/gke/configmap.yaml
+ko apply -f deploy/gke/melange-server.yaml
 ```
 
 ### Add E2E Test
@@ -206,6 +290,47 @@ for _, k := range keys {
 - Issue #32: Comparison testing validation
 - Issue #4: Test coverage improvements
 
+## CI/CD and Deployment
+
+### Automatic Deployment
+
+The `melange-server` is automatically deployed to GKE when changes are merged to `main`:
+- **Workflow**: `.github/workflows/deploy.yaml`
+- **Cluster**: `melange-server` in `us-central1-a`
+- **Project**: `dlorenc-chainguard`
+- **Registry**: `us-central1-docker.pkg.dev/dlorenc-chainguard/clusterlange`
+- **Storage**: `gs://dlorenc-chainguard-melange-builds`
+
+### Manual Deployment
+
+```bash
+# Get cluster credentials
+gcloud container clusters get-credentials melange-server \
+    --zone=us-central1-a --project=dlorenc-chainguard
+
+# Deploy with ko
+export KO_DOCKER_REPO=us-central1-docker.pkg.dev/dlorenc-chainguard/clusterlange
+ko apply -f deploy/gke/
+
+# Check status
+kubectl get pods -n melange
+```
+
+### Trigger Manual Deploy
+
+```bash
+gh workflow run deploy.yaml
+```
+
+### Access the Service
+
+```bash
+kubectl port-forward -n melange svc/melange-server 8080:8080
+curl http://localhost:8080/healthz
+```
+
+See `docs/deployment/gke-setup.md` for full documentation.
+
 ## Dependencies
 
 | Package | Purpose |
@@ -214,6 +339,8 @@ for _, k := range keys {
 | `chainguard.dev/apko` | OCI image building |
 | `github.com/testcontainers/testcontainers-go` | E2E test infrastructure |
 | `github.com/stretchr/testify` | Test assertions |
+| `cloud.google.com/go/storage` | GCS storage backend |
+| `github.com/google/ko` | Container image building (dev tool) |
 
 ## File Locations
 
@@ -225,3 +352,11 @@ for _, k := range keys {
 | Example configs | `examples/*.yaml` |
 | User docs | `docs/user-guide/` |
 | Dev docs | `docs/development/` |
+| Server main | `cmd/melange-server/main.go` |
+| Server API | `pkg/service/api/server.go` |
+| Storage backends | `pkg/service/storage/*.go` |
+| GKE deployment | `deploy/gke/*.yaml` |
+| Kind deployment | `deploy/kind/*.yaml` |
+| Deployment docs | `docs/deployment/gke-setup.md` |
+| Deploy workflow | `.github/workflows/deploy.yaml` |
+| CI workflow | `.github/workflows/ci.yaml` |

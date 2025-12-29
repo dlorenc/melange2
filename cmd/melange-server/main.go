@@ -31,13 +31,15 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/service/api"
 	"github.com/dlorenc/melange2/pkg/service/scheduler"
+	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
 )
 
 var (
 	listenAddr   = flag.String("listen-addr", ":8080", "HTTP listen address")
 	buildkitAddr = flag.String("buildkit-addr", "tcp://localhost:1234", "BuildKit daemon address")
-	outputDir    = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs")
+	outputDir    = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
+	gcsBucket    = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
 )
 
 func main() {
@@ -64,6 +66,23 @@ func run(ctx context.Context) error {
 	// Create shared components
 	jobStore := store.NewMemoryStore()
 
+	// Initialize storage backend
+	var storageBackend storage.Storage
+	var err error
+	if *gcsBucket != "" {
+		log.Infof("using GCS storage: gs://%s", *gcsBucket)
+		storageBackend, err = storage.NewGCSStorage(ctx, *gcsBucket)
+		if err != nil {
+			return fmt.Errorf("creating GCS storage: %w", err)
+		}
+	} else {
+		log.Infof("using local storage: %s", *outputDir)
+		storageBackend, err = storage.NewLocalStorage(*outputDir)
+		if err != nil {
+			return fmt.Errorf("creating local storage: %w", err)
+		}
+	}
+
 	// Create API server
 	apiServer := api.NewServer(jobStore)
 	httpServer := &http.Server{
@@ -73,15 +92,17 @@ func run(ctx context.Context) error {
 	}
 
 	// Create scheduler
-	sched := scheduler.New(jobStore, scheduler.Config{
+	sched := scheduler.New(jobStore, storageBackend, scheduler.Config{
 		BuildKitAddr: *buildkitAddr,
 		OutputDir:    *outputDir,
 		PollInterval: time.Second,
 	})
 
-	// Create output directory
-	if err := os.MkdirAll(*outputDir, 0755); err != nil {
-		return fmt.Errorf("creating output directory: %w", err)
+	// Create output directory (for local storage)
+	if *gcsBucket == "" {
+		if err := os.MkdirAll(*outputDir, 0755); err != nil {
+			return fmt.Errorf("creating output directory: %w", err)
+		}
 	}
 
 	// Run everything
