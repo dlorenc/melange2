@@ -63,10 +63,9 @@ jobs:
 
       - name: Deploy ConfigMap
         run: |
-          kubectl create configmap melange-config \
-            --namespace=melange \
-            --from-literal=gcs-bucket="${{ env.GCS_BUCKET }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f deploy/gke/configmap.yaml
+          kubectl patch configmap melange-config -n melange \
+            --type merge -p '{"data":{"gcs-bucket":"${{ env.GCS_BUCKET }}"}}'
 
       - name: Build and Deploy melange-server
         env:
