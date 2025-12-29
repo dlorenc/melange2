@@ -15,6 +15,8 @@
 package buildkit
 
 import (
+	"context"
+	"os"
 	"testing"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
@@ -82,4 +84,87 @@ func TestExportTypeConstants(t *testing.T) {
 	require.Equal(t, ExportType("tarball"), ExportTypeTarball)
 	require.Equal(t, ExportType("docker"), ExportTypeDocker)
 	require.Equal(t, ExportType("registry"), ExportTypeRegistry)
+}
+
+func TestFixedWriteCloser(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := tmpDir + "/test.tar"
+
+	fn := fixedWriteCloser(path)
+	require.NotNil(t, fn)
+
+	// Call the function to get a writer
+	writer, err := fn(nil)
+	require.NoError(t, err)
+	require.NotNil(t, writer)
+
+	// Write some data
+	_, err = writer.Write([]byte("test data"))
+	require.NoError(t, err)
+
+	// Close the writer
+	require.NoError(t, writer.Close())
+
+	// Verify file was created
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "test data", string(data))
+}
+
+func TestExportDebugImageNone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	builder, err := NewBuilder(bk.Addr)
+	require.NoError(t, err)
+	defer builder.Close()
+
+	// With ExportTypeNone, should return nil immediately
+	cfg := &ExportConfig{
+		Type: ExportTypeNone,
+		Ref:  "test",
+		Arch: apko_types.ParseArchitecture("amd64"),
+	}
+
+	base := testBaseState()
+	err = builder.ExportDebugImage(ctx, base, cfg)
+	require.NoError(t, err)
+}
+
+func TestExportDebugImageTarball(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	builder, err := NewBuilder(bk.Addr)
+	require.NoError(t, err)
+	defer builder.Close()
+
+	// Create a simple state to export
+	base := testBaseState()
+	state := PrepareWorkspace(base, "debug-test")
+
+	tmpDir := t.TempDir()
+	tarPath := tmpDir + "/debug.tar"
+
+	cfg := &ExportConfig{
+		Type: ExportTypeTarball,
+		Ref:  tarPath,
+		Arch: apko_types.ParseArchitecture("amd64"),
+	}
+
+	err = builder.ExportDebugImage(ctx, state, cfg)
+	require.NoError(t, err)
+
+	// Verify tarball was created
+	info, err := os.Stat(tarPath)
+	require.NoError(t, err)
+	require.Greater(t, info.Size(), int64(0))
 }

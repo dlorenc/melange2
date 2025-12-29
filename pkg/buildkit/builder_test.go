@@ -28,6 +28,48 @@ import (
 	"github.com/dlorenc/melange2/pkg/config"
 )
 
+func TestBuilderOptions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	builder, err := NewBuilder(bk.Addr)
+	require.NoError(t, err)
+	defer builder.Close()
+
+	// Test WithProgressMode
+	builder.WithProgressMode(ProgressModePlain)
+	require.Equal(t, ProgressModePlain, builder.ProgressMode)
+
+	builder.WithProgressMode(ProgressModeTTY)
+	require.Equal(t, ProgressModeTTY, builder.ProgressMode)
+
+	// Test WithShowLogs
+	require.False(t, builder.ShowLogs)
+	builder.WithShowLogs(true)
+	require.True(t, builder.ShowLogs)
+
+	// Test WithCacheMounts
+	mounts := []CacheMount{
+		{ID: "test-cache", Target: "/test", Mode: llb.CacheMountShared},
+	}
+	builder.WithCacheMounts(mounts)
+	require.Len(t, builder.pipeline.CacheMounts, 1)
+	require.Equal(t, "test-cache", builder.pipeline.CacheMounts[0].ID)
+
+	// Test WithDefaultCacheMounts
+	builder.WithDefaultCacheMounts()
+	require.NotEmpty(t, builder.pipeline.CacheMounts)
+	// Should have Go, Python, Rust, Node, ccache mounts
+	require.GreaterOrEqual(t, len(builder.pipeline.CacheMounts), 5)
+	// Should set environment variables
+	require.NotEmpty(t, builder.pipeline.BaseEnv["GOMODCACHE"])
+	require.NotEmpty(t, builder.pipeline.BaseEnv["GOCACHE"])
+}
+
 func TestBuilderSimpleBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -123,6 +165,181 @@ func TestBuilderWithSubpackages(t *testing.T) {
 	if err != nil {
 		t.Logf("Expected error (test layer has no real binaries): %v", err)
 	}
+}
+
+// TestTestWithImageIntegration tests the TestWithImage function using a real image.
+func TestTestWithImageIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	builder, err := NewBuilder(bk.Addr)
+	require.NoError(t, err)
+	defer builder.Close()
+
+	workspaceDir := t.TempDir()
+
+	cfg := &TestConfig{
+		PackageName:  "test-pkg",
+		Arch:         apko_types.ParseArchitecture("amd64"),
+		WorkspaceDir: workspaceDir,
+		TestPipelines: []config.Pipeline{
+			{
+				Name: "verify-environment",
+				Runs: `
+# Verify workspace exists
+test -d /home/build
+
+# Create a test marker
+echo "test passed"
+`,
+			},
+		},
+	}
+
+	err = builder.TestWithImage(ctx, TestBaseImage, cfg)
+	require.NoError(t, err)
+
+	// Verify test results were exported
+	statusFile := filepath.Join(workspaceDir, "test-results", "test-pkg", "status.txt")
+	content, err := os.ReadFile(statusFile)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "PASSED")
+}
+
+// TestTestWithImageSubpackagesIntegration tests TestWithImage with subpackage tests.
+func TestTestWithImageSubpackagesIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	builder, err := NewBuilder(bk.Addr)
+	require.NoError(t, err)
+	defer builder.Close()
+
+	workspaceDir := t.TempDir()
+
+	cfg := &TestConfig{
+		PackageName:  "main-pkg",
+		Arch:         apko_types.ParseArchitecture("amd64"),
+		WorkspaceDir: workspaceDir,
+		TestPipelines: []config.Pipeline{
+			{
+				Name: "main-test",
+				Runs: "echo 'main package test'",
+			},
+		},
+		SubpackageTests: []SubpackageTestConfig{
+			{
+				Name: "sub-pkg-1",
+				Pipelines: []config.Pipeline{
+					{Runs: "echo 'subpackage 1 test'"},
+				},
+			},
+			{
+				Name: "sub-pkg-2",
+				Pipelines: []config.Pipeline{
+					{Runs: "echo 'subpackage 2 test'"},
+				},
+			},
+		},
+	}
+
+	err = builder.TestWithImage(ctx, TestBaseImage, cfg)
+	require.NoError(t, err)
+
+	// Verify main package test results
+	mainStatus := filepath.Join(workspaceDir, "test-results", "main-pkg", "status.txt")
+	content, err := os.ReadFile(mainStatus)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "PASSED")
+
+	// Verify subpackage test results
+	sub1Status := filepath.Join(workspaceDir, "test-results", "sub-pkg-1", "status.txt")
+	content, err = os.ReadFile(sub1Status)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "PASSED")
+
+	sub2Status := filepath.Join(workspaceDir, "test-results", "sub-pkg-2", "status.txt")
+	content, err = os.ReadFile(sub2Status)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "PASSED")
+}
+
+// TestTestWithImageEmptyPipelines tests TestWithImage with no pipelines.
+func TestTestWithImageEmptyPipelines(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	builder, err := NewBuilder(bk.Addr)
+	require.NoError(t, err)
+	defer builder.Close()
+
+	workspaceDir := t.TempDir()
+
+	// With no pipelines, should succeed immediately
+	cfg := &TestConfig{
+		PackageName:    "empty-pkg",
+		Arch:           apko_types.ParseArchitecture("amd64"),
+		WorkspaceDir:   workspaceDir,
+		TestPipelines:  []config.Pipeline{},
+		SubpackageTests: []SubpackageTestConfig{
+			{
+				Name:      "empty-sub",
+				Pipelines: []config.Pipeline{}, // Empty pipelines should be skipped
+			},
+		},
+	}
+
+	err = builder.TestWithImage(ctx, TestBaseImage, cfg)
+	require.NoError(t, err)
+}
+
+// TestTestWithImageWithEnv tests that environment variables are passed to tests.
+func TestTestWithImageWithEnv(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	builder, err := NewBuilder(bk.Addr)
+	require.NoError(t, err)
+	defer builder.Close()
+
+	workspaceDir := t.TempDir()
+
+	cfg := &TestConfig{
+		PackageName:  "env-test",
+		Arch:         apko_types.ParseArchitecture("amd64"),
+		WorkspaceDir: workspaceDir,
+		BaseEnv: map[string]string{
+			"TEST_VAR": "test_value",
+		},
+		TestPipelines: []config.Pipeline{
+			{
+				Name: "check-env",
+				Runs: `
+# Verify environment variable is set
+test "$TEST_VAR" = "test_value"
+`,
+			},
+		},
+	}
+
+	err = builder.TestWithImage(ctx, TestBaseImage, cfg)
+	require.NoError(t, err)
 }
 
 // TestBuilderWithRealImage uses a real alpine image to test the full flow

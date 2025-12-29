@@ -65,7 +65,7 @@ jobs:
           cache: true
 
       - name: Run e2e tests
-        run: go test -v -coverprofile=e2e-coverage.out -run "TestE2E_|TestBuildKit|TestSimpleLLB|TestLocalFilesystem|TestWorkspaceExport|TestDeterministicLLB|TestPipelineSimulation|Integration" ./pkg/buildkit/...
+        run: go test -v -coverprofile=e2e-coverage.out -run "TestE2E_|TestBuildKit|TestSimpleLLB|TestLocalFilesystem|TestWorkspaceExport|TestDeterministicLLB|TestPipelineSimulation|Integration|TestBuilder|TestProgress|TestExport|TestCopySource|TestCache|TestTestWith" ./pkg/buildkit/...
 
       - name: Upload e2e coverage
         uses: actions/upload-artifact@v4

@@ -502,6 +502,74 @@ func TestCopyCacheToWorkspace(t *testing.T) {
 	require.NotEmpty(t, def.Def)
 }
 
+func TestCopySourceToWorkspace(t *testing.T) {
+	base := llb.Image(TestBaseImage)
+	state := CopySourceToWorkspace(base, "test-source")
+
+	def, err := state.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+	require.NotEmpty(t, def.Def)
+}
+
+// Integration test for CopySourceToWorkspace
+func TestCopySourceToWorkspaceIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	c, err := client.New(ctx, bk.Addr)
+	require.NoError(t, err)
+	defer c.Close()
+
+	// Create a source directory with test files
+	sourceDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "test.txt"), []byte("source content"), 0644))
+	require.NoError(t, os.MkdirAll(filepath.Join(sourceDir, "subdir"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "subdir", "nested.txt"), []byte("nested content"), 0644))
+
+	// Build the LLB graph
+	base := testBaseState()
+	state := PrepareWorkspace(base, "test-pkg")
+	state = CopySourceToWorkspace(state, "source")
+
+	// Create pipeline that reads from copied source
+	builder := NewPipelineBuilder()
+	pipeline := config.Pipeline{
+		Name: "verify-source",
+		Runs: `
+cat /home/build/test.txt > /home/build/melange-out/test-pkg/from-source.txt
+cat /home/build/subdir/nested.txt >> /home/build/melange-out/test-pkg/from-source.txt
+`,
+	}
+	state, err = builder.BuildPipeline(state, &pipeline)
+	require.NoError(t, err)
+
+	export := ExportWorkspace(state)
+	def, err := export.Marshal(ctx, llb.LinuxAmd64)
+	require.NoError(t, err)
+
+	exportDir := t.TempDir()
+	_, err = c.Solve(ctx, def, client.SolveOpt{
+		LocalDirs: map[string]string{
+			"source": sourceDir,
+		},
+		Exports: []client.ExportEntry{{
+			Type:      client.ExporterLocal,
+			OutputDir: exportDir,
+		}},
+	}, nil)
+	require.NoError(t, err)
+
+	// Verify the source was copied and accessible
+	content, err := os.ReadFile(filepath.Join(exportDir, "test-pkg", "from-source.txt"))
+	require.NoError(t, err)
+	require.Contains(t, string(content), "source content")
+	require.Contains(t, string(content), "nested content")
+}
+
 func TestCacheConstants(t *testing.T) {
 	require.Equal(t, "/var/cache/melange", DefaultCacheDir)
 	require.Equal(t, "cache", CacheLocalName)
