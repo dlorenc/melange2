@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -110,7 +111,7 @@ func (s *GCSStorage) ListArtifacts(ctx context.Context, jobID string) ([]Artifac
 	var artifacts []Artifact
 	for {
 		attrs, err := it.Next()
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
@@ -177,11 +178,12 @@ func (s *GCSStorage) SyncOutputDir(ctx context.Context, jobID, localDir string) 
 
 		// Upload to GCS
 		wc := s.client.Bucket(s.bucket).Object(objectPath).NewWriter(ctx)
-		if strings.HasSuffix(relPath, ".apk") {
+		switch {
+		case strings.HasSuffix(relPath, ".apk"):
 			wc.ContentType = "application/vnd.apk"
-		} else if strings.HasSuffix(relPath, ".tar.gz") {
+		case strings.HasSuffix(relPath, ".tar.gz"):
 			wc.ContentType = "application/gzip"
-		} else if strings.HasSuffix(relPath, ".log") {
+		case strings.HasSuffix(relPath, ".log"):
 			wc.ContentType = "text/plain"
 		}
 
