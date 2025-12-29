@@ -68,6 +68,7 @@ func New() *cobra.Command {
 	cmd.AddCommand(updateCache())
 	cmd.AddCommand(version.Version())
 	cmd.AddCommand(rebuild())
+	cmd.AddCommand(remoteCmd())
 	return cmd
 }
 
