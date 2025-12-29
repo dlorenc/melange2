@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkit
+  namespace: melange
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: buildkit
+  template:
+    metadata:
+      labels:
+        app: buildkit
+    spec:
+      containers:
+      - name: buildkit
+        image: moby/buildkit:latest
+        args:
+        - --addr
+        - tcp://0.0.0.0:1234
+        ports:
+        - containerPort: 1234
+          name: buildkit
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: buildkit-data
+          mountPath: /var/lib/buildkit
+      volumes:
+      - name: buildkit-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkit
+  namespace: melange
+spec:
+  selector:
+    app: buildkit
+  ports:
+  - port: 1234
+    targetPort: 1234
+    name: buildkit

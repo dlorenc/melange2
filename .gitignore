@@ -18,6 +18,7 @@
 local-melange.rsa
 local-melange.rsa.pub
 melange
+melange-server
 melange.rsa
 melange.rsa.pub
 packages/

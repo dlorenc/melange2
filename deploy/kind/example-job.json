@@ -1,0 +1,4 @@
+{
+  "config_yaml": "package:\n  name: hello-world\n  version: 1.0.0\n  epoch: 0\n  description: A simple hello world package\n  copyright:\n    - license: Apache-2.0\n\nenvironment:\n  contents:\n    repositories:\n      - https://packages.wolfi.dev/os\n    keyring:\n      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub\n    packages:\n      - busybox\n\npipeline:\n  - runs: |\n      mkdir -p ${{targets.destdir}}/usr/bin\n      echo '#!/bin/sh' > ${{targets.destdir}}/usr/bin/hello\n      echo 'echo Hello from melange-server!' >> ${{targets.destdir}}/usr/bin/hello\n      chmod +x ${{targets.destdir}}/usr/bin/hello\n",
+  "debug": true
+}

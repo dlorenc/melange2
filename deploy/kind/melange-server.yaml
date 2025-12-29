@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: melange-server
+  namespace: melange
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: melange-server
+  template:
+    metadata:
+      labels:
+        app: melange-server
+    spec:
+      containers:
+      - name: melange-server
+        image: melange-server:latest
+        imagePullPolicy: Never  # Use local image in kind
+        args:
+        - --listen-addr=:8080
+        - --buildkit-addr=tcp://buildkit:1234
+        - --output-dir=/var/lib/melange/output
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: output
+          mountPath: /var/lib/melange/output
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: output
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: melange-server
+  namespace: melange
+spec:
+  selector:
+    app: melange-server
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  type: ClusterIP
