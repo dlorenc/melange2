@@ -126,9 +126,7 @@ type Build struct {
 	GenerateProvenance bool
 
 	// The package resolver associated with this build.
-	//
-	// This is only applicable when there's a build context.  It
-	// is filled by buildGuest.
+	// Populated during buildGuestLayers when the apko environment is created.
 	PkgResolver *apk.PkgResolver
 }
 

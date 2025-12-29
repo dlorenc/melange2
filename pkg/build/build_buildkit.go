@@ -24,6 +24,7 @@ import (
 	"slices"
 
 	"chainguard.dev/apko/pkg/apk/apk"
+	"chainguard.dev/apko/pkg/apk/auth"
 	apkofs "chainguard.dev/apko/pkg/apk/fs"
 	apko_build "chainguard.dev/apko/pkg/build"
 	apko_types "chainguard.dev/apko/pkg/build/types"
@@ -348,6 +349,16 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 		apko_build.WithIgnoreSignatures(b.IgnoreSignatures),
 	}
 
+	// Convert auth config to apko authenticator
+	if len(b.Auth) > 0 {
+		var auths []auth.Authenticator
+		for domain, creds := range b.Auth {
+			auths = append(auths, auth.StaticAuth(domain, creds.User, creds.Pass))
+		}
+		opts = append(opts, apko_build.WithAuthenticator(auth.MultiAuthenticator(auths...)))
+		log.Infof("auth configured for: %v", maps.Keys(b.Auth))
+	}
+
 	configs, warn, err := apko_build.LockImageConfiguration(ctx, imgConfig, opts...)
 	if err != nil {
 		cleanup()
@@ -385,7 +396,6 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 	b.PkgResolver = apk.NewPkgResolver(ctx, namedIndexes)
 
 	bc.Summarize(ctx)
-	log.Infof("auth configured for: %v", maps.Keys(b.Auth))
 
 	// Use BuildLayers which internally calls buildImage and handles layering
 	// We don't call BuildImage separately as BuildLayers does it internally
