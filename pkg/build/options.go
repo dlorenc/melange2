@@ -299,8 +299,8 @@ func WithDebug(debug bool) Option {
 	}
 }
 
-// WithRemove indicates whether the the build will clean up after itself.
-// This includes deleting any intermediate artifacts like container images and temp workspace and guest dirs.
+// WithRemove indicates whether the build will clean up after itself.
+// This includes deleting intermediate artifacts like temp workspace directories.
 func WithRemove(remove bool) Option {
 	return func(b *Build) error {
 		b.Remove = remove
@@ -385,8 +385,6 @@ func WithBuildKitAddr(addr string) Option {
 // - Faster rebuilds: only changed layers need to be rebuilt/transferred
 // - Smaller transfers: BuildKit can skip unchanged layers when exporting
 // - Parallel builds: multiple builds sharing base layers benefit from shared cache
-//
-// This option only has effect when BuildKit is enabled via WithBuildKitAddr.
 func WithMaxLayers(count int) Option {
 	return func(b *Build) error {
 		if count < 1 {
