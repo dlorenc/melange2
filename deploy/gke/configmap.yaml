@@ -21,3 +21,12 @@ data:
   # GCS bucket for build artifacts and logs
   # Will be replaced by setup script
   gcs-bucket: "melange-builds"
+
+  # BuildKit backends configuration
+  # Add more backends or modify labels as needed
+  backends.yaml: |
+    backends:
+      - addr: tcp://buildkit:1234
+        arch: x86_64
+        labels:
+          tier: standard

@@ -40,6 +40,16 @@ type Job struct {
 	Error      string     `json:"error,omitempty"`
 	LogPath    string     `json:"log_path,omitempty"`
 	OutputPath string     `json:"output_path,omitempty"`
+
+	// Backend is the BuildKit backend that executed/is executing this job.
+	Backend *JobBackend `json:"backend,omitempty"`
+}
+
+// JobBackend contains information about the BuildKit backend used for a job.
+type JobBackend struct {
+	Addr   string            `json:"addr"`
+	Arch   string            `json:"arch"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // JobSpec contains the specification for a build job.
@@ -55,6 +65,11 @@ type JobSpec struct {
 	// Arch is the target architecture (default: runtime arch).
 	Arch string `json:"arch,omitempty"`
 
+	// BackendSelector specifies label requirements for backend selection.
+	// All specified labels must match for a backend to be eligible.
+	// Example: {"tier": "high-memory", "sandbox": "privileged"}
+	BackendSelector map[string]string `json:"backend_selector,omitempty"`
+
 	// WithTest runs tests after build.
 	WithTest bool `json:"with_test,omitempty"`
 
@@ -64,11 +79,12 @@ type JobSpec struct {
 
 // CreateJobRequest is the request body for creating a job.
 type CreateJobRequest struct {
-	ConfigYAML string            `json:"config_yaml"`
-	Pipelines  map[string]string `json:"pipelines,omitempty"`
-	Arch       string            `json:"arch,omitempty"`
-	WithTest   bool              `json:"with_test,omitempty"`
-	Debug      bool              `json:"debug,omitempty"`
+	ConfigYAML      string            `json:"config_yaml"`
+	Pipelines       map[string]string `json:"pipelines,omitempty"`
+	Arch            string            `json:"arch,omitempty"`
+	BackendSelector map[string]string `json:"backend_selector,omitempty"`
+	WithTest        bool              `json:"with_test,omitempty"`
+	Debug           bool              `json:"debug,omitempty"`
 }
 
 // CreateJobResponse is the response body for creating a job.

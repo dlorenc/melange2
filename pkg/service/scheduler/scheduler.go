@@ -29,6 +29,7 @@ import (
 	"github.com/chainguard-dev/clog"
 
 	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
 	"github.com/dlorenc/melange2/pkg/service/types"
@@ -36,8 +37,6 @@ import (
 
 // Config holds scheduler configuration.
 type Config struct {
-	// BuildKitAddr is the address of the BuildKit daemon.
-	BuildKitAddr string
 	// OutputDir is the base directory for build outputs (used with local storage).
 	OutputDir string
 	// PollInterval is how often to check for new jobs.
@@ -48,11 +47,12 @@ type Config struct {
 type Scheduler struct {
 	store   store.JobStore
 	storage storage.Storage
+	pool    *buildkit.Pool
 	config  Config
 }
 
 // New creates a new scheduler.
-func New(jobStore store.JobStore, storageBackend storage.Storage, config Config) *Scheduler {
+func New(jobStore store.JobStore, storageBackend storage.Storage, pool *buildkit.Pool, config Config) *Scheduler {
 	if config.PollInterval == 0 {
 		config.PollInterval = time.Second
 	}
@@ -62,6 +62,7 @@ func New(jobStore store.JobStore, storageBackend storage.Storage, config Config)
 	return &Scheduler{
 		store:   jobStore,
 		storage: storageBackend,
+		pool:    pool,
 		config:  config,
 	}
 }
@@ -202,7 +203,21 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 	}
 	targetArch := apko_types.ParseArchitecture(arch)
 
+	// Select a backend from the pool
+	backend, err := s.pool.Select(arch, job.Spec.BackendSelector)
+	if err != nil {
+		return fmt.Errorf("selecting backend: %w", err)
+	}
+
+	// Record the selected backend on the job
+	job.Backend = &types.JobBackend{
+		Addr:   backend.Addr,
+		Arch:   backend.Arch,
+		Labels: backend.Labels,
+	}
+
 	log.Infof("building for architecture: %s", targetArch)
+	log.Infof("selected backend: %s (labels: %v)", backend.Addr, backend.Labels)
 
 	// Create cache directory for this build
 	cacheDir := filepath.Join(tmpDir, "cache")
@@ -216,7 +231,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 		build.WithArch(targetArch),
 		build.WithOutDir(outputDir),
 		build.WithCacheDir(cacheDir),
-		build.WithBuildKitAddr(s.config.BuildKitAddr),
+		build.WithBuildKitAddr(backend.Addr),
 		build.WithDebug(job.Spec.Debug),
 		build.WithGenerateIndex(true),
 		// Use Wolfi repos/keys as defaults for MVP
@@ -246,7 +261,6 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 	// Execute the build
 	log.Infof("starting build for job %s", job.ID)
 	log.Infof("architecture: %s", targetArch)
-	log.Infof("buildkit: %s", s.config.BuildKitAddr)
 
 	if err := bc.BuildPackage(ctx); err != nil {
 		log.Errorf("build failed: %v", err)

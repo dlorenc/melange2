@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
+	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/types"
 )
 
@@ -173,4 +175,41 @@ func (c *Client) WaitForJob(ctx context.Context, jobID string, pollInterval time
 			}
 		}
 	}
+}
+
+// BackendsResponse is the response from the backends endpoint.
+type BackendsResponse struct {
+	Backends      []buildkit.Backend `json:"backends"`
+	Architectures []string           `json:"architectures"`
+}
+
+// ListBackends lists available BuildKit backends.
+func (c *Client) ListBackends(ctx context.Context, arch string) (*BackendsResponse, error) {
+	reqURL := c.baseURL + "/api/v1/backends"
+	if arch != "" {
+		reqURL += "?" + url.Values{"arch": {arch}}.Encode()
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result BackendsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	return &result, nil
 }
