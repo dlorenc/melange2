@@ -16,9 +16,10 @@
 package scheduler
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -180,8 +181,14 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 	defer logFile.Close()
 	job.LogPath = logPath
 
-	// Capture build output
-	var logBuf bytes.Buffer
+	// Create a multi-writer logger that writes to both stderr and the log file
+	multiWriter := io.MultiWriter(os.Stderr, logFile)
+	buildLogger := clog.New(slog.NewTextHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	ctx = clog.WithLogger(ctx, buildLogger)
+
+	// Write build header to log file
+	fmt.Fprintf(logFile, "=== Build started at %s ===\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(logFile, "Job ID: %s\n", job.ID)
 
 	// Determine architecture
 	arch := job.Spec.Arch
@@ -231,22 +238,18 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 	// Create the build context
 	bc, err := build.New(ctx, opts...)
 	if err != nil {
-		logBuf.WriteString(fmt.Sprintf("ERROR: failed to initialize build: %v\n", err))
-		_, _ = logFile.Write(logBuf.Bytes())
+		log.Errorf("failed to initialize build: %v", err)
 		return fmt.Errorf("initializing build: %w", err)
 	}
 	defer bc.Close(ctx)
 
 	// Execute the build
 	log.Infof("starting build for job %s", job.ID)
-	logBuf.WriteString(fmt.Sprintf("Starting build at %s\n", time.Now().Format(time.RFC3339)))
-	logBuf.WriteString(fmt.Sprintf("Architecture: %s\n", targetArch))
-	logBuf.WriteString(fmt.Sprintf("BuildKit: %s\n", s.config.BuildKitAddr))
-	logBuf.WriteString("\n--- Build Output ---\n")
+	log.Infof("architecture: %s", targetArch)
+	log.Infof("buildkit: %s", s.config.BuildKitAddr)
 
 	if err := bc.BuildPackage(ctx); err != nil {
-		logBuf.WriteString(fmt.Sprintf("\nERROR: %v\n", err))
-		_, _ = logFile.Write(logBuf.Bytes())
+		log.Errorf("build failed: %v", err)
 		// Still sync logs to storage on error
 		if syncErr := s.storage.SyncOutputDir(ctx, job.ID, outputDir); syncErr != nil {
 			log.Errorf("failed to sync output on error: %v", syncErr)
@@ -254,8 +257,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 		return fmt.Errorf("building package: %w", err)
 	}
 
-	logBuf.WriteString(fmt.Sprintf("\nBuild completed successfully at %s\n", time.Now().Format(time.RFC3339)))
-	_, _ = logFile.Write(logBuf.Bytes())
+	log.Infof("build completed successfully at %s", time.Now().Format(time.RFC3339))
 
 	// Sync output to storage backend (uploads to GCS if using GCS storage)
 	if err := s.storage.SyncOutputDir(ctx, job.ID, outputDir); err != nil {
