@@ -151,20 +151,22 @@ func TestBuildBuiltinPipeline_Fetch(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "fetch with sha512",
+			name: "fetch with sha512 returns fallback error",
 			with: map[string]string{
 				"uri":             "https://example.com/file.tar.gz",
 				"expected-sha512": "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
 			},
-			expectError: false,
+			expectError: true,
+			errorMsg:    "sha512 requires shell fallback",
 		},
 		{
-			name: "fetch with expected-none",
+			name: "fetch with expected-none returns fallback error",
 			with: map[string]string{
 				"uri":           "https://example.com/file.tar.gz",
 				"expected-none": "true",
 			},
-			expectError: false,
+			expectError: true,
+			errorMsg:    "shell fallback",
 		},
 		{
 			name: "fetch with custom strip-components",
@@ -205,7 +207,7 @@ func TestBuildBuiltinPipeline_Fetch(t *testing.T) {
 				"uri": "https://example.com/file.tar.gz",
 			},
 			expectError: true,
-			errorMsg:    "one of expected-sha256, expected-sha512, or expected-none is required",
+			errorMsg:    "expected-sha256 is required for native LLB",
 		},
 	}
 

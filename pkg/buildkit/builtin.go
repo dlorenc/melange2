@@ -15,6 +15,7 @@
 package buildkit
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,14 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/config"
 )
+
+// ErrFetchNeedsChecksum is returned when fetch is called with expected-none,
+// indicating that the shell fallback should be used instead of native LLB.
+var ErrFetchNeedsChecksum = errors.New("fetch with expected-none requires shell fallback")
+
+// ErrFetchSHA512NotSupported is returned when fetch is called with expected-sha512,
+// indicating that the shell fallback should be used since BuildKit HTTP only supports sha256.
+var ErrFetchSHA512NotSupported = errors.New("fetch with expected-sha512 requires shell fallback (BuildKit HTTP only supports sha256)")
 
 // BuiltinPipelines is the set of pipeline names that have native LLB implementations.
 var BuiltinPipelines = map[string]bool{
@@ -184,6 +193,10 @@ done
 
 // buildFetch implements the fetch pipeline using native LLB operations.
 // This uses BuildKit's llb.HTTP() source operation for efficient, cached downloads.
+//
+// Note: This implementation requires a checksum (sha256 or sha512) to leverage
+// BuildKit's content-addressable caching. If expected-none is set, this function
+// returns ErrFetchNeedsChecksum to signal that the shell fallback should be used.
 func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 	with := p.With
 
@@ -193,13 +206,25 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 		return llb.State{}, fmt.Errorf("fetch: uri is required")
 	}
 
-	// Check for expected checksum (at least one is required unless expected-none is set)
+	// Check for expected checksum
 	expectedSHA256 := with["expected-sha256"]
 	expectedSHA512 := with["expected-sha512"]
 	expectedNone := with["expected-none"]
 
-	if expectedSHA256 == "" && expectedSHA512 == "" && expectedNone == "" {
-		return llb.State{}, fmt.Errorf("fetch: one of expected-sha256, expected-sha512, or expected-none is required")
+	// For expected-none, we can't use native LLB (no content-addressable caching possible)
+	// Return a special error to signal fallback to shell implementation
+	if expectedNone != "" {
+		return llb.State{}, ErrFetchNeedsChecksum
+	}
+
+	// BuildKit's HTTP operation only supports sha256 checksums
+	// Return a special error to signal fallback to shell implementation for sha512
+	if expectedSHA512 != "" {
+		return llb.State{}, ErrFetchSHA512NotSupported
+	}
+
+	if expectedSHA256 == "" {
+		return llb.State{}, fmt.Errorf("fetch: expected-sha256 is required for native LLB (sha512 and expected-none use shell fallback)")
 	}
 
 	// Optional: extract settings
@@ -226,12 +251,8 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 	// Build HTTP options
 	var httpOpts []llb.HTTPOption
 
-	// Add checksum for verification and caching
-	if expectedSHA256 != "" {
-		httpOpts = append(httpOpts, llb.Checksum(digest.NewDigestFromEncoded(digest.SHA256, expectedSHA256)))
-	} else if expectedSHA512 != "" {
-		httpOpts = append(httpOpts, llb.Checksum(digest.NewDigestFromEncoded(digest.SHA512, expectedSHA512)))
-	}
+	// Add checksum for verification and caching (sha256 only - sha512 uses shell fallback)
+	httpOpts = append(httpOpts, llb.Checksum(digest.NewDigestFromEncoded(digest.SHA256, expectedSHA256)))
 
 	// Set ownership
 	httpOpts = append(httpOpts, llb.Chown(BuildUserUID, BuildUserGID))
@@ -287,8 +308,8 @@ cp %s %s/
 		).Root()
 	}
 
-	// Delete the temp file if requested or by default
-	if deleteFetch == "true" || extract == "true" {
+	// Delete the temp file only if explicitly requested (matches original fetch.yaml behavior)
+	if deleteFetch == "true" {
 		state = state.Run(
 			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf("rm -f %s", downloadPath)}),
 			llb.Dir(DefaultWorkDir),
