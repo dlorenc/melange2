@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -135,7 +136,7 @@ func TestPoolSelect(t *testing.T) {
 	}
 }
 
-func TestPoolSelectRoundRobin(t *testing.T) {
+func TestPoolSelectLoadAware(t *testing.T) {
 	backends := []Backend{
 		{Addr: "tcp://amd64-1:1234", Arch: "x86_64", Labels: map[string]string{}},
 		{Addr: "tcp://amd64-2:1234", Arch: "x86_64", Labels: map[string]string{}},
@@ -144,18 +145,22 @@ func TestPoolSelectRoundRobin(t *testing.T) {
 	pool, err := NewPool(backends)
 	require.NoError(t, err)
 
-	// Select multiple times and verify round-robin
-	addrs := make(map[string]int)
-	for i := 0; i < 9; i++ {
-		backend, err := pool.Select("x86_64", nil)
-		require.NoError(t, err)
-		addrs[backend.Addr]++
-	}
+	// With no load, Select should pick any backend (all have 0 load)
+	backend, err := pool.Select("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
 
-	// Each backend should be selected 3 times
-	require.Equal(t, 3, addrs["tcp://amd64-1:1234"])
-	require.Equal(t, 3, addrs["tcp://amd64-2:1234"])
-	require.Equal(t, 3, addrs["tcp://amd64-3:1234"])
+	// Acquire on first backend to add load
+	ok := pool.Acquire("tcp://amd64-1:1234")
+	require.True(t, ok)
+
+	// Next select should pick a less-loaded backend (not amd64-1)
+	backend, err = pool.Select("x86_64", nil)
+	require.NoError(t, err)
+	require.NotEqual(t, "tcp://amd64-1:1234", backend.Addr)
+
+	// Release the slot
+	pool.Release("tcp://amd64-1:1234", true)
 }
 
 func TestPoolFromConfig(t *testing.T) {
@@ -303,4 +308,199 @@ func TestPoolRemoveValidation(t *testing.T) {
 	// Now can remove one of the backends
 	err = pool.Remove("tcp://amd64-1:1234")
 	require.NoError(t, err)
+}
+
+func TestPoolAcquireRelease(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://backend:1234", Arch: "x86_64", MaxJobs: 2},
+	})
+	require.NoError(t, err)
+
+	// Should be able to acquire up to MaxJobs
+	ok := pool.Acquire("tcp://backend:1234")
+	require.True(t, ok)
+
+	ok = pool.Acquire("tcp://backend:1234")
+	require.True(t, ok)
+
+	// Third acquire should fail (at capacity)
+	ok = pool.Acquire("tcp://backend:1234")
+	require.False(t, ok)
+
+	// Release one slot
+	pool.Release("tcp://backend:1234", true)
+
+	// Now can acquire again
+	ok = pool.Acquire("tcp://backend:1234")
+	require.True(t, ok)
+
+	// Release all
+	pool.Release("tcp://backend:1234", true)
+	pool.Release("tcp://backend:1234", true)
+}
+
+func TestPoolCapacityLimit(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://backend:1234", Arch: "x86_64", MaxJobs: 1},
+	})
+	require.NoError(t, err)
+
+	// Acquire the only slot
+	ok := pool.Acquire("tcp://backend:1234")
+	require.True(t, ok)
+
+	// Select should fail because backend is at capacity
+	_, err = pool.Select("x86_64", nil)
+	require.Error(t, err)
+	require.Equal(t, ErrNoAvailableBackend, err)
+
+	// Release and select should succeed
+	pool.Release("tcp://backend:1234", true)
+
+	backend, err := pool.Select("x86_64", nil)
+	require.NoError(t, err)
+	require.Equal(t, "tcp://backend:1234", backend.Addr)
+}
+
+func TestPoolCircuitBreaker(t *testing.T) {
+	pool, err := NewPoolWithConfig(PoolConfig{
+		Backends: []Backend{
+			{Addr: "tcp://backend:1234", Arch: "x86_64"},
+		},
+		FailureThreshold: 2,
+		RecoveryTimeout:  100 * time.Millisecond,
+	})
+	require.NoError(t, err)
+
+	// First failure
+	pool.Acquire("tcp://backend:1234")
+	pool.Release("tcp://backend:1234", false)
+
+	// Still available (threshold not reached)
+	backend, err := pool.Select("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+
+	// Second failure (reaches threshold)
+	pool.Acquire("tcp://backend:1234")
+	pool.Release("tcp://backend:1234", false)
+
+	// Circuit should be open, select should fail
+	_, err = pool.Select("x86_64", nil)
+	require.Error(t, err)
+	require.Equal(t, ErrNoAvailableBackend, err)
+
+	// Wait for recovery timeout
+	time.Sleep(150 * time.Millisecond)
+
+	// Should be available again (half-open state)
+	backend, err = pool.Select("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+
+	// Success should reset the circuit
+	pool.Acquire("tcp://backend:1234")
+	pool.Release("tcp://backend:1234", true)
+
+	// Should remain available
+	backend, err = pool.Select("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+}
+
+func TestPoolStatus(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://backend-1:1234", Arch: "x86_64", MaxJobs: 4},
+		{Addr: "tcp://backend-2:1234", Arch: "x86_64", MaxJobs: 2},
+	})
+	require.NoError(t, err)
+
+	// Initial status
+	status := pool.Status()
+	require.Len(t, status, 2)
+	require.Equal(t, 0, status[0].ActiveJobs)
+	require.Equal(t, 0, status[1].ActiveJobs)
+	require.False(t, status[0].CircuitOpen)
+
+	// Acquire some slots
+	pool.Acquire("tcp://backend-1:1234")
+	pool.Acquire("tcp://backend-1:1234")
+	pool.Acquire("tcp://backend-2:1234")
+
+	// Check status reflects active jobs
+	status = pool.Status()
+	for _, s := range status {
+		if s.Addr == "tcp://backend-1:1234" {
+			require.Equal(t, 2, s.ActiveJobs)
+		} else if s.Addr == "tcp://backend-2:1234" {
+			require.Equal(t, 1, s.ActiveJobs)
+		}
+	}
+
+	// Release all
+	pool.Release("tcp://backend-1:1234", true)
+	pool.Release("tcp://backend-1:1234", true)
+	pool.Release("tcp://backend-2:1234", true)
+}
+
+func TestPoolDefaultMaxJobs(t *testing.T) {
+	// Backend without MaxJobs should use pool default
+	pool, err := NewPoolWithConfig(PoolConfig{
+		Backends: []Backend{
+			{Addr: "tcp://backend:1234", Arch: "x86_64"}, // No MaxJobs
+		},
+		DefaultMaxJobs: 2,
+	})
+	require.NoError(t, err)
+
+	// Should be able to acquire default (2) jobs
+	ok := pool.Acquire("tcp://backend:1234")
+	require.True(t, ok)
+	ok = pool.Acquire("tcp://backend:1234")
+	require.True(t, ok)
+
+	// Third should fail
+	ok = pool.Acquire("tcp://backend:1234")
+	require.False(t, ok)
+
+	pool.Release("tcp://backend:1234", true)
+	pool.Release("tcp://backend:1234", true)
+}
+
+func TestPoolWithConfigFullOptions(t *testing.T) {
+	configContent := `
+backends:
+  - addr: tcp://backend-1:1234
+    arch: x86_64
+    maxJobs: 8
+    labels:
+      tier: high
+  - addr: tcp://backend-2:1234
+    arch: x86_64
+    maxJobs: 2
+    labels:
+      tier: standard
+defaultMaxJobs: 4
+failureThreshold: 5
+recoveryTimeout: 60s
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "backends.yaml")
+	err := os.WriteFile(configPath, []byte(configContent), 0644)
+	require.NoError(t, err)
+
+	pool, err := NewPoolFromConfig(configPath)
+	require.NoError(t, err)
+
+	backends := pool.List()
+	require.Len(t, backends, 2)
+
+	// Verify MaxJobs was parsed
+	for _, b := range backends {
+		if b.Addr == "tcp://backend-1:1234" {
+			require.Equal(t, 8, b.MaxJobs)
+		} else if b.Addr == "tcp://backend-2:1234" {
+			require.Equal(t, 2, b.MaxJobs)
+		}
+	}
 }

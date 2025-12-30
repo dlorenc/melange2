@@ -344,6 +344,18 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		return fmt.Errorf("selecting backend: %w", err)
 	}
 
+	// Acquire a slot on the selected backend
+	if !s.pool.Acquire(backend.Addr) {
+		// Race condition - backend reached capacity between Select and Acquire
+		return fmt.Errorf("acquiring backend slot: %w", buildkit.ErrBackendAtCapacity)
+	}
+
+	// Track build success for circuit breaker
+	var buildSuccess bool
+	defer func() {
+		s.pool.Release(backend.Addr, buildSuccess)
+	}()
+
 	pkg.Backend = &types.Backend{
 		Addr:   backend.Addr,
 		Arch:   backend.Arch,
@@ -409,6 +421,7 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		return fmt.Errorf("syncing output to storage: %w", err)
 	}
 
+	buildSuccess = true
 	return nil
 }
 
