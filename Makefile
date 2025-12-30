@@ -330,6 +330,57 @@ space := $(subst ,, )
 comma := ,
 
 ##################
+# GKE Remote Build Infrastructure
+##################
+
+# GKE Configuration
+GKE_PROJECT ?= dlorenc-chainguard
+GKE_CLUSTER ?= melange-server
+GKE_ZONE ?= us-central1-a
+GKE_PORT ?= 8080
+
+.PHONY: gke-setup
+gke-setup: ## Create GKE cluster and deploy melange-server from scratch
+	@echo "==> Setting up GKE cluster and melange-server..."
+	./deploy/gke/setup.sh
+
+.PHONY: gke-credentials
+gke-credentials: ## Get GKE cluster credentials
+	@echo "==> Getting GKE cluster credentials..."
+	gcloud container clusters get-credentials $(GKE_CLUSTER) \
+		--zone=$(GKE_ZONE) --project=$(GKE_PROJECT)
+
+.PHONY: gke-port-forward
+gke-port-forward: gke-credentials ## Start port forwarding to melange-server (runs in background)
+	@echo "==> Starting port forward to melange-server on port $(GKE_PORT)..."
+	@pkill -f "kubectl port-forward.*melange-server" 2>/dev/null || true
+	@sleep 1
+	@kubectl port-forward -n melange svc/melange-server $(GKE_PORT):8080 &
+	@sleep 2
+	@echo "==> Port forwarding active. Server available at http://localhost:$(GKE_PORT)"
+	@echo "==> Test with: curl http://localhost:$(GKE_PORT)/healthz"
+	@echo "==> To stop: pkill -f 'kubectl port-forward.*melange-server'"
+
+.PHONY: gke-stop-port-forward
+gke-stop-port-forward: ## Stop port forwarding to melange-server
+	@echo "==> Stopping port forward..."
+	@pkill -f "kubectl port-forward.*melange-server" 2>/dev/null || true
+	@echo "==> Port forwarding stopped."
+
+.PHONY: gke-status
+gke-status: gke-credentials ## Check status of GKE melange-server deployment
+	@echo "==> Checking melange-server status..."
+	kubectl get pods -n melange
+	@echo ""
+	@echo "==> Checking backends..."
+	@curl -s http://localhost:$(GKE_PORT)/api/v1/backends 2>/dev/null || echo "(port-forward not active - run 'make gke-port-forward' first)"
+
+.PHONY: gke-deploy
+gke-deploy: gke-credentials ## Deploy/update melange-server to GKE
+	@echo "==> Deploying melange-server to GKE..."
+	KO_DOCKER_REPO=us-central1-docker.pkg.dev/$(GKE_PROJECT)/clusterlange ko apply -f deploy/gke/
+
+##################
 # help
 ##################
 

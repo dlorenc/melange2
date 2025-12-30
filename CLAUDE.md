@@ -15,6 +15,9 @@ This document is optimized for AI agents working on the melange2 codebase.
 | Build package | `./melange2 build pkg.yaml --buildkit-addr tcp://localhost:1234` |
 | Debug build | `./melange2 build pkg.yaml --buildkit-addr tcp://localhost:1234 --debug` |
 | Deploy to GKE | `KO_DOCKER_REPO=us-central1-docker.pkg.dev/PROJECT/REPO ko apply -f deploy/gke/` |
+| GKE port forward | `make gke-port-forward` |
+| GKE setup | `make gke-setup` |
+| Remote build | `./melange2 remote submit pkg.yaml --server http://localhost:8080 --wait` |
 
 ## Git Workflow (CRITICAL)
 
@@ -330,6 +333,119 @@ curl http://localhost:8080/healthz
 ```
 
 See `docs/deployment/gke-setup.md` for full documentation.
+
+## GKE Makefile Targets
+
+The following Makefile targets simplify working with the GKE remote build infrastructure:
+
+| Target | Description |
+|--------|-------------|
+| `make gke-setup` | Create GKE cluster, GCS bucket, and deploy melange-server from scratch |
+| `make gke-port-forward` | Start port forwarding to melange-server in the background |
+| `make gke-stop-port-forward` | Stop the background port forwarding |
+| `make gke-credentials` | Get GKE cluster credentials (kubeconfig) |
+| `make gke-status` | Check status of pods and backends |
+| `make gke-deploy` | Deploy/update melange-server using ko |
+
+**Configuration variables:**
+```bash
+GKE_PROJECT=dlorenc-chainguard  # GCP project ID
+GKE_CLUSTER=melange-server      # GKE cluster name
+GKE_ZONE=us-central1-a          # GKE zone
+GKE_PORT=8080                   # Local port for forwarding
+```
+
+**Example workflow:**
+```bash
+# First time setup (creates cluster, bucket, deploys server)
+make gke-setup
+
+# Daily usage - start port forwarding
+make gke-port-forward
+
+# Submit builds (see Remote Build Commands below)
+./melange2 remote submit mypackage.yaml --server http://localhost:8080 --wait
+
+# When done
+make gke-stop-port-forward
+```
+
+## Remote Build Commands
+
+The `melange remote` subcommand allows submitting builds to a remote melange-server.
+
+### Submit a Build Job
+
+```bash
+# Submit a single package and wait for completion
+./melange2 remote submit pkg.yaml --server http://localhost:8080 --wait
+
+# Submit with specific architecture
+./melange2 remote submit pkg.yaml --server http://localhost:8080 --arch x86_64 --wait
+
+# Submit multiple packages (builds in dependency order)
+./melange2 remote submit lib-a.yaml lib-b.yaml app.yaml --server http://localhost:8080 --wait
+
+# Submit with custom pipelines directory
+./melange2 remote submit pkg.yaml --server http://localhost:8080 --pipeline-dir ./pipelines/ --wait
+
+# Submit from a git repository
+./melange2 remote submit --git-repo https://github.com/wolfi-dev/os --git-pattern "*.yaml" --server http://localhost:8080
+
+# Submit with backend selector (for pools with labels)
+./melange2 remote submit pkg.yaml --server http://localhost:8080 --backend-selector tier=high-memory
+```
+
+### Check Job Status
+
+```bash
+# Get status of a specific job
+./melange2 remote status <job-id> --server http://localhost:8080
+
+# List all jobs
+./melange2 remote list --server http://localhost:8080
+
+# Wait for a job to complete
+./melange2 remote wait <job-id> --server http://localhost:8080
+```
+
+### Multi-Package Builds
+
+```bash
+# Check status of a multi-package build
+./melange2 remote build-status <build-id> --server http://localhost:8080
+
+# List all multi-package builds
+./melange2 remote list-builds --server http://localhost:8080
+```
+
+### Manage Backends
+
+```bash
+# List available backends and architectures
+./melange2 remote backends list --server http://localhost:8080
+
+# Add a new backend
+./melange2 remote backends add tcp://buildkit:1234 --arch x86_64 --server http://localhost:8080
+
+# Add a backend with labels
+./melange2 remote backends add tcp://buildkit:1234 --arch x86_64 --label tier=standard --server http://localhost:8080
+
+# Remove a backend
+./melange2 remote backends remove tcp://buildkit:1234 --server http://localhost:8080
+```
+
+### Common Options
+
+| Flag | Description |
+|------|-------------|
+| `--server` | melange-server URL (default: http://localhost:8080) |
+| `--arch` | Target architecture (e.g., x86_64, aarch64) |
+| `--wait` | Wait for job/build to complete before returning |
+| `--debug` | Enable debug logging |
+| `--pipeline-dir` | Directory containing pipeline YAML files |
+| `--backend-selector` | Label selector for backend (key=value) |
+| `--test` | Run tests after build |
 
 ## Dependencies
 
