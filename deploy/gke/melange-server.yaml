@@ -53,6 +53,16 @@ spec:
             configMapKeyRef:
               name: melange-config
               key: cache-mode
+        - name: APKO_REGISTRY
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apko-registry
+        - name: APKO_REGISTRY_INSECURE
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apko-registry-insecure
         ports:
         - containerPort: 8080
           name: http

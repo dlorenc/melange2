@@ -100,6 +100,8 @@ type Build struct {
 	Remove                bool
 	CacheRegistry         string // Registry URL for BuildKit cache (e.g., "registry:5000/cache")
 	CacheMode             string // Cache export mode: "min" or "max" (default: "max")
+	ApkoRegistry          string // Registry URL for caching apko base images (e.g., "registry:5000/apko-cache")
+	ApkoRegistryInsecure  bool   // Allow insecure (HTTP) connection to ApkoRegistry
 	LintRequire, LintWarn []string
 	Auth                  map[string]options.Auth
 	IgnoreSignatures      bool

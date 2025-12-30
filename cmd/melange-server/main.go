@@ -147,12 +147,27 @@ func run(ctx context.Context) error {
 		log.Infof("using registry cache: %s (mode=%s)", cacheRegistry, cacheMode)
 	}
 
+	// Get apko registry configuration from environment
+	// When set, apko base images are cached in this registry for faster builds.
+	// Default to "registry:5000/apko-cache" for in-cluster deployments.
+	apkoRegistry := os.Getenv("APKO_REGISTRY")
+	if apkoRegistry == "" {
+		// Default to in-cluster registry for apko cache
+		apkoRegistry = "registry:5000/apko-cache"
+	}
+	apkoRegistryInsecure := os.Getenv("APKO_REGISTRY_INSECURE") == "true"
+	if apkoRegistry != "" {
+		log.Infof("using apko registry cache: %s (insecure=%v)", apkoRegistry, apkoRegistryInsecure)
+	}
+
 	// Create scheduler
 	sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
-		OutputDir:     *outputDir,
-		PollInterval:  time.Second,
-		CacheRegistry: cacheRegistry,
-		CacheMode:     cacheMode,
+		OutputDir:            *outputDir,
+		PollInterval:         time.Second,
+		CacheRegistry:        cacheRegistry,
+		CacheMode:            cacheMode,
+		ApkoRegistry:         apkoRegistry,
+		ApkoRegistryInsecure: apkoRegistryInsecure,
 	})
 
 	// Create output directory (for local storage)

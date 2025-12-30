@@ -55,6 +55,15 @@ type Config struct {
 	// CacheMode is the cache export mode: "min" or "max".
 	// Defaults to "max" if empty.
 	CacheMode string
+	// ApkoRegistry is the registry URL for caching apko base images.
+	// When set, apko-generated layers are pushed to this registry and
+	// referenced via llb.Image() instead of being extracted to disk.
+	// This provides significant performance benefits for subsequent builds.
+	// Example: "registry:5000/apko-cache"
+	ApkoRegistry string
+	// ApkoRegistryInsecure allows connecting to the apko registry over HTTP.
+	// This should only be used for in-cluster registries.
+	ApkoRegistryInsecure bool
 }
 
 // Scheduler processes builds.
@@ -461,6 +470,13 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		if s.config.CacheMode != "" {
 			opts = append(opts, build.WithCacheMode(s.config.CacheMode))
 		}
+	}
+
+	// Add apko registry config if configured
+	// This enables caching apko base images for faster subsequent builds
+	if s.config.ApkoRegistry != "" {
+		opts = append(opts, build.WithApkoRegistry(s.config.ApkoRegistry))
+		opts = append(opts, build.WithApkoRegistryInsecure(s.config.ApkoRegistryInsecure))
 	}
 
 	if len(pipelines) > 0 {

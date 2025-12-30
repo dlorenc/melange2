@@ -79,6 +79,8 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.BoolVar(&flags.GenerateProvenance, "generate-provenance", false, "generate SLSA provenance for builds (included in a separate .attest.tar.gz file next to the APK)")
 	fs.StringVar(&flags.ExportOnFailure, "export-on-failure", "none", "export build environment on failure: none, tarball, docker, or registry (registry requires docker login)")
 	fs.StringVar(&flags.ExportRef, "export-ref", "", "path (for tarball) or image reference (for docker/registry) for debug image export")
+	fs.StringVar(&flags.ApkoRegistry, "apko-registry", "", "registry URL for caching apko base images (e.g., registry:5000/apko-cache)")
+	fs.BoolVar(&flags.ApkoRegistryInsecure, "apko-registry-insecure", false, "allow insecure (HTTP) connection to apko registry")
 
 	_ = fs.Bool("fail-on-lint-warning", false, "DEPRECATED: DO NOT USE")
 	_ = fs.MarkDeprecated("fail-on-lint-warning", "use --lint-require and --lint-warn instead")
@@ -120,10 +122,12 @@ type BuildFlags struct {
 	ConfigFileGitCommit  string
 	ConfigFileGitRepoURL string
 	ConfigFileLicense    string
-	GenerateProvenance   bool
-	TraceFile            string
-	ExportOnFailure      string
-	ExportRef            string
+	GenerateProvenance     bool
+	TraceFile              string
+	ExportOnFailure        string
+	ExportRef              string
+	ApkoRegistry           string
+	ApkoRegistryInsecure   bool
 }
 
 // ParseBuildFlags parses build flags from the provided args and returns a BuildFlags struct
@@ -205,6 +209,8 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 		build.WithBuildKitAddr(flags.BuildKitAddr),
 		build.WithMaxLayers(flags.MaxLayers),
 		build.WithExportOnFailure(flags.ExportOnFailure, flags.ExportRef),
+		build.WithApkoRegistry(flags.ApkoRegistry),
+		build.WithApkoRegistryInsecure(flags.ApkoRegistryInsecure),
 	}
 
 	if len(args) > 0 {

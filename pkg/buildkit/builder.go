@@ -108,6 +108,23 @@ type CacheConfig struct {
 	Mode string
 }
 
+// ApkoRegistryConfig specifies configuration for caching apko base images in a registry.
+// When configured, apko layers are pushed to the registry and referenced via llb.Image()
+// instead of being extracted to disk and referenced via llb.Local(). This provides
+// significant performance benefits:
+// - BuildKit can cache layers by content address
+// - Subsequent builds with same environment skip apko entirely
+// - No disk extraction overhead
+type ApkoRegistryConfig struct {
+	// Registry is the registry URL for cached apko images.
+	// Example: "registry:5000/apko-cache"
+	// If empty, the traditional llb.Local() approach is used.
+	Registry string
+
+	// Insecure allows connecting to registries over HTTP.
+	Insecure bool
+}
+
 // BuildConfig contains configuration for a build.
 type BuildConfig struct {
 	// PackageName is the name of the package being built.
@@ -151,6 +168,16 @@ type BuildConfig struct {
 	// CacheConfig specifies remote cache configuration.
 	// If nil or Registry is empty, caching is disabled.
 	CacheConfig *CacheConfig
+
+	// ApkoRegistryConfig specifies configuration for caching apko base images.
+	// When set with a non-empty Registry, apko layers are pushed to the registry
+	// and referenced via llb.Image() for better caching. If nil or Registry is
+	// empty, the traditional llb.Local() approach is used.
+	ApkoRegistryConfig *ApkoRegistryConfig
+
+	// ImgConfig is the apko image configuration used to generate the layers.
+	// This is used for cache key generation when ApkoRegistryConfig is set.
+	ImgConfig *apko_types.ImageConfiguration
 }
 
 // Build executes a build using BuildKit.
@@ -169,6 +196,9 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 // - Compiler layers (gcc, binutils) change occasionally
 // - Package-specific dependencies change more frequently
 // Only changed layers need to be rebuilt/transferred.
+//
+// When ApkoRegistryConfig is set with a non-empty Registry, layers are pushed
+// to the registry and referenced via llb.Image() for even better caching.
 func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *BuildConfig) error {
 	log := clog.FromContext(ctx)
 
@@ -176,35 +206,64 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		return fmt.Errorf("at least one layer is required")
 	}
 
-	// Load the apko layers
-	log.Infof("loading %d apko layer(s) into BuildKit", len(layers))
-	loadStart := time.Now()
-	loadResult, err := b.loader.LoadLayers(ctx, layers, cfg.PackageName)
-	loadDuration := time.Since(loadStart)
-	if err != nil {
-		return fmt.Errorf("loading apko layers: %w", err)
-	}
-	log.Infof("layer_load took %s", loadDuration)
-	defer func() {
-		if err := loadResult.Cleanup(); err != nil {
-			log.Warnf("cleanup failed: %v", err)
-		}
-	}()
+	var state llb.State
+	var localDirs map[string]string
+	var cleanup func()
 
-	// Use the pre-built state from LoadLayers which already combines all layers
-	log.Infof("building LLB graph with %d layer(s)", loadResult.LayerCount)
-	state := loadResult.State
+	// Check if we should use registry-based caching for apko layers
+	if cfg.ApkoRegistryConfig != nil && cfg.ApkoRegistryConfig.Registry != "" && cfg.ImgConfig != nil {
+		// Use registry-based approach: push layers to registry, reference via llb.Image()
+		log.Infof("using apko registry cache: %s", cfg.ApkoRegistryConfig.Registry)
+		loadStart := time.Now()
+
+		cache := NewApkoImageCache(cfg.ApkoRegistryConfig.Registry, cfg.ApkoRegistryConfig.Insecure)
+		imgRef, cacheHit, err := cache.GetOrCreate(ctx, *cfg.ImgConfig, layers)
+		if err != nil {
+			return fmt.Errorf("caching apko image: %w", err)
+		}
+
+		loadDuration := time.Since(loadStart)
+		if cacheHit {
+			log.Infof("apko_registry_cache_hit took %s", loadDuration)
+		} else {
+			log.Infof("apko_registry_push took %s", loadDuration)
+		}
+
+		// Use llb.Image() to reference the cached image
+		// BuildKit handles all layer caching automatically
+		state = llb.Image(imgRef, llb.WithCustomName("apko base image (cached)"))
+		localDirs = make(map[string]string)
+		cleanup = func() {} // No cleanup needed for registry-based approach
+	} else {
+		// Use traditional llb.Local() approach: extract layers to disk
+		log.Infof("loading %d apko layer(s) into BuildKit (local mode)", len(layers))
+		loadStart := time.Now()
+		loadResult, err := b.loader.LoadLayers(ctx, layers, cfg.PackageName)
+		loadDuration := time.Since(loadStart)
+		if err != nil {
+			return fmt.Errorf("loading apko layers: %w", err)
+		}
+		log.Infof("layer_load took %s", loadDuration)
+
+		state = loadResult.State
+		localDirs = make(map[string]string, len(loadResult.LocalDirs))
+		for k, v := range loadResult.LocalDirs {
+			localDirs[k] = v
+		}
+		cleanup = func() {
+			if err := loadResult.Cleanup(); err != nil {
+				log.Warnf("cleanup failed: %v", err)
+			}
+		}
+
+		log.Infof("building LLB graph with %d layer(s)", loadResult.LayerCount)
+	}
+	defer cleanup()
 
 	// Prepare workspace directories
 	state = PrepareWorkspace(state, cfg.PackageName)
 
 	// If we have source files, copy them to the workspace
-	// Start with the layer local dirs from LoadLayers
-	localDirs := make(map[string]string, len(loadResult.LocalDirs)+2)
-	for k, v := range loadResult.LocalDirs {
-		localDirs[k] = v
-	}
-
 	if cfg.SourceDir != "" {
 		// Only mount source directory if it exists
 		if _, err := os.Stat(cfg.SourceDir); err == nil {

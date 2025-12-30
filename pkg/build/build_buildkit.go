@@ -174,6 +174,17 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 		}
 	}
 
+	// Add apko registry config if configured
+	// This enables caching apko base images in a registry for faster subsequent builds
+	if b.ApkoRegistry != "" {
+		cfg.ApkoRegistryConfig = &buildkit.ApkoRegistryConfig{
+			Registry: b.ApkoRegistry,
+			Insecure: b.ApkoRegistryInsecure,
+		}
+		// Pass the image configuration for cache key generation
+		cfg.ImgConfig = &b.Configuration.Environment
+	}
+
 	log.Info("running build with BuildKit")
 	buildkitStart := time.Now()
 	if err := builder.BuildWithLayers(ctx, layers, cfg); err != nil {

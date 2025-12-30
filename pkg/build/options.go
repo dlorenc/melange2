@@ -461,3 +461,27 @@ func WithCacheMode(mode string) Option {
 		return nil
 	}
 }
+
+// WithApkoRegistry sets the registry URL for caching apko base images.
+// When set, apko-generated layers are pushed to this registry and referenced
+// via llb.Image() instead of being extracted to disk. This provides significant
+// performance benefits:
+// - BuildKit can cache layers by content address
+// - Subsequent builds with same environment configuration skip apko entirely
+// - No disk extraction overhead
+// Example: "registry:5000/apko-cache"
+func WithApkoRegistry(registry string) Option {
+	return func(b *Build) error {
+		b.ApkoRegistry = registry
+		return nil
+	}
+}
+
+// WithApkoRegistryInsecure allows connecting to the apko registry over HTTP.
+// This should only be used for in-cluster registries or testing.
+func WithApkoRegistryInsecure(insecure bool) Option {
+	return func(b *Build) error {
+		b.ApkoRegistryInsecure = insecure
+		return nil
+	}
+}
