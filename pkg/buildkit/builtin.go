@@ -333,22 +333,19 @@ mkdir -p %s
 				llb.WithCustomName("[fetch] cleanup"),
 			).Root()
 		}
-	} else {
-		// When not extracting, the file stays in the workspace with its original name
-		// If directory is different from the default, move the file there
-		if destPath != DefaultWorkDir {
-			state = state.Run(
-				llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
+	} else if destPath != DefaultWorkDir {
+		// When not extracting and directory differs from default, move the file there
+		state = state.Run(
+			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
 mkdir -p %s
 mv %s %s/
 `, destPath, downloadPath, destPath)}),
-				llb.Dir(DefaultWorkDir),
-				llb.User(BuildUserName),
-				llb.WithCustomNamef("[fetch] move to %s", destPath),
-			).Root()
-		}
-		// If directory is the default (.), the file is already in place with correct name
+			llb.Dir(DefaultWorkDir),
+			llb.User(BuildUserName),
+			llb.WithCustomNamef("[fetch] move to %s", destPath),
+		).Root()
 	}
+	// When not extracting and directory is default (.), file is already in place with correct name
 
 	return state, nil
 }
