@@ -25,13 +25,47 @@ data:
       http = true
       insecure = true
 ---
-apiVersion: apps/v1
-kind: Deployment
+# Headless service for StatefulSet DNS resolution
+# Each pod gets a DNS name: buildkit-{0..N}.buildkit-headless.melange.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkit-headless
+  namespace: melange
+spec:
+  clusterIP: None
+  selector:
+    app: buildkit
+  ports:
+  - port: 1234
+    targetPort: 1234
+    name: buildkit
+---
+# Regular service for load balancing (optional, for single-endpoint access)
+apiVersion: v1
+kind: Service
 metadata:
   name: buildkit
   namespace: melange
 spec:
-  replicas: 1
+  selector:
+    app: buildkit
+  ports:
+  - port: 1234
+    targetPort: 1234
+    name: buildkit
+---
+# StatefulSet for 8 BuildKit workers
+# Each pod gets a stable hostname and DNS entry for backend pool configuration
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: buildkit
+  namespace: melange
+spec:
+  serviceName: buildkit-headless
+  replicas: 8
+  podManagementPolicy: Parallel  # Start all pods simultaneously
   selector:
     matchLabels:
       app: buildkit
@@ -40,6 +74,22 @@ spec:
       labels:
         app: buildkit
     spec:
+      # Schedule on the dedicated BuildKit node pool
+      nodeSelector:
+        workload: buildkit
+      tolerations:
+      - key: workload
+        operator: Equal
+        value: buildkit
+        effect: NoSchedule
+      # Spread pods across nodes for better resource utilization
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: buildkit
       containers:
       - name: buildkit
         image: moby/buildkit:latest
@@ -61,27 +111,24 @@ spec:
           readOnly: true
         resources:
           requests:
-            memory: "2Gi"
-            cpu: "1000m"
-          limits:
             memory: "8Gi"
-            cpu: "4000m"
+            cpu: "14000m"    # Request 14 of 16 cores
+          limits:
+            memory: "32Gi"
+            cpu: "16000m"    # Limit to all 16 cores
+        readinessProbe:
+          tcpSocket:
+            port: 1234
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 1234
+          initialDelaySeconds: 15
+          periodSeconds: 20
       volumes:
       - name: buildkit-data
         emptyDir: {}
       - name: buildkit-config
         configMap:
           name: buildkit-config
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: buildkit
-  namespace: melange
-spec:
-  selector:
-    app: buildkit
-  ports:
-  - port: 1234
-    targetPort: 1234
-    name: buildkit
