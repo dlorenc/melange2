@@ -44,6 +44,12 @@ type CreateBuildRequest struct {
 	BackendSelector map[string]string `json:"backend_selector,omitempty"`
 	WithTest        bool              `json:"with_test,omitempty"`
 	Debug           bool              `json:"debug,omitempty"`
+
+	// SourceFiles is a map of package names to their source files.
+	// Each value is a map of relative file paths to their content.
+	// This allows including local source directories (e.g., $pkgname/)
+	// that will be available in the build workspace.
+	SourceFiles map[string]map[string]string `json:"source_files,omitempty"`
 }
 
 // CreateBuildResponse is the response body for creating a build.
@@ -88,6 +94,9 @@ type PackageJob struct {
 	OutputPath   string            `json:"output_path,omitempty"`
 	Backend      *Backend          `json:"backend,omitempty"`
 	Pipelines    map[string]string `json:"pipelines,omitempty"`
+	// SourceFiles is a map of relative file paths to their content.
+	// These files will be written to the source directory before building.
+	SourceFiles map[string]string `json:"source_files,omitempty"`
 }
 
 // Build represents a multi-package build with dependency ordering.
@@ -111,6 +120,10 @@ type BuildSpec struct {
 
 	// Pipelines is a map of pipeline paths to their YAML content.
 	Pipelines map[string]string `json:"pipelines,omitempty"`
+
+	// SourceFiles is a map of package names to their source files.
+	// Each value is a map of relative file paths to their content.
+	SourceFiles map[string]map[string]string `json:"source_files,omitempty"`
 
 	// Arch is the target architecture (default: runtime arch).
 	Arch string `json:"arch,omitempty"`

@@ -355,6 +355,25 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		}
 	}
 
+	// Write inline source files to a temp directory
+	sourceDir := filepath.Join(tmpDir, "sources")
+	sourceFiles := pkg.SourceFiles
+	if sourceFiles == nil && spec.SourceFiles != nil {
+		// Fall back to build-level source files for this package
+		sourceFiles = spec.SourceFiles[pkg.Name]
+	}
+	if len(sourceFiles) > 0 {
+		for filePath, fileContent := range sourceFiles {
+			fullPath := filepath.Join(sourceDir, filePath)
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+				return fmt.Errorf("creating source dir for %s: %w", filePath, err)
+			}
+			if err := os.WriteFile(fullPath, []byte(fileContent), 0644); err != nil {
+				return fmt.Errorf("writing source file %s: %w", filePath, err)
+			}
+		}
+	}
+
 	// Get output directory from storage backend
 	outputDir, err := s.storage.OutputDir(ctx, jobID)
 	if err != nil {
@@ -481,6 +500,11 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 
 	if len(pipelines) > 0 {
 		opts = append(opts, build.WithPipelineDir(pipelineDir))
+	}
+
+	// Add source directory if source files were provided
+	if len(sourceFiles) > 0 {
+		opts = append(opts, build.WithSourceDir(sourceDir))
 	}
 
 	// Phase 3: Build initialization

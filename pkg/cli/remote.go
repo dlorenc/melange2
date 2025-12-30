@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/client"
@@ -53,7 +54,6 @@ func remoteSubmitCmd() *cobra.Command {
 	var withTest bool
 	var debug bool
 	var wait bool
-	var pipelineDirs []string
 	var backendSelector []string
 	// Git source options
 	var gitRepo string
@@ -72,7 +72,11 @@ Supports three modes:
 3. Git source: melange remote submit --git-repo https://github.com/org/packages
 
 For multi-package builds, packages are built in dependency order based on
-environment.contents.packages declarations.`,
+environment.contents.packages declarations.
+
+Convention-based defaults (automatically included if present):
+- Pipelines from ./pipelines/ directory
+- Source files from $pkgname/ directory for each package`,
 		Example: `  # Submit a single build
   melange remote submit mypackage.yaml --server http://localhost:8080
 
@@ -92,8 +96,8 @@ environment.contents.packages declarations.`,
   melange remote submit mypackage.yaml --backend-selector tier=high-memory`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Load pipelines from directories
-			pipelines, err := loadPipelinesFromDirs(pipelineDirs)
+			// Convention: auto-load pipelines from ./pipelines/ if it exists
+			pipelines, err := loadPipelinesFromConvention()
 			if err != nil {
 				return fmt.Errorf("loading pipelines: %w", err)
 			}
@@ -131,6 +135,13 @@ environment.contents.packages declarations.`,
 					return fmt.Errorf("reading config file: %w", err)
 				}
 				req.ConfigYAML = string(configData)
+
+				// Convention: auto-load source files from $pkgname/ if it exists
+				sourceFiles, err := loadSourceFilesFromConvention([]string{args[0]})
+				if err != nil {
+					return fmt.Errorf("loading source files: %w", err)
+				}
+				req.SourceFiles = sourceFiles
 			default:
 				// Multi-config mode
 				configs := make([]string, 0, len(args))
@@ -142,6 +153,13 @@ environment.contents.packages declarations.`,
 					configs = append(configs, string(data))
 				}
 				req.Configs = configs
+
+				// Convention: auto-load source files from $pkgname/ for each package
+				sourceFiles, err := loadSourceFilesFromConvention(args)
+				if err != nil {
+					return fmt.Errorf("loading source files: %w", err)
+				}
+				req.SourceFiles = sourceFiles
 			}
 
 			resp, err := c.SubmitBuild(cmd.Context(), req)
@@ -152,7 +170,14 @@ environment.contents.packages declarations.`,
 			fmt.Printf("Build submitted: %s\n", resp.ID)
 			fmt.Printf("Packages (%d): %s\n", len(resp.Packages), strings.Join(resp.Packages, ", "))
 			if len(pipelines) > 0 {
-				fmt.Printf("Included %d pipeline(s)\n", len(pipelines))
+				fmt.Printf("Included %d pipeline(s) from ./pipelines/\n", len(pipelines))
+			}
+			if len(req.SourceFiles) > 0 {
+				var pkgCount int
+				for range req.SourceFiles {
+					pkgCount++
+				}
+				fmt.Printf("Included source files for %d package(s)\n", pkgCount)
 			}
 
 			if wait {
@@ -176,7 +201,6 @@ environment.contents.packages declarations.`,
 	cmd.Flags().BoolVar(&withTest, "test", false, "run tests after build")
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for build to complete")
-	cmd.Flags().StringSliceVar(&pipelineDirs, "pipeline-dir", nil, "directory containing pipeline YAML files")
 	cmd.Flags().StringSliceVar(&backendSelector, "backend-selector", nil, "backend label selector (key=value)")
 	// Git source options
 	cmd.Flags().StringVar(&gitRepo, "git-repo", "", "git repository URL for package configs")
@@ -202,48 +226,193 @@ func parseSelector(selectors []string) map[string]string {
 	return result
 }
 
-// loadPipelinesFromDirs reads all YAML files from the given directories and returns
-// a map of relative paths to their content.
-func loadPipelinesFromDirs(dirs []string) (map[string]string, error) {
-	if len(dirs) == 0 {
-		return nil, nil
+// loadPipelinesFromConvention loads pipelines from ./pipelines/ if it exists.
+// This implements the convention-based approach where pipelines are automatically
+// included from the conventional location.
+func loadPipelinesFromConvention() (map[string]string, error) {
+	const conventionalPipelineDir = "pipelines"
+
+	// Check if the conventional pipeline directory exists
+	info, err := os.Stat(conventionalPipelineDir)
+	if os.IsNotExist(err) {
+		return nil, nil // No pipelines directory, that's fine
+	}
+	if err != nil {
+		return nil, fmt.Errorf("checking pipelines directory: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, nil // Not a directory, skip
 	}
 
+	return loadPipelinesFromDir(conventionalPipelineDir)
+}
+
+// loadPipelinesFromDir reads all YAML files from a directory and returns
+// a map of relative paths to their content.
+func loadPipelinesFromDir(dir string) (map[string]string, error) {
 	pipelines := make(map[string]string)
-	for _, dir := range dirs {
-		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				return nil
-			}
-			// Only process .yaml files
-			if filepath.Ext(path) != ".yaml" {
-				return nil
-			}
-
-			// Get relative path from the pipeline dir
-			relPath, err := filepath.Rel(dir, path)
-			if err != nil {
-				return fmt.Errorf("getting relative path: %w", err)
-			}
-
-			// Read the file content
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("reading %s: %w", path, err)
-			}
-
-			pipelines[relPath] = string(content)
-			return nil
-		})
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil, fmt.Errorf("walking %s: %w", dir, err)
+			return err
 		}
+		if d.IsDir() {
+			return nil
+		}
+		// Only process .yaml files
+		if filepath.Ext(path) != ".yaml" {
+			return nil
+		}
+
+		// Get relative path from the pipeline dir
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return fmt.Errorf("getting relative path: %w", err)
+		}
+
+		// Read the file content
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+
+		pipelines[relPath] = string(content)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking %s: %w", dir, err)
 	}
 
 	return pipelines, nil
+}
+
+// loadSourceFilesFromConvention loads source files for packages using the convention
+// that source files are located in a directory named after the package.
+// For example, if the config is "curl.yaml" and package name is "curl", it will
+// look for source files in ./curl/ directory.
+func loadSourceFilesFromConvention(configPaths []string) (map[string]map[string]string, error) {
+	sourceFiles := make(map[string]map[string]string)
+
+	for _, configPath := range configPaths {
+		// Extract package name from the config file
+		pkgName, err := extractPackageName(configPath)
+		if err != nil {
+			// If we can't extract the package name, skip this config
+			continue
+		}
+
+		// Check if a directory named after the package exists
+		sourceDir := pkgName
+		info, err := os.Stat(sourceDir)
+		if os.IsNotExist(err) {
+			continue // No source directory, that's fine
+		}
+		if err != nil {
+			return nil, fmt.Errorf("checking source directory %s: %w", sourceDir, err)
+		}
+		if !info.IsDir() {
+			continue // Not a directory, skip
+		}
+
+		// Load all files from the source directory
+		files, err := loadFilesFromDir(sourceDir)
+		if err != nil {
+			return nil, fmt.Errorf("loading source files from %s: %w", sourceDir, err)
+		}
+
+		if len(files) > 0 {
+			sourceFiles[pkgName] = files
+		}
+	}
+
+	if len(sourceFiles) == 0 {
+		return nil, nil
+	}
+	return sourceFiles, nil
+}
+
+// extractPackageName extracts the package name from a melange config file.
+func extractPackageName(configPath string) (string, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+
+	// Simple YAML parsing to extract package.name
+	// We use a minimal struct to avoid importing the full config package
+	var cfg struct {
+		Package struct {
+			Name string `yaml:"name"`
+		} `yaml:"package"`
+	}
+
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return "", err
+	}
+
+	if cfg.Package.Name == "" {
+		return "", fmt.Errorf("package name not found in %s", configPath)
+	}
+
+	return cfg.Package.Name, nil
+}
+
+// loadFilesFromDir reads all files from a directory and returns a map of
+// relative paths to their content. Skips binary files and very large files.
+func loadFilesFromDir(dir string) (map[string]string, error) {
+	const maxFileSize = 10 * 1024 * 1024 // 10MB limit per file
+
+	files := make(map[string]string)
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		// Get file info for size check
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+
+		// Skip files that are too large
+		if info.Size() > maxFileSize {
+			return nil
+		}
+
+		// Get relative path from the source dir
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return fmt.Errorf("getting relative path: %w", err)
+		}
+
+		// Read the file content
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+
+		// Skip binary files (simple heuristic: check for null bytes in first 8KB)
+		checkSize := len(content)
+		if checkSize > 8192 {
+			checkSize = 8192
+		}
+		for i := 0; i < checkSize; i++ {
+			if content[i] == 0 {
+				// Likely a binary file, skip
+				return nil
+			}
+		}
+
+		files[relPath] = string(content)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
 }
 
 func remoteStatusCmd() *cobra.Command {

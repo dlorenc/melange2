@@ -322,6 +322,7 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 		Configs:         configs,
 		GitSource:       req.GitSource,
 		Pipelines:       req.Pipelines,
+		SourceFiles:     req.SourceFiles,
 		Arch:            req.Arch,
 		BackendSelector: req.BackendSelector,
 		WithTest:        req.WithTest,

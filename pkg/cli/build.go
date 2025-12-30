@@ -172,16 +172,34 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 		flags.ConfigFileGitRepoURL = "https://unknown/unknown/unknown"
 	}
 
+	// Convention: auto-detect pipeline directory from ./pipelines/ if not specified
+	pipelineDir := flags.PipelineDir
+	if pipelineDir == "" {
+		if detected := detectConventionalPipelineDir(); detected != "" {
+			log.Infof("using conventional pipeline directory: %s", detected)
+			pipelineDir = detected
+		}
+	}
+
+	// Convention: auto-detect signing key if not specified
+	signingKey := flags.SigningKey
+	if signingKey == "" {
+		if detected := detectConventionalSigningKey(); detected != "" {
+			log.Infof("using conventional signing key: %s", detected)
+			signingKey = detected
+		}
+	}
+
 	opts := []build.Option{
 		build.WithBuildDate(flags.BuildDate),
 		build.WithWorkspaceDir(flags.WorkspaceDir),
 		// Order matters, so add any specified pipelineDir before
 		// builtin pipelines.
-		build.WithPipelineDir(flags.PipelineDir),
+		build.WithPipelineDir(pipelineDir),
 		build.WithPipelineDir(BuiltinPipelineDir),
 		build.WithCacheDir(flags.CacheDir),
 		build.WithPackageCacheDir(flags.ApkCacheDir),
-		build.WithSigningKey(flags.SigningKey),
+		build.WithSigningKey(signingKey),
 		build.WithGenerateIndex(flags.GenerateIndex),
 		build.WithEmptyWorkspace(flags.EmptyWorkspace),
 		build.WithOutDir(flags.OutDir),
@@ -215,14 +233,18 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 
 	if len(args) > 0 {
 		opts = append(opts, build.WithConfig(buildConfigFilePath))
-		// Note: We no longer default SourceDir to the config file directory.
-		// This ensures an empty workspace by default, which is correct for
-		// packages that fetch source via git-checkout or other pipelines.
-		// Use --source-dir explicitly if local sources are needed.
 	}
 
+	// Convention: auto-detect source directory from $pkgname/ if not specified
+	// If SourceDir is explicitly set, use that. Otherwise, try to detect from package name.
 	if flags.SourceDir != "" {
 		opts = append(opts, build.WithSourceDir(flags.SourceDir))
+	} else if len(args) > 0 {
+		// Try to detect conventional source directory based on package name
+		if detected := detectConventionalSourceDir(buildConfigFilePath); detected != "" {
+			log.Infof("using conventional source directory: %s", detected)
+			opts = append(opts, build.WithSourceDir(detected))
+		}
 	}
 
 	if auth, ok := os.LookupEnv("HTTP_AUTH"); !ok {
@@ -237,6 +259,100 @@ func (flags *BuildFlags) BuildOptions(ctx context.Context, args ...string) ([]bu
 	}
 
 	return opts, nil
+}
+
+// detectConventionalPipelineDir checks if the conventional ./pipelines/ directory exists.
+func detectConventionalPipelineDir() string {
+	const conventionalDir = "pipelines"
+	if info, err := os.Stat(conventionalDir); err == nil && info.IsDir() {
+		return conventionalDir
+	}
+	return ""
+}
+
+// detectConventionalSigningKey checks for signing keys in conventional locations.
+// It looks for (in order): melange.rsa, local-signing.rsa
+func detectConventionalSigningKey() string {
+	conventionalKeys := []string{
+		"melange.rsa",
+		"local-signing.rsa",
+	}
+	for _, key := range conventionalKeys {
+		if _, err := os.Stat(key); err == nil {
+			return key
+		}
+	}
+	return ""
+}
+
+// detectConventionalSourceDir checks if a directory named after the package exists.
+// It parses the config file to extract the package name and checks if $pkgname/ exists.
+func detectConventionalSourceDir(configPath string) string {
+	if configPath == "" {
+		return ""
+	}
+
+	// Read and parse the config file to get the package name
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	// Simple parsing to extract package.name - avoid importing full config package
+	// to prevent circular dependencies
+	var cfg struct {
+		Package struct {
+			Name string `yaml:"name"`
+		} `yaml:"package"`
+	}
+
+	if err := parseYAMLPackageName(data, &cfg.Package.Name); err != nil {
+		return ""
+	}
+
+	if cfg.Package.Name == "" {
+		return ""
+	}
+
+	// Check if a directory named after the package exists
+	sourceDir := cfg.Package.Name
+	if info, err := os.Stat(sourceDir); err == nil && info.IsDir() {
+		return sourceDir
+	}
+
+	return ""
+}
+
+// parseYAMLPackageName extracts just the package.name from YAML data
+// using simple string parsing to avoid YAML import issues.
+func parseYAMLPackageName(data []byte, name *string) error {
+	// Simple line-by-line parsing for package.name
+	lines := strings.Split(string(data), "\n")
+	inPackage := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "package:" {
+			inPackage = true
+			continue
+		}
+		if inPackage && strings.HasPrefix(trimmed, "name:") {
+			// Extract the name value
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) == 2 {
+				*name = strings.TrimSpace(parts[1])
+				// Remove quotes if present
+				*name = strings.Trim(*name, "\"'")
+				return nil
+			}
+		}
+		// If we hit another top-level key, we've left the package section
+		if inPackage && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			if !strings.HasPrefix(trimmed, "name:") {
+				break
+			}
+		}
+	}
+	return nil
 }
 
 func buildCmd() *cobra.Command {
