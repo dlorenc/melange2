@@ -56,13 +56,39 @@ go test ./...
 
 The CI workflow (`.github/workflows/ci.yaml`) runs these jobs:
 
-| Job | Command | Description |
-|-----|---------|-------------|
-| Build | `go build -v ./...` | Compile all packages |
-| Test | `go test -v -race -short -coverprofile=coverage.out ./...` | Unit tests with coverage |
-| E2E | `go test -v -coverprofile=e2e-coverage.out -run "TestE2E_..." ./pkg/buildkit/...` | E2E tests |
-| Lint | `golangci-lint run` | Code linting |
-| Verify | `go mod tidy && git diff --exit-code` | Module verification |
+| Job | Command | Duration | Description |
+|-----|---------|----------|-------------|
+| Build | `go build -v ./...` | ~30s | Compile all packages |
+| Test | `go test -v -race -short -coverprofile=coverage.out ./...` | ~2min | Unit tests with coverage |
+| E2E | `go test -v -coverprofile=e2e-coverage.out -run "TestE2E_..." ./pkg/buildkit/...` | ~2min | E2E tests |
+| Lint | `golangci-lint run` | ~1min | Code linting |
+| Verify | `go mod tidy && git diff --exit-code` | ~20s | Module verification |
+
+### What Each Job Validates
+
+- **Build**: Ensures all code compiles without errors
+- **Test**: Runs unit tests with race detection; `-short` skips E2E tests
+- **E2E**: Runs BuildKit integration tests using testcontainers (Docker required)
+- **Lint**: Runs golangci-lint with project configuration
+- **Verify**: Ensures `go.mod` and `go.sum` are up to date
+
+All jobs must pass before merging a PR.
+
+### Viewing CI Results
+
+```bash
+# List recent workflow runs
+gh run list --limit 5
+
+# View a specific run
+gh run view <run-id>
+
+# Watch a running workflow
+gh run watch
+
+# View failed job logs
+gh run view <run-id> --log-failed
+```
 
 ## E2E Test Framework
 
@@ -123,6 +149,8 @@ Test configurations are stored in `pkg/buildkit/testdata/e2e/`:
 | `04-subpackage-basic.yaml` | Basic subpackage handling |
 | `05-working-directory.yaml` | Working directory handling |
 | `06-multi-pipeline.yaml` | Multiple pipeline steps |
+| `07-test-pipeline.yaml` | Test pipeline execution |
+| `08-uses-pipeline.yaml` | Uses built-in pipeline |
 | `09-conditional-if.yaml` | Conditional pipeline execution |
 | `10-script-assertions.yaml` | Script assertions and chaining |
 | `11-nested-pipelines.yaml` | Nested pipeline execution |

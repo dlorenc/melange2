@@ -95,15 +95,46 @@ go test -v ./pkg/buildkit/...
 ### VS Code
 
 Recommended extensions:
-- Go (golang.go)
-- YAML (redhat.vscode-yaml)
+- Go (`golang.go`) - Essential Go support
+- YAML (`redhat.vscode-yaml`) - YAML schema validation
+- GitLens (`eamodio.gitlens`) - Git integration
 
 `.vscode/settings.json`:
 ```json
 {
+  "go.useLanguageServer": true,
   "go.testFlags": ["-v", "-short"],
   "go.lintTool": "golangci-lint",
-  "go.lintFlags": ["--fast"]
+  "go.lintFlags": ["--fast"],
+  "editor.formatOnSave": true,
+  "[go]": {
+    "editor.defaultFormatter": "golang.go"
+  }
+}
+```
+
+`.vscode/launch.json` (for debugging):
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Build",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}",
+      "args": ["build", "examples/minimal.yaml", "--buildkit-addr", "tcp://localhost:1234", "--debug"]
+    },
+    {
+      "name": "Debug Test",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/pkg/buildkit",
+      "args": ["-test.v", "-test.run", "TestE2E_SimpleRun"]
+    }
+  ]
 }
 ```
 
@@ -113,6 +144,7 @@ Recommended extensions:
 2. Wait for indexing to complete
 3. Configure the Go SDK (1.24.6+)
 4. Set test flags to `-short` for faster iteration
+5. Configure Run/Debug configurations similar to the VS Code launch.json above
 
 ## Environment Variables
 
