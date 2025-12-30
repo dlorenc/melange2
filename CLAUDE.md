@@ -65,6 +65,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 ├── pkg/buildkit/          # CORE - BuildKit integration
 │   ├── builder.go         # Main Build() method
 │   ├── llb.go             # Pipeline → LLB conversion
+│   ├── builtin.go         # Native LLB implementations (git-checkout, fetch)
 │   ├── cache.go           # Cache mount definitions
 │   ├── progress.go        # Build progress display
 │   └── e2e_test.go        # E2E tests
@@ -95,6 +96,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 | Modify build process | `pkg/buildkit/builder.go`, `pkg/buildkit/llb.go` |
 | Add CLI flag | `pkg/cli/build.go` |
 | Add built-in pipeline | `pkg/build/pipelines/{category}/{name}.yaml` |
+| Add native LLB pipeline | `pkg/buildkit/builtin.go`, `pkg/build/compile.go` |
 | Debug test failures | `pkg/buildkit/e2e_test.go` |
 | Understand caching | `pkg/buildkit/cache.go` |
 | Config parsing | `pkg/config/config.go` |
@@ -257,6 +259,19 @@ for _, k := range keys {
     opts = append(opts, llb.AddEnv(k, env[k]))
 }
 ```
+
+### Native LLB Pipelines
+Some `uses:` pipelines have native LLB implementations for better caching and performance:
+
+| Pipeline | Native Operation | Benefits |
+|----------|-----------------|----------|
+| `git-checkout` | `llb.Git()` | Content-addressable caching, parallel fetching |
+| `fetch` | `llb.HTTP()` | Checksum-based caching, automatic verification |
+
+To add a new native pipeline:
+1. Add implementation in `pkg/buildkit/builtin.go`
+2. Register in `BuiltinPipelines` map
+3. The compile phase (`pkg/build/compile.go`) automatically preserves `Uses` for registered pipelines
 
 ## CI Jobs
 

@@ -143,6 +143,11 @@ func (b *PipelineBuilder) BuildPipeline(base llb.State, p *config.Pipeline) (llb
 		}
 	}
 
+	// Check if this is a built-in pipeline with native LLB implementation
+	if IsBuiltinPipeline(p.Uses) {
+		return BuildBuiltinPipeline(base, p)
+	}
+
 	state := base
 
 	// Only run if there's something to run

@@ -28,6 +28,7 @@ import (
 	"gopkg.in/yaml.v3"
 	"mvdan.cc/sh/v3/syntax"
 
+	"github.com/dlorenc/melange2/pkg/buildkit"
 	"github.com/dlorenc/melange2/pkg/cond"
 	"github.com/dlorenc/melange2/pkg/config"
 	"github.com/dlorenc/melange2/pkg/util"
@@ -136,6 +137,9 @@ func (c *Compiled) compilePipeline(ctx context.Context, sm *SubstitutionMap, pip
 	log := clog.FromContext(ctx)
 	name, uses, with := pipeline.Name, pipeline.Uses, maps.Clone(pipeline.With)
 
+	// Check if this is a built-in LLB pipeline
+	isBuiltin := buildkit.IsBuiltinPipeline(uses)
+
 	// When compiling an already-compiled config, `uses` will be redundant and FYI only,
 	// so ignore it if there is also a `pipelines` spelled out.
 	if uses != "" && len(pipeline.Pipeline) == 0 {
@@ -166,12 +170,19 @@ func (c *Compiled) compilePipeline(ctx context.Context, sm *SubstitutionMap, pip
 
 		for k := range with {
 			if _, ok := pipeline.Inputs[k]; !ok {
-				return fmt.Errorf("undefined input %q to pipeline %q", k, pipeline.Uses)
+				return fmt.Errorf("undefined input %q to pipeline %q", k, uses)
 			}
 		}
 
 		// We want to keep the original name here because loading the pipeline will overwrite it.
 		pipeline.Name = name
+
+		// For built-in pipelines, preserve the Uses field so the LLB builder
+		// knows to use native operations instead of shell scripts.
+		if isBuiltin {
+			pipeline.Uses = uses
+			log.Debugf("preserving built-in pipeline %q for native LLB execution", uses)
+		}
 	}
 
 	if parent != nil {
@@ -198,6 +209,29 @@ func (c *Compiled) compilePipeline(ctx context.Context, sm *SubstitutionMap, pip
 				return fmt.Errorf("mutating needs: %w", err)
 			}
 		}
+	}
+
+	// For built-in pipelines, we skip the shell script processing and
+	// preserve all resolved inputs for the native LLB implementation.
+	if isBuiltin {
+		// Store all resolved input values in With (including defaults)
+		// The native LLB builder will use these values directly.
+		allInputs := map[string]string{}
+		for k := range pipeline.Inputs {
+			nk := fmt.Sprintf("${{inputs.%s}}", k)
+			if v, ok := mutated[nk]; ok {
+				allInputs[k] = v
+			}
+		}
+		pipeline.With = allInputs
+
+		// Clear the nested pipeline and runs since we'll use native LLB operations
+		pipeline.Pipeline = nil
+		pipeline.Runs = ""
+		pipeline.Inputs = nil
+
+		log.Debugf("compiled built-in pipeline %q with inputs: %v", uses, allInputs)
+		return nil
 	}
 
 	if pipeline.WorkDir != "" {
