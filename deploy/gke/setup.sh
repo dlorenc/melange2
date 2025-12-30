@@ -55,14 +55,45 @@ echo "==> Creating GKE cluster (if not exists)..."
 if ! gcloud container clusters describe "${CLUSTER_NAME}" --zone="${ZONE}" &>/dev/null; then
     gcloud container clusters create "${CLUSTER_NAME}" \
         --zone="${ZONE}" \
-        --num-nodes=2 \
+        --num-nodes=1 \
         --machine-type=e2-standard-4 \
         --enable-ip-alias \
         --workload-pool="${PROJECT_ID}.svc.id.goog" \
+        --enable-autoscaling \
+        --min-nodes=1 \
+        --max-nodes=3 \
         --no-enable-autoupgrade
     echo "    Created cluster: ${CLUSTER_NAME}"
 else
     echo "    Cluster already exists: ${CLUSTER_NAME}"
+fi
+
+# Create or update BuildKit node pool with autoscaling
+# Uses larger machines (n2-standard-16) for BuildKit workloads
+BUILDKIT_POOL="buildkit-pool"
+echo "==> Setting up BuildKit node pool with autoscaling..."
+if ! gcloud container node-pools describe "${BUILDKIT_POOL}" --cluster="${CLUSTER_NAME}" --zone="${ZONE}" &>/dev/null; then
+    gcloud container node-pools create "${BUILDKIT_POOL}" \
+        --cluster="${CLUSTER_NAME}" \
+        --zone="${ZONE}" \
+        --machine-type=n2-standard-16 \
+        --num-nodes=1 \
+        --enable-autoscaling \
+        --min-nodes=0 \
+        --max-nodes=8 \
+        --node-labels=workload=buildkit \
+        --node-taints=workload=buildkit:NoSchedule
+    echo "    Created node pool: ${BUILDKIT_POOL}"
+else
+    echo "    Node pool already exists: ${BUILDKIT_POOL}"
+    # Update autoscaling settings if pool exists
+    gcloud container clusters update "${CLUSTER_NAME}" \
+        --zone="${ZONE}" \
+        --node-pool="${BUILDKIT_POOL}" \
+        --enable-autoscaling \
+        --min-nodes=0 \
+        --max-nodes=8 || true
+    echo "    Updated autoscaling for: ${BUILDKIT_POOL}"
 fi
 
 # Get credentials
@@ -107,11 +138,17 @@ gcloud iam service-accounts add-iam-policy-binding "${GCP_SA}" \
 echo "==> Applying Kubernetes manifests..."
 kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
 
-# Update configmap with actual bucket name
-kubectl create configmap melange-config \
+# Apply configmap (contains backends configuration)
+kubectl apply -f "${SCRIPT_DIR}/configmap.yaml"
+
+# Update configmap with actual bucket name (patch the existing configmap)
+kubectl patch configmap melange-config \
     --namespace=melange \
-    --from-literal=gcs-bucket="${GCS_BUCKET}" \
-    --dry-run=client -o yaml | kubectl apply -f -
+    --type=merge \
+    -p "{\"data\":{\"gcs-bucket\":\"${GCS_BUCKET}\"}}"
+
+# Apply registry for BuildKit cache
+kubectl apply -f "${SCRIPT_DIR}/registry.yaml"
 
 kubectl apply -f "${SCRIPT_DIR}/buildkit.yaml"
 
@@ -122,7 +159,7 @@ cat "${SCRIPT_DIR}/melange-server.yaml" | \
     ko apply -f -
 
 echo "==> Waiting for deployments..."
-kubectl rollout status deployment/buildkit -n melange --timeout=180s
+kubectl rollout status statefulset/buildkit -n melange --timeout=600s
 kubectl rollout status deployment/melange-server -n melange --timeout=180s
 
 echo ""

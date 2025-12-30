@@ -28,15 +28,51 @@ data:
   cache-mode: "max"
 
   # BuildKit backends configuration
-  # Add more backends or modify labels as needed
+  # 8 BuildKit workers using StatefulSet DNS names
+  # Each worker can handle 16 concurrent jobs (matching 16-core machines)
   backends.yaml: |
     backends:
-      - addr: tcp://buildkit:1234
+      - addr: tcp://buildkit-0.buildkit-headless.melange.svc.cluster.local:1234
         arch: x86_64
-        maxJobs: 4
+        maxJobs: 16
         labels:
           tier: standard
-    # Pool-wide throttling configuration
-    defaultMaxJobs: 4        # Default max concurrent jobs per backend
+      - addr: tcp://buildkit-1.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-2.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-3.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-4.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-5.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-6.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-7.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+    # Pool-wide configuration
+    defaultMaxJobs: 16       # Default max concurrent jobs per backend
     failureThreshold: 3      # Consecutive failures before circuit opens
     recoveryTimeout: 30s     # How long circuit stays open
