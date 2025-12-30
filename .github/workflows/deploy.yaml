@@ -56,6 +56,33 @@ jobs:
           location: ${{ env.CLUSTER_ZONE }}
           project_id: ${{ env.PROJECT_ID }}
 
+      - name: Ensure BuildKit node pool with autoscaling
+        run: |
+          # Create buildkit-pool if it doesn't exist
+          if ! gcloud container node-pools describe buildkit-pool \
+              --cluster=${{ env.CLUSTER_NAME }} \
+              --zone=${{ env.CLUSTER_ZONE }} &>/dev/null; then
+            echo "Creating buildkit-pool with autoscaling..."
+            gcloud container node-pools create buildkit-pool \
+              --cluster=${{ env.CLUSTER_NAME }} \
+              --zone=${{ env.CLUSTER_ZONE }} \
+              --machine-type=n2-standard-16 \
+              --num-nodes=0 \
+              --enable-autoscaling \
+              --min-nodes=0 \
+              --max-nodes=8 \
+              --node-labels=workload=buildkit \
+              --node-taints=workload=buildkit:NoSchedule
+          else
+            echo "buildkit-pool already exists, ensuring autoscaling is enabled..."
+            gcloud container clusters update ${{ env.CLUSTER_NAME }} \
+              --zone=${{ env.CLUSTER_ZONE }} \
+              --node-pool=buildkit-pool \
+              --enable-autoscaling \
+              --min-nodes=0 \
+              --max-nodes=8 || true
+          fi
+
       - name: Deploy BuildKit and Registry
         run: |
           kubectl apply -f deploy/gke/namespace.yaml
@@ -79,7 +106,7 @@ jobs:
       - name: Wait for rollout
         run: |
           kubectl rollout status deployment/registry -n melange --timeout=180s
-          kubectl rollout status deployment/buildkit -n melange --timeout=180s
+          kubectl rollout status statefulset/buildkit -n melange --timeout=600s
           kubectl rollout status deployment/melange-server -n melange --timeout=180s
 
       - name: Verify deployment
