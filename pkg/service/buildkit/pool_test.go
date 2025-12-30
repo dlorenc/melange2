@@ -17,6 +17,8 @@ package buildkit
 import (
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -503,4 +505,186 @@ recoveryTimeout: 60s
 			require.Equal(t, 2, b.MaxJobs)
 		}
 	}
+}
+
+func TestPoolSelectAndAcquire(t *testing.T) {
+	pool, err := NewPool([]Backend{
+		{Addr: "tcp://backend-1:1234", Arch: "x86_64", MaxJobs: 2},
+		{Addr: "tcp://backend-2:1234", Arch: "x86_64", MaxJobs: 2},
+	})
+	require.NoError(t, err)
+
+	// Acquire should return backend
+	backend, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+
+	// Status should show 1 active job
+	status := pool.Status()
+	totalActive := 0
+	for _, s := range status {
+		totalActive += s.ActiveJobs
+	}
+	require.Equal(t, 1, totalActive)
+
+	// Acquire 3 more slots (total capacity is 4)
+	for i := 0; i < 3; i++ {
+		_, err := pool.SelectAndAcquire("x86_64", nil)
+		require.NoError(t, err)
+	}
+
+	// Pool should now be at capacity
+	_, err = pool.SelectAndAcquire("x86_64", nil)
+	require.Error(t, err)
+	require.Equal(t, ErrNoAvailableBackend, err)
+
+	// Release one slot and try again
+	pool.Release("tcp://backend-1:1234", true)
+
+	backend, err = pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
+}
+
+func TestPoolConcurrentSelectAndAcquire(t *testing.T) {
+	// Create a pool with 8 total slots across 2 backends
+	pool, err := NewPoolWithConfig(PoolConfig{
+		Backends: []Backend{
+			{Addr: "tcp://backend-1:1234", Arch: "x86_64", MaxJobs: 4},
+			{Addr: "tcp://backend-2:1234", Arch: "x86_64", MaxJobs: 4},
+		},
+	})
+	require.NoError(t, err)
+
+	const totalAttempts = 100
+
+	var wg sync.WaitGroup
+	var acquired atomic.Int32
+	var released atomic.Int32
+	var failed atomic.Int32
+
+	// Try to acquire 100 times concurrently
+	// With only 8 slots and 100 goroutines, this tests the atomic behavior
+	// of SelectAndAcquire - no goroutine should get a "half-acquired" slot
+	for i := 0; i < totalAttempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			backend, err := pool.SelectAndAcquire("x86_64", nil)
+			if err != nil {
+				// Expected when pool is at capacity
+				failed.Add(1)
+				return
+			}
+
+			acquired.Add(1)
+			// Brief hold to simulate work
+			time.Sleep(time.Millisecond)
+			pool.Release(backend.Addr, true)
+			released.Add(1)
+		}()
+	}
+
+	wg.Wait()
+
+	// All acquired slots should be released
+	require.Equal(t, acquired.Load(), released.Load(), "all acquired slots should be released")
+
+	// Verify pool is back to zero active jobs
+	status := pool.Status()
+	totalActive := 0
+	for _, s := range status {
+		totalActive += s.ActiveJobs
+	}
+	require.Equal(t, 0, totalActive, "pool should have no active jobs after test")
+
+	// Total should equal attempts
+	require.Equal(t, int32(totalAttempts), acquired.Load()+failed.Load(),
+		"acquired + failed should equal total attempts")
+
+	// At least some should have succeeded (at minimum, initial 8 slots)
+	require.GreaterOrEqual(t, acquired.Load(), int32(8),
+		"should have acquired at least the slot count")
+
+	t.Logf("acquired: %d, failed: %d, released: %d", acquired.Load(), failed.Load(), released.Load())
+}
+
+func TestPoolConcurrentSelectAndAcquireWithRetry(t *testing.T) {
+	// This test ensures that concurrent access with retries eventually succeeds
+	// for all goroutines, proving no spurious failures from the race condition
+	pool, err := NewPoolWithConfig(PoolConfig{
+		Backends: []Backend{
+			{Addr: "tcp://backend-1:1234", Arch: "x86_64", MaxJobs: 4},
+			{Addr: "tcp://backend-2:1234", Arch: "x86_64", MaxJobs: 4},
+		},
+	})
+	require.NoError(t, err)
+
+	const totalJobs = 50
+	const holdTime = 5 * time.Millisecond
+	const maxRetries = 100
+
+	var wg sync.WaitGroup
+	var completed atomic.Int32
+	var totalRetries atomic.Int32
+
+	// All 50 jobs should eventually complete with retries
+	for i := 0; i < totalJobs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			var backend *Backend
+			var err error
+			retries := 0
+
+			// Retry until we get a slot
+			for retries < maxRetries {
+				backend, err = pool.SelectAndAcquire("x86_64", nil)
+				if err == nil {
+					break
+				}
+				retries++
+				totalRetries.Add(1)
+				time.Sleep(time.Millisecond) // Brief backoff
+			}
+
+			require.NoError(t, err, "should eventually acquire a slot")
+			require.NotNil(t, backend)
+
+			// Simulate work
+			time.Sleep(holdTime)
+			pool.Release(backend.Addr, true)
+			completed.Add(1)
+		}()
+	}
+
+	wg.Wait()
+
+	// All jobs should complete
+	require.Equal(t, int32(totalJobs), completed.Load(), "all jobs should complete")
+
+	// Verify pool is clean
+	status := pool.Status()
+	for _, s := range status {
+		require.Equal(t, 0, s.ActiveJobs, "backend %s should have no active jobs", s.Addr)
+	}
+
+	t.Logf("completed: %d, total retries: %d", completed.Load(), totalRetries.Load())
+}
+
+func TestPoolTotalCapacity(t *testing.T) {
+	pool, err := NewPoolWithConfig(PoolConfig{
+		Backends: []Backend{
+			{Addr: "tcp://backend-1:1234", Arch: "x86_64", MaxJobs: 8},
+			{Addr: "tcp://backend-2:1234", Arch: "x86_64", MaxJobs: 4},
+			{Addr: "tcp://backend-3:1234", Arch: "aarch64", MaxJobs: 0}, // Uses default
+		},
+		DefaultMaxJobs: 2,
+	})
+	require.NoError(t, err)
+
+	// Total should be 8 + 4 + 2 (default) = 14
+	require.Equal(t, 14, pool.TotalCapacity())
 }
