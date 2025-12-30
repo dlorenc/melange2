@@ -27,6 +27,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// Default eviction configuration.
+const (
+	// DefaultMaxCompletedBuilds is the maximum number of completed builds to retain.
+	DefaultMaxCompletedBuilds = 1000
+	// DefaultBuildTTL is the time after which completed builds are eligible for eviction.
+	DefaultBuildTTL = 24 * time.Hour
+	// DefaultEvictionInterval is how often the eviction check runs.
+	DefaultEvictionInterval = 5 * time.Minute
+)
+
 // BuildStore defines the interface for build storage.
 type BuildStore interface {
 	// CreateBuild creates a new multi-package build from DAG nodes.
@@ -50,17 +60,179 @@ type BuildStore interface {
 	UpdatePackageJob(ctx context.Context, buildID string, pkg *types.PackageJob) error
 }
 
+// MemoryBuildStoreConfig configures the in-memory build store.
+type MemoryBuildStoreConfig struct {
+	// MaxCompletedBuilds is the maximum number of completed builds to retain.
+	// Oldest completed builds are evicted first. 0 means no limit.
+	MaxCompletedBuilds int
+	// BuildTTL is the time after which completed builds are eligible for eviction.
+	// 0 means no TTL-based eviction.
+	BuildTTL time.Duration
+	// EvictionInterval is how often the eviction check runs.
+	// 0 means no background eviction (only on-demand).
+	EvictionInterval time.Duration
+}
+
 // MemoryBuildStore is an in-memory implementation of BuildStore.
 type MemoryBuildStore struct {
 	mu     sync.RWMutex
 	builds map[string]*types.Build
+	config MemoryBuildStoreConfig
+
+	// For background eviction
+	stopCh chan struct{}
+	doneCh chan struct{}
 }
 
-// NewMemoryBuildStore creates a new in-memory build store.
-func NewMemoryBuildStore() *MemoryBuildStore {
-	return &MemoryBuildStore{
-		builds: make(map[string]*types.Build),
+// MemoryBuildStoreOption configures a MemoryBuildStore.
+type MemoryBuildStoreOption func(*MemoryBuildStore)
+
+// WithMaxCompletedBuilds sets the maximum number of completed builds to retain.
+func WithMaxCompletedBuilds(n int) MemoryBuildStoreOption {
+	return func(s *MemoryBuildStore) {
+		s.config.MaxCompletedBuilds = n
 	}
+}
+
+// WithBuildTTL sets the TTL for completed builds.
+func WithBuildTTL(ttl time.Duration) MemoryBuildStoreOption {
+	return func(s *MemoryBuildStore) {
+		s.config.BuildTTL = ttl
+	}
+}
+
+// WithEvictionInterval sets the interval for background eviction.
+func WithEvictionInterval(interval time.Duration) MemoryBuildStoreOption {
+	return func(s *MemoryBuildStore) {
+		s.config.EvictionInterval = interval
+	}
+}
+
+// NewMemoryBuildStore creates a new in-memory build store with default settings.
+func NewMemoryBuildStore(opts ...MemoryBuildStoreOption) *MemoryBuildStore {
+	s := &MemoryBuildStore{
+		builds: make(map[string]*types.Build),
+		config: MemoryBuildStoreConfig{
+			MaxCompletedBuilds: DefaultMaxCompletedBuilds,
+			BuildTTL:           DefaultBuildTTL,
+			EvictionInterval:   DefaultEvictionInterval,
+		},
+		stopCh: make(chan struct{}),
+		doneCh: make(chan struct{}),
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	// Start background eviction if interval is set
+	if s.config.EvictionInterval > 0 {
+		go s.evictionLoop()
+	} else {
+		close(s.doneCh) // No background loop
+	}
+
+	return s
+}
+
+// Close stops the background eviction loop.
+func (s *MemoryBuildStore) Close() {
+	close(s.stopCh)
+	<-s.doneCh
+}
+
+// evictionLoop runs periodic eviction of old builds.
+func (s *MemoryBuildStore) evictionLoop() {
+	defer close(s.doneCh)
+
+	ticker := time.NewTicker(s.config.EvictionInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+			s.evictOldBuilds()
+		}
+	}
+}
+
+// evictOldBuilds removes completed builds that exceed limits or TTL.
+func (s *MemoryBuildStore) evictOldBuilds() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+
+	// Collect completed builds with their completion time
+	type completedBuild struct {
+		id         string
+		finishedAt time.Time
+	}
+	var completed []completedBuild
+
+	for id, build := range s.builds {
+		if !isTerminalStatus(build.Status) {
+			continue
+		}
+
+		finishedAt := build.CreatedAt // Fallback
+		if build.FinishedAt != nil {
+			finishedAt = *build.FinishedAt
+		}
+
+		// Check TTL first
+		if s.config.BuildTTL > 0 && now.Sub(finishedAt) > s.config.BuildTTL {
+			delete(s.builds, id)
+			continue
+		}
+
+		completed = append(completed, completedBuild{
+			id:         id,
+			finishedAt: finishedAt,
+		})
+	}
+
+	// Check count limit
+	if s.config.MaxCompletedBuilds > 0 && len(completed) > s.config.MaxCompletedBuilds {
+		// Sort by finishedAt (oldest first)
+		sort.Slice(completed, func(i, j int) bool {
+			return completed[i].finishedAt.Before(completed[j].finishedAt)
+		})
+
+		// Evict oldest builds exceeding the limit
+		toEvict := len(completed) - s.config.MaxCompletedBuilds
+		for i := 0; i < toEvict; i++ {
+			delete(s.builds, completed[i].id)
+		}
+	}
+}
+
+// isTerminalStatus returns true if the build is in a terminal state.
+func isTerminalStatus(status types.BuildStatus) bool {
+	switch status {
+	case types.BuildStatusSuccess, types.BuildStatusFailed, types.BuildStatusPartial:
+		return true
+	default:
+		return false
+	}
+}
+
+// Stats returns current store statistics.
+func (s *MemoryBuildStore) Stats() (total, active, completed int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, build := range s.builds {
+		total++
+		if isTerminalStatus(build.Status) {
+			completed++
+		} else {
+			active++
+		}
+	}
+	return
 }
 
 // CreateBuild creates a new multi-package build.

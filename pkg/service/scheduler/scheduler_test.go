@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"runtime"
 	"testing"
 	"time"
 
@@ -151,10 +150,12 @@ func TestNew(t *testing.T) {
 		assert.Equal(t, "/var/lib/melange/output", s.config.OutputDir)
 	})
 
-	t.Run("applies default max parallel", func(t *testing.T) {
+	t.Run("applies default max parallel from pool capacity", func(t *testing.T) {
+		// newTestScheduler creates a pool with 1 backend, DefaultMaxJobs=4
+		// So total capacity is 4, which should be the default MaxParallel
 		s := newTestScheduler(t, Config{})
-		assert.Equal(t, runtime.NumCPU(), s.config.MaxParallel)
-		assert.Equal(t, runtime.NumCPU(), cap(s.sem))
+		assert.Equal(t, 4, s.config.MaxParallel) // Pool capacity (1 backend * 4 jobs)
+		assert.Equal(t, 4, cap(s.sem))
 	})
 
 	t.Run("respects custom poll interval", func(t *testing.T) {

@@ -267,9 +267,110 @@ func (p *Pool) Select(arch string, selector map[string]string) (*Backend, error)
 	return &result, nil
 }
 
+// SelectAndAcquire atomically selects a backend and acquires a slot.
+// This eliminates the race condition between Select() and Acquire().
+// Returns the backend if successful, or an error if no backend is available.
+func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backend, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	now := time.Now()
+
+	// Try backends in load order, attempting to acquire atomically
+	type candidate struct {
+		backend *Backend
+		state   *backendState
+		maxJobs int
+		load    float64
+	}
+
+	var candidates []candidate
+
+	for i := range p.backends {
+		b := &p.backends[i]
+
+		// Filter by architecture
+		if b.Arch != arch {
+			continue
+		}
+
+		// Filter by labels
+		if !matchesSelector(b.Labels, selector) {
+			continue
+		}
+
+		state := p.state[b.Addr]
+		if state == nil {
+			continue
+		}
+
+		// Check circuit breaker
+		if state.circuitOpen.Load() {
+			state.mu.Lock()
+			lastFailure := state.lastFailure
+			state.mu.Unlock()
+
+			if now.Sub(lastFailure) < p.recoveryTimeout {
+				continue
+			}
+		}
+
+		maxJobs := b.MaxJobs
+		if maxJobs == 0 {
+			maxJobs = p.defaultMaxJobs
+		}
+
+		active := int(state.activeJobs.Load())
+		if active >= maxJobs {
+			continue
+		}
+
+		load := float64(active) / float64(maxJobs)
+		candidates = append(candidates, candidate{
+			backend: b,
+			state:   state,
+			maxJobs: maxJobs,
+			load:    load,
+		})
+	}
+
+	// Sort by load (least loaded first) and try to acquire
+	for len(candidates) > 0 {
+		// Find the least loaded candidate
+		bestIdx := 0
+		for i := 1; i < len(candidates); i++ {
+			if candidates[i].load < candidates[bestIdx].load {
+				bestIdx = i
+			}
+		}
+
+		c := candidates[bestIdx]
+
+		// Try to atomically acquire a slot
+		for {
+			current := c.state.activeJobs.Load()
+			if int(current) >= c.maxJobs {
+				// Backend filled up, remove from candidates and try next
+				break
+			}
+			if c.state.activeJobs.CompareAndSwap(current, current+1) {
+				// Successfully acquired
+				result := *c.backend
+				return &result, nil
+			}
+			// CAS failed, retry
+		}
+
+		// Remove this candidate and try the next one
+		candidates = append(candidates[:bestIdx], candidates[bestIdx+1:]...)
+	}
+
+	return nil, ErrNoAvailableBackend
+}
+
 // Acquire increments the active job count for a backend.
 // Returns true if a slot was acquired, false if the backend is at capacity.
-// This should be called after Select() and before starting a job.
+// Deprecated: Use SelectAndAcquire() instead to avoid race conditions.
 func (p *Pool) Acquire(addr string) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -444,6 +545,23 @@ func (p *Pool) Add(backend Backend) error {
 	p.state[backend.Addr] = &backendState{}
 
 	return nil
+}
+
+// TotalCapacity returns the total job capacity across all backends.
+// This is useful for configuring scheduler parallelism.
+func (p *Pool) TotalCapacity() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	total := 0
+	for _, b := range p.backends {
+		maxJobs := b.MaxJobs
+		if maxJobs == 0 {
+			maxJobs = p.defaultMaxJobs
+		}
+		total += maxJobs
+	}
+	return total
 }
 
 // Remove removes a backend from the pool by its address.

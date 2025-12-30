@@ -78,7 +78,12 @@ func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buil
 		config.OutputDir = "/var/lib/melange/output"
 	}
 	if config.MaxParallel == 0 {
-		config.MaxParallel = runtime.NumCPU()
+		// Default to pool's total capacity for optimal throughput.
+		// Falls back to NumCPU if pool capacity is somehow 0.
+		config.MaxParallel = pool.TotalCapacity()
+		if config.MaxParallel == 0 {
+			config.MaxParallel = runtime.NumCPU()
+		}
 	}
 	return &Scheduler{
 		buildStore:   buildStore,
@@ -338,16 +343,10 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	}
 	targetArch := apko_types.ParseArchitecture(arch)
 
-	// Select a backend from the pool
-	backend, err := s.pool.Select(arch, spec.BackendSelector)
+	// Atomically select and acquire a backend slot
+	backend, err := s.pool.SelectAndAcquire(arch, spec.BackendSelector)
 	if err != nil {
 		return fmt.Errorf("selecting backend: %w", err)
-	}
-
-	// Acquire a slot on the selected backend
-	if !s.pool.Acquire(backend.Addr) {
-		// Race condition - backend reached capacity between Select and Acquire
-		return fmt.Errorf("acquiring backend slot: %w", buildkit.ErrBackendAtCapacity)
 	}
 
 	// Track build success for circuit breaker
