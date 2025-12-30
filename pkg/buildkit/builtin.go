@@ -264,6 +264,10 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 		deleteFetch = "false"
 	}
 
+	// Get the basename from the URI for the downloaded filename
+	// This matches the original fetch.yaml behavior: bn=$(basename ${{inputs.uri}})
+	basename := filepath.Base(uri)
+
 	// Build HTTP options
 	var httpOpts []llb.HTTPOption
 
@@ -273,8 +277,8 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 	// Set ownership
 	httpOpts = append(httpOpts, llb.Chown(BuildUserUID, BuildUserGID))
 
-	// Set a fixed filename for the downloaded file
-	httpOpts = append(httpOpts, llb.Filename("download"))
+	// Set the filename to the original basename from the URI
+	httpOpts = append(httpOpts, llb.Filename(basename))
 
 	// Custom name for progress display
 	httpOpts = append(httpOpts, llb.WithCustomNamef("[fetch] download %s", uri))
@@ -288,18 +292,20 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 		destPath = filepath.Join(DefaultWorkDir, destPath)
 	}
 
-	// Copy the downloaded file to a temp location in the workspace
-	// llb.HTTP with Filename("download") places the file at /download
-	downloadPath := filepath.Join(DefaultWorkDir, ".melange-fetch-temp")
-	state := base.File(
-		llb.Copy(httpState, "/download", downloadPath, &llb.CopyInfo{
-			ChownOpt: &llb.ChownOpt{
-				User:  &llb.UserOpt{UID: BuildUserUID},
-				Group: &llb.UserOpt{UID: BuildUserGID},
-			},
-		}),
+	// The downloaded file path in the workspace (matches original fetch.yaml behavior)
+	downloadPath := filepath.Join(DefaultWorkDir, basename)
+
+	// Mount the HTTP source and copy the file to the workspace in a single Run command.
+	// This approach is more reliable than llb.File(llb.Copy(...)) because it ensures
+	// the file operation happens within the context of the existing filesystem.
+	state := base.Run(
+		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf("mkdir -p %s && cp /mnt/fetch/%s %s",
+			DefaultWorkDir, basename, downloadPath)}),
+		llb.AddMount("/mnt/fetch", httpState, llb.Readonly),
+		llb.Dir(DefaultWorkDir),
+		llb.User(BuildUserName),
 		llb.WithCustomName("[fetch] stage download"),
-	)
+	).Root()
 
 	// Extract if requested
 	if extract == "true" {
@@ -316,27 +322,32 @@ mkdir -p %s
 			llb.User(BuildUserName),
 			llb.WithCustomNamef("[fetch] extract to %s", destPath),
 		).Root()
-	} else {
-		// Just copy the file to the destination
-		state = state.Run(
-			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
-mkdir -p %s
-cp %s %s/
-`, destPath, downloadPath, destPath)}),
-			llb.Dir(DefaultWorkDir),
-			llb.User(BuildUserName),
-			llb.WithCustomNamef("[fetch] copy to %s", destPath),
-		).Root()
-	}
 
-	// Delete the temp file only if explicitly requested (matches original fetch.yaml behavior)
-	if deleteFetch == "true" {
-		state = state.Run(
-			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf("rm -f %s", downloadPath)}),
-			llb.Dir(DefaultWorkDir),
-			llb.User(BuildUserName),
-			llb.WithCustomName("[fetch] cleanup"),
-		).Root()
+		// When extracting, delete the archive unless delete is explicitly false
+		// This matches the original behavior where the tarball is consumed
+		if deleteFetch != "false" {
+			state = state.Run(
+				llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf("rm -f %s", downloadPath)}),
+				llb.Dir(DefaultWorkDir),
+				llb.User(BuildUserName),
+				llb.WithCustomName("[fetch] cleanup"),
+			).Root()
+		}
+	} else {
+		// When not extracting, the file stays in the workspace with its original name
+		// If directory is different from the default, move the file there
+		if destPath != DefaultWorkDir {
+			state = state.Run(
+				llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
+mkdir -p %s
+mv %s %s/
+`, destPath, downloadPath, destPath)}),
+				llb.Dir(DefaultWorkDir),
+				llb.User(BuildUserName),
+				llb.WithCustomNamef("[fetch] move to %s", destPath),
+			).Root()
+		}
+		// If directory is the default (.), the file is already in place with correct name
 	}
 
 	return state, nil
