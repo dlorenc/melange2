@@ -368,7 +368,7 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 				return fmt.Errorf("creating source dir for %s: %w", filePath, err)
 			}
-			if err := os.WriteFile(fullPath, []byte(fileContent), 0644); err != nil {
+			if err := os.WriteFile(fullPath, []byte(fileContent), 0600); err != nil {
 				return fmt.Errorf("writing source file %s: %w", filePath, err)
 			}
 		}

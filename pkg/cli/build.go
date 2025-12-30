@@ -306,9 +306,7 @@ func detectConventionalSourceDir(configPath string) string {
 		} `yaml:"package"`
 	}
 
-	if err := parseYAMLPackageName(data, &cfg.Package.Name); err != nil {
-		return ""
-	}
+	parseYAMLPackageName(data, &cfg.Package.Name)
 
 	if cfg.Package.Name == "" {
 		return ""
@@ -325,7 +323,7 @@ func detectConventionalSourceDir(configPath string) string {
 
 // parseYAMLPackageName extracts just the package.name from YAML data
 // using simple string parsing to avoid YAML import issues.
-func parseYAMLPackageName(data []byte, name *string) error {
+func parseYAMLPackageName(data []byte, name *string) {
 	// Simple line-by-line parsing for package.name
 	lines := strings.Split(string(data), "\n")
 	inPackage := false
@@ -342,7 +340,7 @@ func parseYAMLPackageName(data []byte, name *string) error {
 				*name = strings.TrimSpace(parts[1])
 				// Remove quotes if present
 				*name = strings.Trim(*name, "\"'")
-				return nil
+				return
 			}
 		}
 		// If we hit another top-level key, we've left the package section
@@ -352,7 +350,6 @@ func parseYAMLPackageName(data []byte, name *string) error {
 			}
 		}
 	}
-	return nil
 }
 
 func buildCmd() *cobra.Command {
