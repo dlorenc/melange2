@@ -133,11 +133,13 @@ func (p *ProgressWriter) processStatus(log *clog.Logger, status *client.SolveSta
 	}
 
 	// Process logs (stdout/stderr from build steps)
-	if p.showLogs {
-		for _, l := range status.Logs {
-			state, exists := p.vertices[l.Vertex]
-			if exists {
-				state.logs = append(state.logs, l.Data...)
+	// Always accumulate logs so we can show them for failed steps
+	for _, l := range status.Logs {
+		state, exists := p.vertices[l.Vertex]
+		if exists {
+			state.logs = append(state.logs, l.Data...)
+			// Only print logs in real-time if showLogs is enabled
+			if p.showLogs {
 				p.printLog(log, state, l.Data)
 			}
 		}
@@ -185,6 +187,14 @@ func (p *ProgressWriter) printVertexCompleted(log *clog.Logger, state *vertexSta
 
 	if p.mode == ProgressModePlain || p.mode == ProgressModeAuto {
 		log.Infof("  -> %s%s [%s]", name, duration, status)
+
+		// Always print logs for failed steps, even if showLogs is false
+		// This helps users diagnose build failures without needing --debug
+		if state.error != "" && len(state.logs) > 0 && !p.showLogs {
+			log.Infof("")
+			log.Infof("  Error output from failed step:")
+			p.printLog(log, state, state.logs)
+		}
 	}
 }
 
@@ -192,7 +202,11 @@ func (p *ProgressWriter) printLog(log *clog.Logger, _ *vertexState, data []byte)
 	if p.mode == ProgressModeQuiet {
 		return
 	}
+	p.printLogUnlocked(log, data)
+}
 
+// printLogUnlocked prints log data without checking mode (for use when lock is held).
+func (p *ProgressWriter) printLogUnlocked(log *clog.Logger, data []byte) {
 	// Print each line with a prefix
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
@@ -213,11 +227,30 @@ func (p *ProgressWriter) printSummary(log *clog.Logger) {
 
 	elapsed := time.Since(p.startTime)
 
-	// Count errors
+	// Collect failed steps and count errors
 	errors := 0
-	for _, state := range p.vertices {
+	var failedSteps []*vertexState
+	for _, d := range p.vertexOrder {
+		state := p.vertices[d]
 		if state.error != "" {
 			errors++
+			if len(state.logs) > 0 {
+				failedSteps = append(failedSteps, state)
+			}
+		}
+	}
+
+	// Print logs from failed steps (catches any logs that came in after completion)
+	if len(failedSteps) > 0 && !p.showLogs {
+		log.Infof("")
+		log.Infof("Failed step output:")
+		for _, state := range failedSteps {
+			name := p.formatName(state.name)
+			if name != "" {
+				log.Infof("")
+				log.Infof("  Step: %s", name)
+			}
+			p.printLogUnlocked(log, state.logs)
 		}
 	}
 
