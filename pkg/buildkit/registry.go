@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -147,7 +148,8 @@ func isNotFound(err error) bool {
 		return false
 	}
 	// Check for transport error with 404 status
-	if terr, ok := err.(*transport.Error); ok {
+	var terr *transport.Error
+	if errors.As(err, &terr) {
 		return terr.StatusCode == http.StatusNotFound
 	}
 	return false
