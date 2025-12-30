@@ -187,6 +187,27 @@ done
 	return state, nil
 }
 
+// getCompressionFlag returns the tar flag needed for the given URI based on file extension.
+// Returns empty string if no special flag is needed (e.g., for .tar or unknown formats).
+func getCompressionFlag(uri string) string {
+	switch {
+	case filepath.Ext(uri) == ".bz2" || filepath.Ext(uri) == ".tbz2" || filepath.Ext(uri) == ".tbz":
+		return "-j"
+	case filepath.Ext(uri) == ".gz" || filepath.Ext(uri) == ".tgz":
+		return "-z"
+	case filepath.Ext(uri) == ".xz" || filepath.Ext(uri) == ".txz":
+		return "-J"
+	case filepath.Ext(uri) == ".zst" || filepath.Ext(uri) == ".tzst":
+		return "--zstd"
+	case filepath.Ext(uri) == ".lz":
+		return "--lzip"
+	case filepath.Ext(uri) == ".lzma" || filepath.Ext(uri) == ".tlz":
+		return "--lzma"
+	default:
+		return ""
+	}
+}
+
 // buildFetch implements the fetch pipeline using native LLB operations.
 // This uses BuildKit's llb.HTTP() source operation for efficient, cached downloads.
 //
@@ -252,6 +273,9 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 	// Set ownership
 	httpOpts = append(httpOpts, llb.Chown(BuildUserUID, BuildUserGID))
 
+	// Set a fixed filename for the downloaded file
+	httpOpts = append(httpOpts, llb.Filename("download"))
+
 	// Custom name for progress display
 	httpOpts = append(httpOpts, llb.WithCustomNamef("[fetch] download %s", uri))
 
@@ -265,10 +289,10 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 	}
 
 	// Copy the downloaded file to a temp location in the workspace
-	// The file will be at /fetched-file in the httpState
+	// llb.HTTP with Filename("download") places the file at /download
 	downloadPath := filepath.Join(DefaultWorkDir, ".melange-fetch-temp")
 	state := base.File(
-		llb.Copy(httpState, "/", downloadPath, &llb.CopyInfo{
+		llb.Copy(httpState, "/download", downloadPath, &llb.CopyInfo{
 			ChownOpt: &llb.ChownOpt{
 				User:  &llb.UserOpt{UID: BuildUserUID},
 				Group: &llb.UserOpt{UID: BuildUserGID},
@@ -280,12 +304,14 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 	// Extract if requested
 	if extract == "true" {
 		stripInt, _ := strconv.Atoi(stripComponents)
+		compressionFlag := getCompressionFlag(uri)
+		tarCmd := fmt.Sprintf("tar -xf %s %s --strip-components=%d --no-same-owner -C %s",
+			downloadPath, compressionFlag, stripInt, destPath)
 		state = state.Run(
 			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
 mkdir -p %s
-tar -x --strip-components=%d --no-same-owner -C %s -f %s
-echo "[fetch] extracted to %s"
-`, destPath, stripInt, destPath, downloadPath, destPath)}),
+%s
+`, destPath, tarCmd)}),
 			llb.Dir(DefaultWorkDir),
 			llb.User(BuildUserName),
 			llb.WithCustomNamef("[fetch] extract to %s", destPath),
