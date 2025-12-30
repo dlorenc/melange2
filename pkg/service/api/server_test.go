@@ -406,8 +406,10 @@ func TestCreateBuild(t *testing.T) {
 		require.Contains(t, w.Body.String(), "invalid request body")
 	})
 
-	t.Run("create build with cyclic dependency", func(t *testing.T) {
+	t.Run("create build with cyclic dependency in dag mode", func(t *testing.T) {
+		// Cyclic dependencies are only rejected in DAG mode (flat mode ignores dependencies)
 		body := `{
+			"mode": "dag",
 			"configs": [
 				"package:\n  name: pkg-a\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-b\n",
 				"package:\n  name: pkg-b\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-a\n"
@@ -420,6 +422,23 @@ func TestCreateBuild(t *testing.T) {
 
 		require.Equal(t, http.StatusBadRequest, w.Code)
 		require.Contains(t, w.Body.String(), "dependency error")
+	})
+
+	t.Run("create build with cyclic dependency in flat mode succeeds", func(t *testing.T) {
+		// Flat mode ignores dependencies, so cyclic deps are allowed
+		body := `{
+			"mode": "flat",
+			"configs": [
+				"package:\n  name: pkg-c\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-d\n",
+				"package:\n  name: pkg-d\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-c\n"
+			]
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code)
 	})
 }
 

@@ -289,7 +289,15 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int("config_count", len(configs)))
 
-	// Parse configs and build DAG
+	// Determine build mode (default to flat)
+	mode := req.Mode
+	if mode == "" {
+		mode = types.BuildModeFlat
+	}
+
+	span.SetAttributes(attribute.String("build_mode", string(mode)))
+
+	// Parse configs to extract package info
 	dagTimer := tracing.NewTimer(ctx, "build_dag")
 	nodes, err := s.parseConfigDependencies(configs)
 	if err != nil {
@@ -297,25 +305,41 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the DAG
-	graph := dag.NewGraph()
-	for _, node := range nodes {
-		if err := graph.AddNode(node.Name, node.ConfigYAML, node.Dependencies); err != nil {
-			http.Error(w, "failed to build dependency graph: "+err.Error(), http.StatusBadRequest)
+	var sorted []dag.Node
+
+	if mode == types.BuildModeDAG {
+		// Build the DAG and topologically sort
+		graph := dag.NewGraph()
+		for _, node := range nodes {
+			if err := graph.AddNode(node.Name, node.ConfigYAML, node.Dependencies); err != nil {
+				http.Error(w, "failed to build dependency graph: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Topological sort
+		sorted, err = graph.TopologicalSort()
+		if err != nil {
+			http.Error(w, "dependency error: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		log.Infof("created build DAG with %d packages (dag mode)", len(sorted))
+	} else {
+		// Flat mode: use nodes as-is without dependency ordering
+		// Clear dependencies since they won't be enforced
+		sorted = make([]dag.Node, len(nodes))
+		for i, node := range nodes {
+			sorted[i] = dag.Node{
+				Name:         node.Name,
+				ConfigYAML:   node.ConfigYAML,
+				Dependencies: nil, // Don't track dependencies in flat mode
+			}
+		}
+		log.Infof("created build with %d packages (flat mode)", len(sorted))
 	}
-
-	// Topological sort
-	sorted, err := graph.TopologicalSort()
 	dagTimer.Stop()
-	if err != nil {
-		http.Error(w, "dependency error: "+err.Error(), http.StatusBadRequest)
-		return
-	}
 
 	span.SetAttributes(attribute.Int("package_count", len(sorted)))
-	log.Infof("created build DAG with %d packages", len(sorted))
 
 	// Create build spec
 	spec := types.BuildSpec{
@@ -327,6 +351,7 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 		BackendSelector: req.BackendSelector,
 		WithTest:        req.WithTest,
 		Debug:           req.Debug,
+		Mode:            mode,
 	}
 
 	// Create build in store

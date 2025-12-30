@@ -50,6 +50,11 @@ type CreateBuildRequest struct {
 	// This allows including local source directories (e.g., $pkgname/)
 	// that will be available in the build workspace.
 	SourceFiles map[string]map[string]string `json:"source_files,omitempty"`
+
+	// Mode specifies how packages are scheduled for building.
+	// "flat" (default) builds all packages in parallel without dependency ordering.
+	// "dag" builds packages in dependency order.
+	Mode BuildMode `json:"mode,omitempty"`
 }
 
 // CreateBuildResponse is the response body for creating a build.
@@ -57,6 +62,21 @@ type CreateBuildResponse struct {
 	ID       string   `json:"id"`
 	Packages []string `json:"packages"` // Package names in build order
 }
+
+// BuildMode specifies how packages are scheduled for building.
+type BuildMode string
+
+const (
+	// BuildModeFlat builds all packages in parallel without dependency ordering.
+	// This is useful for full rebuilds where all dependencies are already available
+	// in external repositories.
+	BuildModeFlat BuildMode = "flat"
+
+	// BuildModeDAG builds packages in dependency order, waiting for in-graph
+	// dependencies to complete before building dependent packages.
+	// Note: This mode requires incremental APKINDEX support to be fully effective.
+	BuildModeDAG BuildMode = "dag"
+)
 
 // BuildStatus represents the overall status of a build.
 type BuildStatus string
@@ -136,6 +156,11 @@ type BuildSpec struct {
 
 	// Debug enables debug logging.
 	Debug bool `json:"debug,omitempty"`
+
+	// Mode specifies how packages are scheduled for building.
+	// "flat" (default) builds all packages in parallel without dependency ordering.
+	// "dag" builds packages in dependency order.
+	Mode BuildMode `json:"mode,omitempty"`
 }
 
 // GitSource specifies a git repository source for package configs.

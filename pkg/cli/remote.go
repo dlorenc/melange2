@@ -55,6 +55,7 @@ func remoteSubmitCmd() *cobra.Command {
 	var debug bool
 	var wait bool
 	var backendSelector []string
+	var mode string
 	// Git source options
 	var gitRepo string
 	var gitRef string
@@ -66,13 +67,16 @@ func remoteSubmitCmd() *cobra.Command {
 		Short: "Submit build(s) to the server",
 		Long: `Submit package configuration file(s) for building on a remote melange-server.
 
-Supports three modes:
+Supports three input modes:
 1. Single config: melange remote submit config.yaml
 2. Multiple configs: melange remote submit pkg1.yaml pkg2.yaml pkg3.yaml
 3. Git source: melange remote submit --git-repo https://github.com/org/packages
 
-For multi-package builds, packages are built in dependency order based on
-environment.contents.packages declarations.
+Build scheduling modes:
+- flat (default): Build all packages in parallel without dependency ordering.
+  Use this for full rebuilds where dependencies are in external repositories.
+- dag: Build packages in dependency order based on environment.contents.packages.
+  Note: DAG mode requires incremental APKINDEX support to be fully effective.
 
 Convention-based defaults (automatically included if present):
 - Pipelines from ./pipelines/ directory
@@ -80,8 +84,11 @@ Convention-based defaults (automatically included if present):
 		Example: `  # Submit a single build
   melange remote submit mypackage.yaml --server http://localhost:8080
 
-  # Submit multiple packages (builds in dependency order)
+  # Submit multiple packages (flat mode - all in parallel)
   melange remote submit lib-a.yaml lib-b.yaml app.yaml
+
+  # Submit with DAG-based dependency ordering
+  melange remote submit lib-a.yaml lib-b.yaml app.yaml --mode dag
 
   # Submit from git repository
   melange remote submit --git-repo https://github.com/wolfi-dev/os --git-pattern "*.yaml"
@@ -105,6 +112,17 @@ Convention-based defaults (automatically included if present):
 			// Parse backend selector
 			selector := parseSelector(backendSelector)
 
+			// Parse build mode
+			var buildMode types.BuildMode
+			switch mode {
+			case "", "flat":
+				buildMode = types.BuildModeFlat
+			case "dag":
+				buildMode = types.BuildModeDAG
+			default:
+				return fmt.Errorf("invalid mode %q: must be 'flat' or 'dag'", mode)
+			}
+
 			c := client.New(serverURL)
 
 			// Build the request based on input mode
@@ -114,6 +132,7 @@ Convention-based defaults (automatically included if present):
 				BackendSelector: selector,
 				WithTest:        withTest,
 				Debug:           debug,
+				Mode:            buildMode,
 			}
 
 			// Determine mode: git source, multi-config, or single config
@@ -202,6 +221,7 @@ Convention-based defaults (automatically included if present):
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for build to complete")
 	cmd.Flags().StringSliceVar(&backendSelector, "backend-selector", nil, "backend label selector (key=value)")
+	cmd.Flags().StringVar(&mode, "mode", "flat", "build scheduling mode: 'flat' (parallel, no deps) or 'dag' (dependency order)")
 	// Git source options
 	cmd.Flags().StringVar(&gitRepo, "git-repo", "", "git repository URL for package configs")
 	cmd.Flags().StringVar(&gitRef, "git-ref", "", "git ref (branch/tag/commit) to checkout")
@@ -691,6 +711,10 @@ func printBuildDetails(build *types.Build) {
 	fmt.Printf("Build ID:   %s\n", build.ID)
 	fmt.Printf("Status:     %s\n", build.Status)
 	fmt.Printf("Created:    %s\n", build.CreatedAt.Format(time.RFC3339))
+
+	if build.Spec.Mode != "" {
+		fmt.Printf("Mode:       %s\n", build.Spec.Mode)
+	}
 
 	if build.Spec.Arch != "" {
 		fmt.Printf("Arch:       %s\n", build.Spec.Arch)
