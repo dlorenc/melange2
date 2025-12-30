@@ -284,7 +284,7 @@ func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backe
 		load    float64
 	}
 
-	var candidates []candidate
+	candidates := make([]candidate, 0, len(p.backends))
 
 	for i := range p.backends {
 		b := &p.backends[i]

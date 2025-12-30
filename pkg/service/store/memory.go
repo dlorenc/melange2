@@ -170,7 +170,7 @@ func (s *MemoryBuildStore) evictOldBuilds() {
 		id         string
 		finishedAt time.Time
 	}
-	var completed []completedBuild
+	completed := make([]completedBuild, 0, len(s.builds))
 
 	for id, build := range s.builds {
 		if !isTerminalStatus(build.Status) {
