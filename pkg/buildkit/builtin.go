@@ -78,11 +78,12 @@ func buildGitCheckout(base llb.State, p *config.Pipeline) (llb.State, error) {
 	branch := with["branch"]
 	expectedCommit := with["expected-commit"]
 
-	if tag != "" {
+	switch {
+	case tag != "":
 		ref = tag
-	} else if branch != "" {
+	case branch != "":
 		ref = branch
-	} else if expectedCommit != "" {
+	case expectedCommit != "":
 		ref = expectedCommit
 	}
 
