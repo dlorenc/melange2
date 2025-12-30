@@ -293,3 +293,427 @@ func TestHealthEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ok", resp["status"])
 }
+
+// Job API tests
+
+func TestCreateJob(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	t.Run("create valid job", func(t *testing.T) {
+		body := `{
+			"config_yaml": "package:\n  name: test-pkg\n  version: 1.0.0\n",
+			"arch": "x86_64",
+			"with_test": true
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var resp map[string]string
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		require.NotEmpty(t, resp["id"])
+	})
+
+	t.Run("create job with pipelines", func(t *testing.T) {
+		body := `{
+			"config_yaml": "package:\n  name: test-pkg\n  version: 1.0.0\n",
+			"pipelines": {
+				"autoconf/configure.yaml": "name: Configure\npipeline:\n  - runs: ./configure"
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code)
+	})
+
+	t.Run("create job missing config", func(t *testing.T) {
+		body := `{"arch": "x86_64"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "config_yaml is required")
+	})
+
+	t.Run("create job invalid json", func(t *testing.T) {
+		body := `{invalid}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "invalid request body")
+	})
+}
+
+func TestListJobs(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	t.Run("empty list", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var jobs []interface{}
+		err := json.NewDecoder(w.Body).Decode(&jobs)
+		require.NoError(t, err)
+		require.Empty(t, jobs)
+	})
+
+	t.Run("list with jobs", func(t *testing.T) {
+		// Create some jobs first
+		for i := 0; i < 3; i++ {
+			body := `{"config_yaml": "package:\n  name: test\n  version: 1.0.0\n"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			server.ServeHTTP(w, req)
+			require.Equal(t, http.StatusCreated, w.Code)
+		}
+
+		// List jobs
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var jobs []interface{}
+		err := json.NewDecoder(w.Body).Decode(&jobs)
+		require.NoError(t, err)
+		require.Len(t, jobs, 3)
+	})
+}
+
+func TestGetJob(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	// Create a job first
+	body := `{"config_yaml": "package:\n  name: test-pkg\n  version: 1.0.0\n"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	server.ServeHTTP(createW, createReq)
+	require.Equal(t, http.StatusCreated, createW.Code)
+
+	var createResp map[string]string
+	json.NewDecoder(createW.Body).Decode(&createResp)
+	jobID := createResp["id"]
+
+	t.Run("get existing job", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var job map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&job)
+		require.NoError(t, err)
+		require.Equal(t, jobID, job["id"])
+		require.Equal(t, "pending", job["status"])
+	})
+
+	t.Run("get non-existent job", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/non-existent", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("get job with empty id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "job ID required")
+	})
+
+	t.Run("method not allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs/"+jobID, nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}
+
+func TestJobsMethodNotAllowed(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// Build API tests
+
+func TestCreateBuild(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	t.Run("create build with multiple configs", func(t *testing.T) {
+		body := `{
+			"configs": [
+				"package:\n  name: pkg-a\n  version: 1.0.0\n",
+				"package:\n  name: pkg-b\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-a\n"
+			],
+			"arch": "x86_64"
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var resp map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		require.NotEmpty(t, resp["id"])
+		require.Contains(t, resp["id"], "bld-")
+
+		packages := resp["packages"].([]interface{})
+		require.Len(t, packages, 2)
+		// pkg-a should come before pkg-b due to dependency ordering
+		require.Equal(t, "pkg-a", packages[0])
+		require.Equal(t, "pkg-b", packages[1])
+	})
+
+	t.Run("create build via jobs endpoint with configs", func(t *testing.T) {
+		body := `{
+			"configs": [
+				"package:\n  name: lib-a\n  version: 1.0.0\n"
+			]
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		var resp map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		require.Contains(t, resp["id"], "bld-")
+	})
+
+	t.Run("create build missing configs", func(t *testing.T) {
+		body := `{"arch": "x86_64"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "either configs or git_source is required")
+	})
+
+	t.Run("create build empty configs", func(t *testing.T) {
+		body := `{"configs": []}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		// Empty configs array is treated as missing configs
+		require.Contains(t, w.Body.String(), "either configs or git_source is required")
+	})
+
+	t.Run("create build invalid config yaml", func(t *testing.T) {
+		body := `{"configs": ["invalid: yaml: content:"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "failed to parse configs")
+	})
+
+	t.Run("create build config missing package name", func(t *testing.T) {
+		body := `{"configs": ["version: 1.0.0\n"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "config missing package name")
+	})
+
+	t.Run("create build invalid json", func(t *testing.T) {
+		body := `{invalid}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "invalid request body")
+	})
+
+	t.Run("create build with cyclic dependency", func(t *testing.T) {
+		body := `{
+			"configs": [
+				"package:\n  name: pkg-a\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-b\n",
+				"package:\n  name: pkg-b\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-a\n"
+			]
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "dependency error")
+	})
+}
+
+func TestListBuilds(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	t.Run("empty list", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var builds []interface{}
+		err := json.NewDecoder(w.Body).Decode(&builds)
+		require.NoError(t, err)
+		require.Empty(t, builds)
+	})
+
+	t.Run("list with builds", func(t *testing.T) {
+		// Create some builds first
+		for i := 0; i < 2; i++ {
+			body := `{"configs": ["package:\n  name: test\n  version: 1.0.0\n"]}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			server.ServeHTTP(w, req)
+			require.Equal(t, http.StatusCreated, w.Code)
+		}
+
+		// List builds
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var builds []interface{}
+		err := json.NewDecoder(w.Body).Decode(&builds)
+		require.NoError(t, err)
+		require.Len(t, builds, 2)
+	})
+}
+
+func TestGetBuild(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	// Create a build first
+	body := `{"configs": ["package:\n  name: test-pkg\n  version: 1.0.0\n"]}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	server.ServeHTTP(createW, createReq)
+	require.Equal(t, http.StatusCreated, createW.Code)
+
+	var createResp map[string]interface{}
+	json.NewDecoder(createW.Body).Decode(&createResp)
+	buildID := createResp["id"].(string)
+
+	t.Run("get existing build", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/"+buildID, nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var build map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&build)
+		require.NoError(t, err)
+		require.Equal(t, buildID, build["id"])
+		require.Equal(t, "pending", build["status"])
+		require.NotNil(t, build["packages"])
+	})
+
+	t.Run("get non-existent build", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/non-existent", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("get build with empty id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "build ID required")
+	})
+
+	t.Run("method not allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/builds/"+buildID, nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}
+
+func TestBuildsMethodNotAllowed(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/builds", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
