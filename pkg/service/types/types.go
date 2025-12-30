@@ -19,74 +19,23 @@ import (
 	"time"
 )
 
-// JobStatus represents the current state of a job.
-type JobStatus string
-
-const (
-	JobStatusPending  JobStatus = "pending"
-	JobStatusRunning  JobStatus = "running"
-	JobStatusSuccess  JobStatus = "success"
-	JobStatusFailed   JobStatus = "failed"
-)
-
-// Job represents a build job.
-type Job struct {
-	ID         string     `json:"id"`
-	Status     JobStatus  `json:"status"`
-	Spec       JobSpec    `json:"spec"`
-	CreatedAt  time.Time  `json:"created_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	LogPath    string     `json:"log_path,omitempty"`
-	OutputPath string     `json:"output_path,omitempty"`
-
-	// Backend is the BuildKit backend that executed/is executing this job.
-	Backend *JobBackend `json:"backend,omitempty"`
-}
-
-// JobBackend contains information about the BuildKit backend used for a job.
-type JobBackend struct {
+// Backend contains information about the BuildKit backend used for a build.
+type Backend struct {
 	Addr   string            `json:"addr"`
 	Arch   string            `json:"arch"`
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-// JobSpec contains the specification for a build job.
-type JobSpec struct {
-	// ConfigYAML is the inline melange configuration.
-	ConfigYAML string `json:"config_yaml"`
-
-	// Pipelines is a map of pipeline paths to their YAML content.
-	// Keys should be relative paths like "test/docs.yaml" or "autoconf/configure.yaml".
-	// These pipelines are made available during the build.
-	Pipelines map[string]string `json:"pipelines,omitempty"`
-
-	// Arch is the target architecture (default: runtime arch).
-	Arch string `json:"arch,omitempty"`
-
-	// BackendSelector specifies label requirements for backend selection.
-	// All specified labels must match for a backend to be eligible.
-	// Example: {"tier": "high-memory", "sandbox": "privileged"}
-	BackendSelector map[string]string `json:"backend_selector,omitempty"`
-
-	// WithTest runs tests after build.
-	WithTest bool `json:"with_test,omitempty"`
-
-	// Debug enables debug logging.
-	Debug bool `json:"debug,omitempty"`
-}
-
-// CreateJobRequest is the request body for creating a job.
-// Supports single config (backward compatible), multiple configs, or git source.
-type CreateJobRequest struct {
-	// Single config (backward compatible)
+// CreateBuildRequest is the request body for creating a build.
+// Supports single config, multiple configs, or git source.
+type CreateBuildRequest struct {
+	// Single config - will create a build with one package
 	ConfigYAML string `json:"config_yaml,omitempty"`
 
-	// Multiple configs (new - triggers multi-package build)
+	// Multiple configs - creates a multi-package build
 	Configs []string `json:"configs,omitempty"`
 
-	// Git source (new - triggers multi-package build)
+	// Git source - clones repo and builds packages from it
 	GitSource *GitSource `json:"git_source,omitempty"`
 
 	// Common fields
@@ -97,12 +46,13 @@ type CreateJobRequest struct {
 	Debug           bool              `json:"debug,omitempty"`
 }
 
-// CreateJobResponse is the response body for creating a job.
-type CreateJobResponse struct {
-	ID string `json:"id"`
+// CreateBuildResponse is the response body for creating a build.
+type CreateBuildResponse struct {
+	ID       string   `json:"id"`
+	Packages []string `json:"packages"` // Package names in build order
 }
 
-// BuildStatus represents the overall status of a multi-package build.
+// BuildStatus represents the overall status of a build.
 type BuildStatus string
 
 const (
@@ -125,7 +75,7 @@ const (
 	PackageStatusSkipped PackageStatus = "skipped" // skipped due to dependency failure
 )
 
-// PackageJob represents a single package within a multi-package build.
+// PackageJob represents a single package within a build.
 type PackageJob struct {
 	Name         string            `json:"name"`
 	Status       PackageStatus     `json:"status"`
@@ -136,7 +86,7 @@ type PackageJob struct {
 	Error        string            `json:"error,omitempty"`
 	LogPath      string            `json:"log_path,omitempty"`
 	OutputPath   string            `json:"output_path,omitempty"`
-	Backend      *JobBackend       `json:"backend,omitempty"`
+	Backend      *Backend          `json:"backend,omitempty"`
 	Pipelines    map[string]string `json:"pipelines,omitempty"`
 }
 
@@ -188,10 +138,4 @@ type GitSource struct {
 
 	// Path is the subdirectory within the repo to search.
 	Path string `json:"path,omitempty"`
-}
-
-// CreateBuildResponse is the response body for creating a build.
-type CreateBuildResponse struct {
-	ID       string   `json:"id"`
-	Packages []string `json:"packages"` // Package names in build order
 }

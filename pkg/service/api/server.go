@@ -30,16 +30,14 @@ import (
 
 // Server is the HTTP API server.
 type Server struct {
-	store      store.JobStore
 	buildStore store.BuildStore
 	pool       *buildkit.Pool
 	mux        *http.ServeMux
 }
 
 // NewServer creates a new API server.
-func NewServer(jobStore store.JobStore, buildStore store.BuildStore, pool *buildkit.Pool) *Server {
+func NewServer(buildStore store.BuildStore, pool *buildkit.Pool) *Server {
 	s := &Server{
-		store:      jobStore,
 		buildStore: buildStore,
 		pool:       pool,
 		mux:        http.NewServeMux(),
@@ -49,8 +47,6 @@ func NewServer(jobStore store.JobStore, buildStore store.BuildStore, pool *build
 }
 
 func (s *Server) setupRoutes() {
-	s.mux.HandleFunc("/api/v1/jobs", s.handleJobs)
-	s.mux.HandleFunc("/api/v1/jobs/", s.handleJob)
 	s.mux.HandleFunc("/api/v1/builds", s.handleBuilds)
 	s.mux.HandleFunc("/api/v1/builds/", s.handleBuild)
 	s.mux.HandleFunc("/api/v1/backends", s.handleBackends)
@@ -170,102 +166,8 @@ func (s *Server) removeBackend(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleJobs handles POST /api/v1/jobs (create job) and GET /api/v1/jobs (list jobs).
-func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		s.createJob(w, r)
-	case http.MethodGet:
-		s.listJobs(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleJob handles GET /api/v1/jobs/:id.
-func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract job ID from path
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/jobs/")
-	if path == "" {
-		http.Error(w, "job ID required", http.StatusBadRequest)
-		return
-	}
-
-	job, err := s.store.Get(r.Context(), path)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(job)
-}
-
 // MaxBodySize is the maximum allowed request body size (10MB).
 const MaxBodySize = 10 << 20
-
-// createJob creates a new build job.
-// If the request contains multiple configs or a git source, it creates a multi-package build.
-func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
-	// Limit request body size to prevent OOM
-	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
-
-	var req types.CreateJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		if err.Error() == "http: request body too large" {
-			http.Error(w, "request body too large (max 10MB)", http.StatusRequestEntityTooLarge)
-			return
-		}
-		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Check if this is a multi-package build request
-	if len(req.Configs) > 0 || req.GitSource != nil {
-		s.createBuildFromRequest(w, r, req)
-		return
-	}
-
-	// Legacy single-config path
-	if req.ConfigYAML == "" {
-		http.Error(w, "config_yaml is required", http.StatusBadRequest)
-		return
-	}
-
-	job, err := s.store.Create(r.Context(), types.JobSpec{
-		ConfigYAML:      req.ConfigYAML,
-		Pipelines:       req.Pipelines,
-		Arch:            req.Arch,
-		BackendSelector: req.BackendSelector,
-		WithTest:        req.WithTest,
-		Debug:           req.Debug,
-	})
-	if err != nil {
-		http.Error(w, "failed to create job: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(types.CreateJobResponse{ID: job.ID})
-}
-
-// listJobs lists all jobs.
-func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.store.List(r.Context())
-	if err != nil {
-		http.Error(w, "failed to list jobs: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(jobs)
-}
 
 // handleBuilds handles POST /api/v1/builds (create build) and GET /api/v1/builds (list builds).
 func (s *Server) handleBuilds(w http.ResponseWriter, r *http.Request) {
@@ -303,12 +205,13 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(build)
 }
 
-// createBuild creates a new multi-package build.
+// createBuild creates a new build.
+// Supports single config, multiple configs, or git source.
 func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 	// Limit request body size to prevent OOM
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
 
-	var req types.CreateJobRequest
+	var req types.CreateBuildRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		if err.Error() == "http: request body too large" {
 			http.Error(w, "request body too large (max 10MB)", http.StatusRequestEntityTooLarge)
@@ -318,14 +221,9 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.createBuildFromRequest(w, r, req)
-}
-
-// createBuildFromRequest creates a build from the request.
-func (s *Server) createBuildFromRequest(w http.ResponseWriter, r *http.Request, req types.CreateJobRequest) {
 	ctx := r.Context()
 
-	// Collect configs from inline or git source
+	// Collect configs from single config, multiple configs, or git source
 	var configs []string
 	var err error
 
@@ -343,8 +241,11 @@ func (s *Server) createBuildFromRequest(w http.ResponseWriter, r *http.Request, 
 		}
 	case len(req.Configs) > 0:
 		configs = req.Configs
+	case req.ConfigYAML != "":
+		// Single config - treat as a build with one package
+		configs = []string{req.ConfigYAML}
 	default:
-		http.Error(w, "either configs or git_source is required for multi-package build", http.StatusBadRequest)
+		http.Error(w, "config_yaml, configs, or git_source is required", http.StatusBadRequest)
 		return
 	}
 

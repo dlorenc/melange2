@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package scheduler provides job scheduling and execution.
+// Package scheduler provides build scheduling and execution.
 package scheduler
 
 import (
@@ -40,7 +40,7 @@ import (
 type Config struct {
 	// OutputDir is the base directory for build outputs (used with local storage).
 	OutputDir string
-	// PollInterval is how often to check for new jobs.
+	// PollInterval is how often to check for new builds.
 	PollInterval time.Duration
 	// MaxParallel is the maximum number of concurrent package builds.
 	// Defaults to number of CPUs.
@@ -54,9 +54,8 @@ type Config struct {
 	CacheMode string
 }
 
-// Scheduler processes build jobs.
+// Scheduler processes builds.
 type Scheduler struct {
-	store      store.JobStore
 	buildStore store.BuildStore
 	storage    storage.Storage
 	pool       *buildkit.Pool
@@ -71,7 +70,7 @@ type Scheduler struct {
 }
 
 // New creates a new scheduler.
-func New(jobStore store.JobStore, buildStore store.BuildStore, storageBackend storage.Storage, pool *buildkit.Pool, config Config) *Scheduler {
+func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buildkit.Pool, config Config) *Scheduler {
 	if config.PollInterval == 0 {
 		config.PollInterval = time.Second
 	}
@@ -82,7 +81,6 @@ func New(jobStore store.JobStore, buildStore store.BuildStore, storageBackend st
 		config.MaxParallel = runtime.NumCPU()
 	}
 	return &Scheduler{
-		store:        jobStore,
 		buildStore:   buildStore,
 		storage:      storageBackend,
 		pool:         pool,
@@ -106,11 +104,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			log.Info("scheduler stopping")
 			return ctx.Err()
 		case <-ticker.C:
-			// Process legacy single jobs
-			if err := s.processNextJob(ctx); err != nil {
-				log.Errorf("error processing job: %v", err)
-			}
-			// Process multi-package builds
+			// Process builds
 			if err := s.processBuilds(ctx); err != nil {
 				log.Errorf("error processing builds: %v", err)
 			}
@@ -118,208 +112,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Scheduler) processNextJob(ctx context.Context) error {
-	log := clog.FromContext(ctx)
-
-	// Try to claim a pending job
-	job, err := s.store.ClaimPending(ctx)
-	if err != nil {
-		return fmt.Errorf("claiming job: %w", err)
-	}
-	if job == nil {
-		// No pending jobs
-		return nil
-	}
-
-	log.Infof("processing job %s", job.ID)
-
-	// Execute the build
-	buildErr := s.executeJob(ctx, job)
-
-	// Update job status
-	now := time.Now()
-	job.FinishedAt = &now
-	if buildErr != nil {
-		job.Status = types.JobStatusFailed
-		job.Error = buildErr.Error()
-		log.Errorf("job %s failed: %v", job.ID, buildErr)
-	} else {
-		job.Status = types.JobStatusSuccess
-		log.Infof("job %s completed successfully", job.ID)
-	}
-
-	if err := s.store.Update(ctx, job); err != nil {
-		log.Errorf("failed to update job %s: %v", job.ID, err)
-	}
-
-	return nil
-}
-
-func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
-	log := clog.FromContext(ctx)
-
-	// Create temp directory for the config file
-	tmpDir, err := os.MkdirTemp("", "melange-job-*")
-	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Write the config YAML to a temp file
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(job.Spec.ConfigYAML), 0600); err != nil {
-		return fmt.Errorf("writing config file: %w", err)
-	}
-
-	// Write inline pipelines to a temp directory
-	pipelineDir := filepath.Join(tmpDir, "pipelines")
-	if len(job.Spec.Pipelines) > 0 {
-		for pipelinePath, pipelineContent := range job.Spec.Pipelines {
-			fullPath := filepath.Join(pipelineDir, pipelinePath)
-			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-				return fmt.Errorf("creating pipeline dir for %s: %w", pipelinePath, err)
-			}
-			if err := os.WriteFile(fullPath, []byte(pipelineContent), 0600); err != nil {
-				return fmt.Errorf("writing pipeline %s: %w", pipelinePath, err)
-			}
-			log.Debugf("wrote inline pipeline: %s", pipelinePath)
-		}
-	}
-
-	// Get output directory from storage backend
-	outputDir, err := s.storage.OutputDir(ctx, job.ID)
-	if err != nil {
-		return fmt.Errorf("getting output dir: %w", err)
-	}
-	// Clean up temp output dir if storage created one
-	if outputDir != filepath.Join(s.config.OutputDir, job.ID) {
-		defer os.RemoveAll(outputDir)
-	}
-	job.OutputPath = outputDir
-
-	// Create log directory
-	logDir := filepath.Join(outputDir, "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("creating log dir: %w", err)
-	}
-
-	// Create log file
-	logPath := filepath.Join(logDir, "build.log")
-	logFile, err := os.Create(logPath)
-	if err != nil {
-		return fmt.Errorf("creating log file: %w", err)
-	}
-	defer logFile.Close()
-	job.LogPath = logPath
-
-	// Create a multi-writer logger that writes to both stderr and the log file
-	multiWriter := io.MultiWriter(os.Stderr, logFile)
-	buildLogger := clog.New(slog.NewTextHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	ctx = clog.WithLogger(ctx, buildLogger)
-
-	// Write build header to log file
-	fmt.Fprintf(logFile, "=== Build started at %s ===\n", time.Now().Format(time.RFC3339))
-	fmt.Fprintf(logFile, "Job ID: %s\n", job.ID)
-
-	// Determine architecture
-	arch := job.Spec.Arch
-	if arch == "" {
-		arch = runtime.GOARCH
-		if arch == "arm64" {
-			arch = "aarch64"
-		} else if arch == "amd64" {
-			arch = "x86_64"
-		}
-	}
-	targetArch := apko_types.ParseArchitecture(arch)
-
-	// Select a backend from the pool
-	backend, err := s.pool.Select(arch, job.Spec.BackendSelector)
-	if err != nil {
-		return fmt.Errorf("selecting backend: %w", err)
-	}
-
-	// Record the selected backend on the job
-	job.Backend = &types.JobBackend{
-		Addr:   backend.Addr,
-		Arch:   backend.Arch,
-		Labels: backend.Labels,
-	}
-
-	log.Infof("building for architecture: %s", targetArch)
-	log.Infof("selected backend: %s (labels: %v)", backend.Addr, backend.Labels)
-
-	// Create cache directory for this build
-	cacheDir := filepath.Join(tmpDir, "cache")
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
-		return fmt.Errorf("creating cache dir: %w", err)
-	}
-
-	// Set up build options
-	opts := []build.Option{
-		build.WithConfig(configPath),
-		build.WithArch(targetArch),
-		build.WithOutDir(outputDir),
-		build.WithCacheDir(cacheDir),
-		build.WithBuildKitAddr(backend.Addr),
-		build.WithDebug(job.Spec.Debug),
-		build.WithGenerateIndex(true),
-		// Use Wolfi repos/keys as defaults for MVP
-		build.WithExtraRepos([]string{"https://packages.wolfi.dev/os"}),
-		build.WithExtraKeys([]string{"https://packages.wolfi.dev/os/wolfi-signing.rsa.pub"}),
-		build.WithIgnoreSignatures(true), // Skip signing for MVP
-		// Git provenance defaults for service
-		build.WithConfigFileRepositoryURL("https://melange-service/inline"),
-		build.WithConfigFileRepositoryCommit("inline-" + job.ID),
-		build.WithConfigFileLicense("Apache-2.0"),
-		build.WithNamespace("wolfi"),
-	}
-
-	// Add cache config if registry is configured
-	if s.config.CacheRegistry != "" {
-		opts = append(opts, build.WithCacheRegistry(s.config.CacheRegistry))
-		if s.config.CacheMode != "" {
-			opts = append(opts, build.WithCacheMode(s.config.CacheMode))
-		}
-	}
-
-	// Add inline pipelines directory if provided
-	if len(job.Spec.Pipelines) > 0 {
-		opts = append(opts, build.WithPipelineDir(pipelineDir))
-	}
-
-	// Create the build context
-	bc, err := build.New(ctx, opts...)
-	if err != nil {
-		log.Errorf("failed to initialize build: %v", err)
-		return fmt.Errorf("initializing build: %w", err)
-	}
-	defer bc.Close(ctx)
-
-	// Execute the build
-	log.Infof("starting build for job %s", job.ID)
-	log.Infof("architecture: %s", targetArch)
-
-	if err := bc.BuildPackage(ctx); err != nil {
-		log.Errorf("build failed: %v", err)
-		// Still sync logs to storage on error
-		if syncErr := s.storage.SyncOutputDir(ctx, job.ID, outputDir); syncErr != nil {
-			log.Errorf("failed to sync output on error: %v", syncErr)
-		}
-		return fmt.Errorf("building package: %w", err)
-	}
-
-	log.Infof("build completed successfully at %s", time.Now().Format(time.RFC3339))
-
-	// Sync output to storage backend (uploads to GCS if using GCS storage)
-	if err := s.storage.SyncOutputDir(ctx, job.ID, outputDir); err != nil {
-		return fmt.Errorf("syncing output to storage: %w", err)
-	}
-
-	return nil
-}
-
-// processBuilds processes multi-package builds.
+// processBuilds processes builds.
 func (s *Scheduler) processBuilds(ctx context.Context) error {
 	builds, err := s.buildStore.ListBuilds(ctx)
 	if err != nil {
@@ -551,7 +344,7 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		return fmt.Errorf("selecting backend: %w", err)
 	}
 
-	pkg.Backend = &types.JobBackend{
+	pkg.Backend = &types.Backend{
 		Addr:   backend.Addr,
 		Arch:   backend.Arch,
 		Labels: backend.Labels,

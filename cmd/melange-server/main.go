@@ -67,7 +67,6 @@ func run(ctx context.Context) error {
 	log := clog.FromContext(ctx)
 
 	// Create shared components
-	jobStore := store.NewMemoryStore()
 	buildStore := store.NewMemoryBuildStore()
 
 	// Initialize storage backend
@@ -115,7 +114,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Create API server
-	apiServer := api.NewServer(jobStore, buildStore, pool)
+	apiServer := api.NewServer(buildStore, pool)
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
 		Handler:           apiServer,
@@ -133,7 +132,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Create scheduler
-	sched := scheduler.New(jobStore, buildStore, storageBackend, pool, scheduler.Config{
+	sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
 		OutputDir:     *outputDir,
 		PollInterval:  time.Second,
 		CacheRegistry: cacheRegistry,

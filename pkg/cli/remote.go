@@ -35,7 +35,7 @@ func remoteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remote",
 		Short: "Interact with a melange build server",
-		Long:  `Commands for submitting jobs and checking status on a remote melange-server.`,
+		Long:  `Commands for submitting builds and checking status on a remote melange-server.`,
 	}
 
 	cmd.AddCommand(remoteSubmitCmd())
@@ -43,8 +43,6 @@ func remoteCmd() *cobra.Command {
 	cmd.AddCommand(remoteListCmd())
 	cmd.AddCommand(remoteWaitCmd())
 	cmd.AddCommand(remoteBackendsCmd())
-	cmd.AddCommand(remoteBuildStatusCmd())
-	cmd.AddCommand(remoteListBuildsCmd())
 
 	return cmd
 }
@@ -57,7 +55,7 @@ func remoteSubmitCmd() *cobra.Command {
 	var wait bool
 	var pipelineDirs []string
 	var backendSelector []string
-	// Multi-package options
+	// Git source options
 	var gitRepo string
 	var gitRef string
 	var gitPattern string
@@ -65,7 +63,7 @@ func remoteSubmitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "submit [config.yaml...]",
-		Short: "Submit build job(s) to the server",
+		Short: "Submit build(s) to the server",
 		Long: `Submit package configuration file(s) for building on a remote melange-server.
 
 Supports three modes:
@@ -75,7 +73,7 @@ Supports three modes:
 
 For multi-package builds, packages are built in dependency order based on
 environment.contents.packages declarations.`,
-		Example: `  # Submit a single build job
+		Example: `  # Submit a single build
   melange remote submit mypackage.yaml --server http://localhost:8080
 
   # Submit multiple packages (builds in dependency order)
@@ -105,54 +103,67 @@ environment.contents.packages declarations.`,
 
 			c := client.New(serverURL)
 
-			// Determine mode: git source, multi-config, or single config
-			if gitRepo != "" {
-				// Git source mode
-				return submitGitBuild(cmd, c, gitRepo, gitRef, gitPattern, gitPath, arch, selector, pipelines, withTest, debug, wait)
-			}
-
-			if len(args) == 0 {
-				return fmt.Errorf("no config files specified (use --git-repo for git source)")
-			}
-
-			if len(args) > 1 {
-				// Multi-config mode
-				return submitMultiConfigBuild(cmd, c, args, arch, selector, pipelines, withTest, debug, wait)
-			}
-
-			// Single config mode (backward compatible)
-			configPath := args[0]
-			configData, err := os.ReadFile(configPath)
-			if err != nil {
-				return fmt.Errorf("reading config file: %w", err)
-			}
-
-			resp, err := c.SubmitJob(cmd.Context(), types.CreateJobRequest{
-				ConfigYAML:      string(configData),
+			// Build the request based on input mode
+			req := types.CreateBuildRequest{
 				Pipelines:       pipelines,
 				Arch:            arch,
 				BackendSelector: selector,
 				WithTest:        withTest,
 				Debug:           debug,
-			})
-			if err != nil {
-				return fmt.Errorf("submitting job: %w", err)
 			}
 
-			fmt.Printf("Job submitted: %s\n", resp.ID)
+			// Determine mode: git source, multi-config, or single config
+			switch {
+			case gitRepo != "":
+				// Git source mode
+				req.GitSource = &types.GitSource{
+					Repository: gitRepo,
+					Ref:        gitRef,
+					Pattern:    gitPattern,
+					Path:       gitPath,
+				}
+			case len(args) == 0:
+				return fmt.Errorf("no config files specified (use --git-repo for git source)")
+			case len(args) == 1:
+				// Single config mode
+				configData, err := os.ReadFile(args[0])
+				if err != nil {
+					return fmt.Errorf("reading config file: %w", err)
+				}
+				req.ConfigYAML = string(configData)
+			default:
+				// Multi-config mode
+				configs := make([]string, 0, len(args))
+				for _, path := range args {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return fmt.Errorf("reading %s: %w", path, err)
+					}
+					configs = append(configs, string(data))
+				}
+				req.Configs = configs
+			}
+
+			resp, err := c.SubmitBuild(cmd.Context(), req)
+			if err != nil {
+				return fmt.Errorf("submitting build: %w", err)
+			}
+
+			fmt.Printf("Build submitted: %s\n", resp.ID)
+			fmt.Printf("Packages (%d): %s\n", len(resp.Packages), strings.Join(resp.Packages, ", "))
 			if len(pipelines) > 0 {
 				fmt.Printf("Included %d pipeline(s)\n", len(pipelines))
 			}
 
 			if wait {
-				fmt.Println("Waiting for job to complete...")
-				job, err := c.WaitForJob(cmd.Context(), resp.ID, 2*time.Second)
+				fmt.Println("Waiting for build to complete...")
+				build, err := c.WaitForBuild(cmd.Context(), resp.ID, 2*time.Second)
 				if err != nil {
-					return fmt.Errorf("waiting for job: %w", err)
+					return fmt.Errorf("waiting for build: %w", err)
 				}
-				printJobDetails(job)
-				if job.Status == types.JobStatusFailed {
-					return fmt.Errorf("job failed: %s", job.Error)
+				printBuildDetails(build)
+				if build.Status == types.BuildStatusFailed {
+					return fmt.Errorf("build failed")
 				}
 			}
 
@@ -164,7 +175,7 @@ environment.contents.packages declarations.`,
 	cmd.Flags().StringVar(&arch, "arch", "", "target architecture (default: server decides)")
 	cmd.Flags().BoolVar(&withTest, "test", false, "run tests after build")
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging")
-	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job/build to complete")
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait for build to complete")
 	cmd.Flags().StringSliceVar(&pipelineDirs, "pipeline-dir", nil, "directory containing pipeline YAML files")
 	cmd.Flags().StringSliceVar(&backendSelector, "backend-selector", nil, "backend label selector (key=value)")
 	// Git source options
@@ -174,86 +185,6 @@ environment.contents.packages declarations.`,
 	cmd.Flags().StringVar(&gitPath, "git-path", "", "subdirectory within git repo to search")
 
 	return cmd
-}
-
-// submitGitBuild submits a build from a git repository.
-func submitGitBuild(cmd *cobra.Command, c *client.Client, repo, ref, pattern, path, arch string, selector, pipelines map[string]string, withTest, debug, wait bool) error {
-	gitSource := &types.GitSource{
-		Repository: repo,
-		Ref:        ref,
-		Pattern:    pattern,
-		Path:       path,
-	}
-
-	resp, err := c.SubmitBuild(cmd.Context(), types.CreateJobRequest{
-		GitSource:       gitSource,
-		Pipelines:       pipelines,
-		Arch:            arch,
-		BackendSelector: selector,
-		WithTest:        withTest,
-		Debug:           debug,
-	})
-	if err != nil {
-		return fmt.Errorf("submitting build: %w", err)
-	}
-
-	fmt.Printf("Build submitted: %s\n", resp.ID)
-	fmt.Printf("Packages (%d): %s\n", len(resp.Packages), strings.Join(resp.Packages, ", "))
-
-	if wait {
-		fmt.Println("Waiting for build to complete...")
-		build, err := c.WaitForBuild(cmd.Context(), resp.ID, 2*time.Second)
-		if err != nil {
-			return fmt.Errorf("waiting for build: %w", err)
-		}
-		printBuildDetails(build)
-		if build.Status == types.BuildStatusFailed {
-			return fmt.Errorf("build failed")
-		}
-	}
-
-	return nil
-}
-
-// submitMultiConfigBuild submits a build with multiple config files.
-func submitMultiConfigBuild(cmd *cobra.Command, c *client.Client, configPaths []string, arch string, selector, pipelines map[string]string, withTest, debug, wait bool) error {
-	configs := make([]string, 0, len(configPaths))
-	for _, path := range configPaths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", path, err)
-		}
-		configs = append(configs, string(data))
-	}
-
-	resp, err := c.SubmitBuild(cmd.Context(), types.CreateJobRequest{
-		Configs:         configs,
-		Pipelines:       pipelines,
-		Arch:            arch,
-		BackendSelector: selector,
-		WithTest:        withTest,
-		Debug:           debug,
-	})
-	if err != nil {
-		return fmt.Errorf("submitting build: %w", err)
-	}
-
-	fmt.Printf("Build submitted: %s\n", resp.ID)
-	fmt.Printf("Packages (%d): %s\n", len(resp.Packages), strings.Join(resp.Packages, ", "))
-
-	if wait {
-		fmt.Println("Waiting for build to complete...")
-		build, err := c.WaitForBuild(cmd.Context(), resp.ID, 2*time.Second)
-		if err != nil {
-			return fmt.Errorf("waiting for build: %w", err)
-		}
-		printBuildDetails(build)
-		if build.Status == types.BuildStatusFailed {
-			return fmt.Errorf("build failed")
-		}
-	}
-
-	return nil
 }
 
 // parseSelector parses key=value pairs into a map.
@@ -319,22 +250,22 @@ func remoteStatusCmd() *cobra.Command {
 	var serverURL string
 
 	cmd := &cobra.Command{
-		Use:   "status <job-id>",
-		Short: "Get the status of a build job",
-		Long:  `Retrieve the current status and details of a build job.`,
-		Example: `  melange remote status job-abc123
-  melange remote status job-abc123 --server http://myserver:8080`,
+		Use:   "status <build-id>",
+		Short: "Get the status of a build",
+		Long:  `Retrieve the current status and per-package details of a build.`,
+		Example: `  melange remote status bld-abc123
+  melange remote status bld-abc123 --server http://myserver:8080`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jobID := args[0]
+			buildID := args[0]
 
 			c := client.New(serverURL)
-			job, err := c.GetJob(cmd.Context(), jobID)
+			build, err := c.GetBuild(cmd.Context(), buildID)
 			if err != nil {
-				return fmt.Errorf("getting job: %w", err)
+				return fmt.Errorf("getting build: %w", err)
 			}
 
-			printJobDetails(job)
+			printBuildDetails(build)
 			return nil
 		},
 	}
@@ -349,35 +280,31 @@ func remoteListCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List all build jobs",
-		Long:  `List all build jobs on the server.`,
+		Short: "List all builds",
+		Long:  `List all builds on the server.`,
 		Example: `  melange remote list
   melange remote list --server http://myserver:8080`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := client.New(serverURL)
-			jobs, err := c.ListJobs(cmd.Context())
+			builds, err := c.ListBuilds(cmd.Context())
 			if err != nil {
-				return fmt.Errorf("listing jobs: %w", err)
+				return fmt.Errorf("listing builds: %w", err)
 			}
 
-			if len(jobs) == 0 {
-				fmt.Println("No jobs found")
+			if len(builds) == 0 {
+				fmt.Println("No builds found")
 				return nil
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tSTATUS\tCREATED\tARCH")
-			for _, job := range jobs {
-				arch := job.Spec.Arch
-				if arch == "" {
-					arch = "-"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-					job.ID,
-					job.Status,
-					job.CreatedAt.Format(time.RFC3339),
-					arch,
+			fmt.Fprintln(w, "ID\tSTATUS\tPACKAGES\tCREATED")
+			for _, build := range builds {
+				fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
+					build.ID,
+					build.Status,
+					len(build.Packages),
+					build.CreatedAt.Format(time.RFC3339),
 				)
 			}
 			w.Flush()
@@ -396,27 +323,27 @@ func remoteWaitCmd() *cobra.Command {
 	var pollInterval time.Duration
 
 	cmd := &cobra.Command{
-		Use:   "wait <job-id>",
-		Short: "Wait for a job to complete",
-		Long:  `Wait for a build job to complete, polling the server at regular intervals.`,
-		Example: `  melange remote wait job-abc123
-  melange remote wait job-abc123 --poll-interval 5s`,
+		Use:   "wait <build-id>",
+		Short: "Wait for a build to complete",
+		Long:  `Wait for a build to complete, polling the server at regular intervals.`,
+		Example: `  melange remote wait bld-abc123
+  melange remote wait bld-abc123 --poll-interval 5s`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			jobID := args[0]
+			buildID := args[0]
 
 			c := client.New(serverURL)
-			fmt.Printf("Waiting for job %s...\n", jobID)
+			fmt.Printf("Waiting for build %s...\n", buildID)
 
-			job, err := c.WaitForJob(cmd.Context(), jobID, pollInterval)
+			build, err := c.WaitForBuild(cmd.Context(), buildID, pollInterval)
 			if err != nil {
-				return fmt.Errorf("waiting for job: %w", err)
+				return fmt.Errorf("waiting for build: %w", err)
 			}
 
-			printJobDetails(job)
+			printBuildDetails(build)
 
-			if job.Status == types.JobStatusFailed {
-				return fmt.Errorf("job failed: %s", job.Error)
+			if build.Status == types.BuildStatusFailed {
+				return fmt.Errorf("build failed")
 			}
 
 			return nil
@@ -587,123 +514,6 @@ func remoteBackendsRemoveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&addr, "addr", "", "BuildKit daemon address to remove")
 
 	_ = cmd.MarkFlagRequired("addr")
-
-	return cmd
-}
-
-func printJobDetails(job *types.Job) {
-	fmt.Printf("Job ID:     %s\n", job.ID)
-	fmt.Printf("Status:     %s\n", job.Status)
-	fmt.Printf("Created:    %s\n", job.CreatedAt.Format(time.RFC3339))
-
-	if job.Spec.Arch != "" {
-		fmt.Printf("Arch:       %s\n", job.Spec.Arch)
-	}
-
-	if job.Backend != nil {
-		fmt.Printf("Backend:    %s (%s)\n", job.Backend.Addr, job.Backend.Arch)
-		if len(job.Backend.Labels) > 0 {
-			var parts []string
-			for k, v := range job.Backend.Labels {
-				parts = append(parts, fmt.Sprintf("%s=%s", k, v))
-			}
-			fmt.Printf("Labels:     %s\n", strings.Join(parts, ", "))
-		}
-	}
-
-	if job.StartedAt != nil {
-		fmt.Printf("Started:    %s\n", job.StartedAt.Format(time.RFC3339))
-	}
-
-	if job.FinishedAt != nil {
-		fmt.Printf("Finished:   %s\n", job.FinishedAt.Format(time.RFC3339))
-		if job.StartedAt != nil {
-			duration := job.FinishedAt.Sub(*job.StartedAt)
-			fmt.Printf("Duration:   %s\n", duration.Round(time.Second))
-		}
-	}
-
-	if job.Error != "" {
-		fmt.Printf("Error:      %s\n", job.Error)
-	}
-
-	if job.LogPath != "" {
-		fmt.Printf("Log:        %s\n", job.LogPath)
-	}
-
-	if job.OutputPath != "" {
-		fmt.Printf("Output:     %s\n", job.OutputPath)
-	}
-}
-
-func remoteBuildStatusCmd() *cobra.Command {
-	var serverURL string
-
-	cmd := &cobra.Command{
-		Use:   "build-status <build-id>",
-		Short: "Get the status of a multi-package build",
-		Long:  `Retrieve the current status and per-package details of a multi-package build.`,
-		Example: `  melange remote build-status bld-abc123
-  melange remote build-status bld-abc123 --server http://myserver:8080`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			buildID := args[0]
-
-			c := client.New(serverURL)
-			build, err := c.GetBuild(cmd.Context(), buildID)
-			if err != nil {
-				return fmt.Errorf("getting build: %w", err)
-			}
-
-			printBuildDetails(build)
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&serverURL, "server", defaultServerURL, "melange-server URL")
-
-	return cmd
-}
-
-func remoteListBuildsCmd() *cobra.Command {
-	var serverURL string
-
-	cmd := &cobra.Command{
-		Use:   "list-builds",
-		Short: "List all multi-package builds",
-		Long:  `List all multi-package builds on the server.`,
-		Example: `  melange remote list-builds
-  melange remote list-builds --server http://myserver:8080`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c := client.New(serverURL)
-			builds, err := c.ListBuilds(cmd.Context())
-			if err != nil {
-				return fmt.Errorf("listing builds: %w", err)
-			}
-
-			if len(builds) == 0 {
-				fmt.Println("No builds found")
-				return nil
-			}
-
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tSTATUS\tPACKAGES\tCREATED")
-			for _, build := range builds {
-				fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
-					build.ID,
-					build.Status,
-					len(build.Packages),
-					build.CreatedAt.Format(time.RFC3339),
-				)
-			}
-			w.Flush()
-
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&serverURL, "server", defaultServerURL, "melange-server URL")
 
 	return cmd
 }
