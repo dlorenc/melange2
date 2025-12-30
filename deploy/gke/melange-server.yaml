@@ -36,6 +36,7 @@ spec:
         - --listen-addr=:8080
         - --backends-config=/etc/melange/backends.yaml
         - --gcs-bucket=$(GCS_BUCKET)
+        - --enable-tracing
         env:
         - name: GCS_BUCKET
           valueFrom:

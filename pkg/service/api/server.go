@@ -20,11 +20,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/chainguard-dev/clog"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/dag"
 	"github.com/dlorenc/melange2/pkg/service/git"
 	"github.com/dlorenc/melange2/pkg/service/store"
+	"github.com/dlorenc/melange2/pkg/service/tracing"
 	"github.com/dlorenc/melange2/pkg/service/types"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"gopkg.in/yaml.v3"
 )
 
@@ -226,6 +230,16 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 // createBuild creates a new build.
 // Supports single config, multiple configs, or git source.
 func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
+	ctx, span := tracing.StartSpan(r.Context(), "api.createBuild",
+		trace.WithAttributes(attribute.String("http.method", r.Method)),
+	)
+	defer span.End()
+
+	timer := tracing.NewTimer(ctx, "createBuild")
+	defer timer.Stop()
+
+	log := clog.FromContext(ctx)
+
 	// Limit request body size to prevent OOM
 	r.Body = http.MaxBytesReader(w, r.Body, MaxBodySize)
 
@@ -239,24 +253,25 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
-
 	// Collect configs from single config, multiple configs, or git source
 	var configs []string
 	var err error
 
 	switch {
 	case req.GitSource != nil:
+		gitTimer := tracing.NewTimer(ctx, "load_git_configs")
 		if err := git.ValidateSource(req.GitSource); err != nil {
 			http.Error(w, "invalid git source: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		source := git.NewSourceFromGitSource(req.GitSource)
 		configs, err = source.LoadConfigs(ctx)
+		gitTimer.Stop()
 		if err != nil {
 			http.Error(w, "failed to load configs from git: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		log.Infof("loaded %d configs from git", len(configs))
 	case len(req.Configs) > 0:
 		configs = req.Configs
 	case req.ConfigYAML != "":
@@ -272,7 +287,10 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	span.SetAttributes(attribute.Int("config_count", len(configs)))
+
 	// Parse configs and build DAG
+	dagTimer := tracing.NewTimer(ctx, "build_dag")
 	nodes, err := s.parseConfigDependencies(configs)
 	if err != nil {
 		http.Error(w, "failed to parse configs: "+err.Error(), http.StatusBadRequest)
@@ -290,10 +308,14 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 
 	// Topological sort
 	sorted, err := graph.TopologicalSort()
+	dagTimer.Stop()
 	if err != nil {
 		http.Error(w, "dependency error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	span.SetAttributes(attribute.Int("package_count", len(sorted)))
+	log.Infof("created build DAG with %d packages", len(sorted))
 
 	// Create build spec
 	spec := types.BuildSpec{
@@ -307,11 +329,16 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create build in store
+	storeTimer := tracing.NewTimer(ctx, "store_create_build")
 	build, err := s.buildStore.CreateBuild(ctx, sorted, spec)
+	storeTimer.Stop()
 	if err != nil {
 		http.Error(w, "failed to create build: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	span.SetAttributes(attribute.String("build_id", build.ID))
+	log.Infof("created build %s with %d packages", build.ID, len(sorted))
 
 	// Collect package names for response
 	packageNames := make([]string, len(sorted))

@@ -22,9 +22,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/chainguard-dev/clog"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
@@ -315,8 +317,12 @@ type fileToUpload struct {
 // SyncOutputDir uploads the contents of the local output directory to GCS.
 // Uses concurrent uploads with rate limiting and retry logic.
 func (s *GCSStorage) SyncOutputDir(ctx context.Context, jobID, localDir string) error {
+	log := clog.FromContext(ctx)
+	startTime := time.Now()
+
 	// First, collect all files to upload
 	var files []fileToUpload
+	var totalBytes int64
 
 	err := filepath.Walk(localDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -325,6 +331,8 @@ func (s *GCSStorage) SyncOutputDir(ctx context.Context, jobID, localDir string) 
 		if info.IsDir() {
 			return nil
 		}
+
+		totalBytes += info.Size()
 
 		// Get relative path
 		relPath, err := filepath.Rel(localDir, path)
@@ -363,6 +371,18 @@ func (s *GCSStorage) SyncOutputDir(ctx context.Context, jobID, localDir string) 
 		return fmt.Errorf("walking directory: %w", err)
 	}
 
+	if len(files) == 0 {
+		log.Infof("storage sync: no files to upload for job %s", jobID)
+		return nil
+	}
+
+	log.Infof("storage sync: uploading %d files (%.2f MB) for job %s to gs://%s",
+		len(files), float64(totalBytes)/(1024*1024), jobID, s.bucket)
+
+	// Track upload progress
+	var uploadedFiles atomic.Int32
+	var uploadedBytes atomic.Int64
+
 	// Upload files concurrently with bounded parallelism
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -378,16 +398,38 @@ func (s *GCSStorage) SyncOutputDir(ctx context.Context, jobID, localDir string) 
 				return ctx.Err()
 			}
 
+			// Get file size for tracking
+			info, err := os.Stat(f.localPath)
+			if err != nil {
+				return fmt.Errorf("stat %s: %w", f.localPath, err)
+			}
+
 			// Upload with retry
-			err := s.uploadWithRetry(ctx, f.objectPath, f.contentType, func() (io.Reader, error) {
+			err = s.uploadWithRetry(ctx, f.objectPath, f.contentType, func() (io.Reader, error) {
 				return os.Open(f.localPath)
 			})
 			if err != nil {
 				return fmt.Errorf("uploading %s: %w", f.localPath, err)
 			}
+
+			uploadedFiles.Add(1)
+			uploadedBytes.Add(info.Size())
 			return nil
 		})
 	}
 
-	return g.Wait()
+	err = g.Wait()
+	duration := time.Since(startTime)
+
+	if err != nil {
+		log.Errorf("storage sync failed after %s: uploaded %d/%d files (%.2f MB), error: %v",
+			duration, uploadedFiles.Load(), len(files), float64(uploadedBytes.Load())/(1024*1024), err)
+		return err
+	}
+
+	throughputMBps := float64(totalBytes) / (1024 * 1024) / duration.Seconds()
+	log.Infof("storage sync complete: uploaded %d files (%.2f MB) in %s (%.2f MB/s) for job %s",
+		len(files), float64(totalBytes)/(1024*1024), duration, throughputMBps, jobID)
+
+	return nil
 }

@@ -16,6 +16,7 @@
 package buildkit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chainguard-dev/clog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -271,6 +273,16 @@ func (p *Pool) Select(arch string, selector map[string]string) (*Backend, error)
 // This eliminates the race condition between Select() and Acquire().
 // Returns the backend if successful, or an error if no backend is available.
 func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backend, error) {
+	return p.SelectAndAcquireWithContext(context.Background(), arch, selector)
+}
+
+// SelectAndAcquireWithContext atomically selects a backend and acquires a slot with context for logging.
+// This eliminates the race condition between Select() and Acquire().
+// Returns the backend if successful, or an error if no backend is available.
+func (p *Pool) SelectAndAcquireWithContext(ctx context.Context, arch string, selector map[string]string) (*Backend, error) {
+	log := clog.FromContext(ctx)
+	startTime := time.Now()
+
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -286,16 +298,22 @@ func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backe
 
 	candidates := make([]candidate, 0, len(p.backends))
 
+	// Count filtered backends for logging
+	var totalBackends, archFiltered, selectorFiltered, circuitOpen, atCapacity int
+
 	for i := range p.backends {
 		b := &p.backends[i]
+		totalBackends++
 
 		// Filter by architecture
 		if b.Arch != arch {
+			archFiltered++
 			continue
 		}
 
 		// Filter by labels
 		if !matchesSelector(b.Labels, selector) {
+			selectorFiltered++
 			continue
 		}
 
@@ -311,6 +329,7 @@ func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backe
 			state.mu.Unlock()
 
 			if now.Sub(lastFailure) < p.recoveryTimeout {
+				circuitOpen++
 				continue
 			}
 		}
@@ -322,6 +341,7 @@ func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backe
 
 		active := int(state.activeJobs.Load())
 		if active >= maxJobs {
+			atCapacity++
 			continue
 		}
 
@@ -356,6 +376,9 @@ func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backe
 			if c.state.activeJobs.CompareAndSwap(current, current+1) {
 				// Successfully acquired
 				result := *c.backend
+				duration := time.Since(startTime)
+				log.Infof("backend selection: selected %s (load=%.1f%%) in %s (candidates=%d, arch_filtered=%d, circuit_open=%d, at_capacity=%d)",
+					result.Addr, c.load*100, duration, len(candidates), archFiltered, circuitOpen, atCapacity)
 				return &result, nil
 			}
 			// CAS failed, retry
@@ -365,6 +388,9 @@ func (p *Pool) SelectAndAcquire(arch string, selector map[string]string) (*Backe
 		candidates = append(candidates[:bestIdx], candidates[bestIdx+1:]...)
 	}
 
+	duration := time.Since(startTime)
+	log.Errorf("backend selection failed in %s: no available backend (total=%d, arch_filtered=%d, selector_filtered=%d, circuit_open=%d, at_capacity=%d)",
+		duration, totalBackends, archFiltered, selectorFiltered, circuitOpen, atCapacity)
 	return nil, ErrNoAvailableBackend
 }
 
