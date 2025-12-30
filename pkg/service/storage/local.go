@@ -20,6 +20,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/chainguard-dev/clog"
 )
 
 // LocalStorage stores artifacts and logs on the local filesystem.
@@ -127,5 +129,7 @@ func (s *LocalStorage) OutputDir(ctx context.Context, jobID string) (string, err
 // SyncOutputDir is a no-op for local storage.
 func (s *LocalStorage) SyncOutputDir(ctx context.Context, jobID, localDir string) error {
 	// No-op for local storage - files are already in place
+	log := clog.FromContext(ctx)
+	log.Infof("storage sync: local storage, no upload needed for job %s (files at %s)", jobID, localDir)
 	return nil
 }

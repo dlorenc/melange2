@@ -34,6 +34,7 @@ import (
 	"github.com/dlorenc/melange2/pkg/service/scheduler"
 	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
+	"github.com/dlorenc/melange2/pkg/service/tracing"
 )
 
 var (
@@ -43,6 +44,7 @@ var (
 	defaultArch    = flag.String("default-arch", "x86_64", "Default architecture for single-backend mode")
 	outputDir      = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
 	gcsBucket      = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
+	enableTracing  = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
 )
 
 func main() {
@@ -66,12 +68,26 @@ func main() {
 func run(ctx context.Context) error {
 	log := clog.FromContext(ctx)
 
+	// Initialize tracing
+	shutdownTracing, err := tracing.Setup(ctx, tracing.Config{
+		ServiceName:    "melange-server",
+		ServiceVersion: "0.1.0",
+		Enabled:        *enableTracing,
+	})
+	if err != nil {
+		return fmt.Errorf("setting up tracing: %w", err)
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			log.Errorf("error shutting down tracing: %v", err)
+		}
+	}()
+
 	// Create shared components
 	buildStore := store.NewMemoryBuildStore()
 
 	// Initialize storage backend
 	var storageBackend storage.Storage
-	var err error
 	if *gcsBucket != "" {
 		log.Infof("using GCS storage: gs://%s", *gcsBucket)
 		storageBackend, err = storage.NewGCSStorage(ctx, *gcsBucket)

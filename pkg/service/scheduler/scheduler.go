@@ -28,11 +28,14 @@ import (
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dlorenc/melange2/pkg/build"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
+	"github.com/dlorenc/melange2/pkg/service/tracing"
 	"github.com/dlorenc/melange2/pkg/service/types"
 )
 
@@ -155,8 +158,24 @@ func (s *Scheduler) processBuilds(ctx context.Context) error {
 
 // processBuild processes a single multi-package build.
 func (s *Scheduler) processBuild(ctx context.Context, build *types.Build) {
+	ctx, span := tracing.StartSpan(ctx, "scheduler.processBuild",
+		trace.WithAttributes(
+			attribute.String("build_id", build.ID),
+			attribute.Int("package_count", len(build.Packages)),
+		),
+	)
+	defer span.End()
+
+	buildTimer := tracing.NewTimer(ctx, "processBuild")
+	defer func() {
+		buildTimer.StopWithAttrs(
+			attribute.String("build_id", build.ID),
+			attribute.String("status", string(build.Status)),
+		)
+	}()
+
 	log := clog.FromContext(ctx)
-	log.Infof("processing build %s", build.ID)
+	log.Infof("processing build %s with %d packages", build.ID, len(build.Packages))
 
 	// Update build status to running if pending
 	if build.Status == types.BuildStatusPending {
@@ -165,6 +184,7 @@ func (s *Scheduler) processBuild(ctx context.Context, build *types.Build) {
 		build.StartedAt = &now
 		if err := s.buildStore.UpdateBuild(ctx, build); err != nil {
 			log.Errorf("failed to update build %s to running: %v", build.ID, err)
+			tracing.RecordError(ctx, err)
 			return
 		}
 	}
@@ -222,6 +242,16 @@ func (s *Scheduler) processBuild(ctx context.Context, build *types.Build) {
 
 // executePackageBuild executes a single package build within a multi-package build.
 func (s *Scheduler) executePackageBuild(ctx context.Context, buildID string, pkg *types.PackageJob) {
+	ctx, span := tracing.StartSpan(ctx, "scheduler.executePackageBuild",
+		trace.WithAttributes(
+			attribute.String("build_id", buildID),
+			attribute.String("package_name", pkg.Name),
+		),
+	)
+	defer span.End()
+
+	pkgTimer := tracing.NewTimer(ctx, fmt.Sprintf("package_build[%s]", pkg.Name))
+
 	log := clog.FromContext(ctx)
 	log.Infof("building package %s in build %s", pkg.Name, buildID)
 
@@ -229,6 +259,7 @@ func (s *Scheduler) executePackageBuild(ctx context.Context, buildID string, pkg
 	build, err := s.buildStore.GetBuild(ctx, buildID)
 	if err != nil {
 		log.Errorf("failed to get build %s: %v", buildID, err)
+		tracing.RecordError(ctx, err)
 		s.markPackageFailed(ctx, buildID, pkg, fmt.Errorf("getting build: %w", err))
 		return
 	}
@@ -242,17 +273,27 @@ func (s *Scheduler) executePackageBuild(ctx context.Context, buildID string, pkg
 	// Update package status
 	now := time.Now()
 	pkg.FinishedAt = &now
+
+	duration := pkgTimer.Stop()
+
 	if buildErr != nil {
 		pkg.Status = types.PackageStatusFailed
 		pkg.Error = buildErr.Error()
-		log.Errorf("package %s failed: %v", pkg.Name, buildErr)
+		span.SetAttributes(attribute.String("error", buildErr.Error()))
+		tracing.RecordError(ctx, buildErr)
+		log.Errorf("package %s failed after %s: %v", pkg.Name, duration, buildErr)
 
 		// Mark dependent packages as skipped
 		s.cascadeFailure(ctx, buildID, pkg.Name)
 	} else {
 		pkg.Status = types.PackageStatusSuccess
-		log.Infof("package %s completed successfully", pkg.Name)
+		log.Infof("package %s completed successfully in %s", pkg.Name, duration)
 	}
+
+	span.SetAttributes(
+		attribute.String("status", string(pkg.Status)),
+		attribute.String("duration", duration.String()),
+	)
 
 	if err := s.buildStore.UpdatePackageJob(ctx, buildID, pkg); err != nil {
 		log.Errorf("failed to update package %s: %v", pkg.Name, err)
@@ -261,7 +302,18 @@ func (s *Scheduler) executePackageBuild(ctx context.Context, buildID string, pkg
 
 // executePackageJob executes a package build with the given spec.
 func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *types.PackageJob, spec types.BuildSpec) error {
+	ctx, span := tracing.StartSpan(ctx, "scheduler.executePackageJob",
+		trace.WithAttributes(
+			attribute.String("job_id", jobID),
+			attribute.String("package_name", pkg.Name),
+		),
+	)
+	defer span.End()
+
 	log := clog.FromContext(ctx)
+
+	// Phase 1: Setup temp files
+	setupTimer := tracing.NewTimer(ctx, "phase_setup")
 
 	// Create temp directory for the config file
 	tmpDir, err := os.MkdirTemp("", "melange-pkg-*")
@@ -321,6 +373,11 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	defer logFile.Close()
 	pkg.LogPath = logPath
 
+	setupDuration := setupTimer.Stop()
+	span.AddEvent("setup_complete", trace.WithAttributes(
+		attribute.String("duration", setupDuration.String()),
+	))
+
 	// Create a multi-writer logger
 	multiWriter := io.MultiWriter(os.Stderr, logFile)
 	buildLogger := clog.New(slog.NewTextHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -342,12 +399,22 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		}
 	}
 	targetArch := apko_types.ParseArchitecture(arch)
+	span.SetAttributes(attribute.String("arch", arch))
+
+	// Phase 2: Backend selection
+	backendTimer := tracing.NewTimer(ctx, "phase_backend_selection")
 
 	// Atomically select and acquire a backend slot
-	backend, err := s.pool.SelectAndAcquire(arch, spec.BackendSelector)
+	backend, err := s.pool.SelectAndAcquireWithContext(ctx, arch, spec.BackendSelector)
 	if err != nil {
 		return fmt.Errorf("selecting backend: %w", err)
 	}
+
+	backendDuration := backendTimer.Stop()
+	span.AddEvent("backend_selected", trace.WithAttributes(
+		attribute.String("backend_addr", backend.Addr),
+		attribute.String("duration", backendDuration.String()),
+	))
 
 	// Track build success for circuit breaker
 	var buildSuccess bool
@@ -361,8 +428,8 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		Labels: backend.Labels,
 	}
 
-	log.Infof("building package %s for architecture: %s", pkg.Name, targetArch)
-	log.Infof("selected backend: %s", backend.Addr)
+	span.SetAttributes(attribute.String("backend_addr", backend.Addr))
+	log.Infof("building package %s for architecture: %s on backend %s", pkg.Name, targetArch, backend.Addr)
 
 	// Create cache directory
 	cacheDir := filepath.Join(tmpDir, "cache")
@@ -400,6 +467,9 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		opts = append(opts, build.WithPipelineDir(pipelineDir))
 	}
 
+	// Phase 3: Build initialization
+	initTimer := tracing.NewTimer(ctx, "phase_build_init")
+
 	// Create the build context
 	bc, err := build.New(ctx, opts...)
 	if err != nil {
@@ -407,18 +477,54 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	}
 	defer bc.Close(ctx)
 
+	initDuration := initTimer.Stop()
+	span.AddEvent("build_initialized", trace.WithAttributes(
+		attribute.String("duration", initDuration.String()),
+	))
+
+	// Phase 4: BuildKit execution
+	buildkitTimer := tracing.NewTimer(ctx, "phase_buildkit_execution")
+	log.Infof("starting BuildKit execution for package %s", pkg.Name)
+
 	// Execute the build
 	if err := bc.BuildPackage(ctx); err != nil {
+		buildkitDuration := buildkitTimer.Stop()
+		span.AddEvent("buildkit_failed", trace.WithAttributes(
+			attribute.String("duration", buildkitDuration.String()),
+			attribute.String("error", err.Error()),
+		))
+		log.Errorf("BuildKit execution failed after %s: %v", buildkitDuration, err)
+
 		if syncErr := s.storage.SyncOutputDir(ctx, jobID, outputDir); syncErr != nil {
 			log.Errorf("failed to sync output on error: %v", syncErr)
 		}
 		return fmt.Errorf("building package: %w", err)
 	}
 
+	buildkitDuration := buildkitTimer.Stop()
+	span.AddEvent("buildkit_complete", trace.WithAttributes(
+		attribute.String("duration", buildkitDuration.String()),
+	))
+	log.Infof("BuildKit execution completed in %s for package %s", buildkitDuration, pkg.Name)
+
+	// Phase 5: Storage sync
+	syncTimer := tracing.NewTimer(ctx, "phase_storage_sync")
+	log.Infof("syncing output to storage for package %s", pkg.Name)
+
 	// Sync output to storage backend
 	if err := s.storage.SyncOutputDir(ctx, jobID, outputDir); err != nil {
 		return fmt.Errorf("syncing output to storage: %w", err)
 	}
+
+	syncDuration := syncTimer.Stop()
+	span.AddEvent("storage_sync_complete", trace.WithAttributes(
+		attribute.String("duration", syncDuration.String()),
+	))
+	log.Infof("storage sync completed in %s for package %s", syncDuration, pkg.Name)
+
+	// Log phase breakdown
+	log.Infof("package %s phase breakdown: setup=%s, backend=%s, init=%s, buildkit=%s, sync=%s",
+		pkg.Name, setupDuration, backendDuration, initDuration, buildkitDuration, syncDuration)
 
 	buildSuccess = true
 	return nil
