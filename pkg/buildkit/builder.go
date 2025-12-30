@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
@@ -177,10 +178,13 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 
 	// Load the apko layers
 	log.Infof("loading %d apko layer(s) into BuildKit", len(layers))
+	loadStart := time.Now()
 	loadResult, err := b.loader.LoadLayers(ctx, layers, cfg.PackageName)
+	loadDuration := time.Since(loadStart)
 	if err != nil {
 		return fmt.Errorf("loading apko layers: %w", err)
 	}
+	log.Infof("layer_load took %s", loadDuration)
 	defer func() {
 		if err := loadResult.Cleanup(); err != nil {
 			log.Warnf("cleanup failed: %v", err)
@@ -302,6 +306,7 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 
 	// Solve and export with progress tracking
 	log.Info("solving build graph")
+	solveStart := time.Now()
 
 	statusCh := make(chan *client.SolveStatus)
 	eg, egCtx := errgroup.WithContext(ctx)
@@ -356,6 +361,8 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 	if err := eg.Wait(); err != nil {
 		return fmt.Errorf("solving build: %w", err)
 	}
+	solveDuration := time.Since(solveStart)
+	log.Infof("graph_solve took %s", solveDuration)
 
 	log.Info("build completed successfully")
 	return nil

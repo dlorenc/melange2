@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"chainguard.dev/apko/pkg/apk/apk"
 	"chainguard.dev/apko/pkg/apk/auth"
@@ -123,11 +124,14 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 
 	// Build the guest environment with apko and get the layer(s)
 	log.Info("building guest environment with apko")
+	apkoStart := time.Now()
 	layers, releaseData, layerCleanup, err := b.buildGuestLayers(ctx)
+	apkoDuration := time.Since(apkoStart)
 	if err != nil {
 		return fmt.Errorf("building guest layers: %w", err)
 	}
 	defer layerCleanup()
+	log.Infof("apko_layer_generation took %s (%d layers)", apkoDuration, len(layers))
 
 	// Create BuildKit builder
 	builder, err := buildkit.NewBuilder(b.BuildKitAddr)
@@ -171,9 +175,12 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 	}
 
 	log.Info("running build with BuildKit")
+	buildkitStart := time.Now()
 	if err := builder.BuildWithLayers(ctx, layers, cfg); err != nil {
 		return fmt.Errorf("buildkit build failed: %w", err)
 	}
+	buildkitDuration := time.Since(buildkitStart)
+	log.Infof("buildkit_solve took %s", buildkitDuration)
 
 	// Load the workspace output into memory for further processing
 	log.Infof("loading workspace from: %s", b.WorkspaceDir)
