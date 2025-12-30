@@ -1,47 +1,134 @@
 # melange2 Documentation
 
-Welcome to the melange2 documentation.
+melange2 is an experimental APK package builder that uses [BuildKit](https://github.com/moby/buildkit) as its execution backend. It converts YAML pipeline definitions into BuildKit LLB operations for efficient, cacheable package builds.
 
 ## Documentation Sections
 
-### [User Guide](user-guide/index.md)
+### Getting Started
 
-For users building APK packages with melange2:
+New to melange2? Start here:
 
-- [Getting Started](user-guide/getting-started/installation.md) - Installation and first build
-- [Building Packages](user-guide/building-packages/build-file-reference.md) - YAML configuration reference
-- [Built-in Pipelines](user-guide/built-in-pipelines/overview.md) - Go, Python, Cargo, and more
-- [Testing Packages](user-guide/testing-packages/test-command.md) - Package testing
-- [Caching](user-guide/caching/buildkit-cache.md) - Build caching strategies
-- [Deployment](user-guide/deployment/signing.md) - Signing and repositories
-- [CLI Reference](user-guide/reference/cli.md) - Command-line options
+| Document | Description |
+|----------|-------------|
+| [What is melange2?](getting-started/index.md) | Overview and comparison with melange |
+| [Installation](getting-started/installation.md) | Install melange2 from source |
+| [BuildKit Setup](getting-started/buildkit-setup.md) | Configure the BuildKit daemon |
+| [First Build](getting-started/first-build.md) | Build your first package |
 
-### [Development Guide](development/index.md)
+### Build Files
 
-For developers contributing to melange2:
+Learn how to write package build configurations:
 
-- [Setup](development/setup/development-environment.md) - Development environment
-- [Architecture](development/architecture/overview.md) - System design
-- [Testing](development/testing/testing-strategy.md) - Test types and strategies
-- [Contributing](development/contributing/git-workflow.md) - How to contribute
+| Document | Description |
+|----------|-------------|
+| [Build File Overview](build-files/index.md) | YAML file structure overview |
+| [Package Metadata](build-files/package-metadata.md) | name, version, dependencies, copyright |
+| [Environment](build-files/environment.md) | Build environment configuration |
+| [Pipeline](build-files/pipeline.md) | Build step syntax and execution |
+| [Subpackages](build-files/subpackages.md) | Creating multiple packages from one build |
+| [Variables](build-files/variables.md) | Built-in and custom variables |
+| [Options](build-files/options.md) | Build option variants |
 
-### [CLI Reference](md/melange.md)
+### Built-in Pipelines
 
-Auto-generated command-line documentation.
+Pre-configured build pipelines for common languages and tools:
 
-## Quick Links
+| Document | Description |
+|----------|-------------|
+| [Pipeline Overview](pipelines/index.md) | How built-in pipelines work |
+| [fetch](pipelines/fetch.md) | Download and extract source archives |
+| [Build Systems](pipelines/build-systems.md) | autoconf, cmake, meson, make |
+| [Go](pipelines/go.md) | go/build, go/install pipelines |
+| [Python](pipelines/python.md) | python/build, python/pip-build pipelines |
+| [Rust](pipelines/rust.md) | cargo/build pipeline |
+| [Other Pipelines](pipelines/other.md) | strip, patch, git-checkout, and more |
 
-| Task | Documentation |
-|------|---------------|
-| Install melange2 | [Installation](user-guide/getting-started/installation.md) |
-| Set up BuildKit | [BuildKit Setup](user-guide/getting-started/buildkit-setup.md) |
-| Write a build file | [Build File Reference](user-guide/building-packages/build-file-reference.md) |
-| Use Go pipelines | [Go Pipelines](user-guide/built-in-pipelines/go/build.md) |
-| Run tests | [Testing](user-guide/testing-packages/test-command.md) |
-| Sign packages | [Signing](user-guide/deployment/signing.md) |
-| Contribute | [Git Workflow](development/contributing/git-workflow.md) |
-| Troubleshoot | [Troubleshooting](user-guide/reference/troubleshooting.md) |
+### CLI Reference
 
-## For AI Agents
+Command-line interface documentation:
 
-See [CLAUDE.md](../CLAUDE.md) for an agent-optimized guide to the codebase.
+| Document | Description |
+|----------|-------------|
+| [CLI Overview](cli/index.md) | All commands at a glance |
+| [build](cli/build.md) | Build packages |
+| [test](cli/test.md) | Test packages |
+| [keygen](cli/keygen.md) | Generate signing keys |
+| [sign](cli/sign.md) | Sign packages and indexes |
+| [remote](cli/remote.md) | Remote build server commands |
+
+### Package Signing
+
+Cryptographic signing for packages and repositories:
+
+| Document | Description |
+|----------|-------------|
+| [Signing Overview](signing/index.md) | APK signing concepts |
+| [Key Generation](signing/keygen.md) | Generate RSA signing keys |
+| [Repository Management](signing/repositories.md) | Create and sign APKINDEX |
+
+### Testing
+
+Test your packages after building:
+
+| Document | Description |
+|----------|-------------|
+| [Testing Overview](testing/index.md) | How package testing works |
+| [Test Examples](testing/test-examples.md) | Common test patterns |
+
+### Remote Builds
+
+Distributed building with melange-server:
+
+| Document | Description |
+|----------|-------------|
+| [Remote Builds Overview](remote-builds/index.md) | Remote build architecture |
+| [Server Setup](remote-builds/server-setup.md) | Deploy melange-server locally |
+| [Submitting Builds](remote-builds/submitting-builds.md) | Submit builds to the server |
+| [Managing Backends](remote-builds/managing-backends.md) | Add and configure BuildKit backends |
+| [GKE Deployment](remote-builds/gke-deployment.md) | Production deployment on GKE |
+
+### Advanced Topics
+
+| Document | Description |
+|----------|-------------|
+| [Caching](advanced/caching.md) | BuildKit cache configuration |
+| [Registry Authentication](advanced/registry-auth.md) | Authenticate with private registries |
+| [Troubleshooting](advanced/troubleshooting.md) | Common issues and solutions |
+
+### Development
+
+Contributing to melange2:
+
+| Document | Description |
+|----------|-------------|
+| [Development Overview](development/index.md) | Contributing guide |
+| [Development Setup](development/setup.md) | Set up your development environment |
+| [Architecture](development/architecture.md) | Codebase structure and design |
+| [Testing](development/testing.md) | Running and writing tests |
+| [Adding Pipelines](development/adding-pipelines.md) | Create new built-in pipelines |
+| [Git Workflow](development/git-workflow.md) | Branching and PR conventions |
+
+## Quick Start
+
+```bash
+# Install melange2
+go build -o melange2 .
+
+# Start BuildKit
+docker run -d --name buildkitd --privileged -p 1234:1234 \
+  moby/buildkit:latest --addr tcp://0.0.0.0:1234
+
+# Build a package
+./melange2 build examples/hello.yaml --buildkit-addr tcp://localhost:1234
+```
+
+## Project Status
+
+melange2 is **experimental**. It is a fork of [chainguard-dev/melange](https://github.com/chainguard-dev/melange) that replaces traditional runners (bubblewrap, Docker, QEMU) with BuildKit. For production use, see the upstream project.
+
+## Links
+
+- [GitHub Repository](https://github.com/dlorenc/melange2)
+- [Upstream melange](https://github.com/chainguard-dev/melange)
+- [BuildKit](https://github.com/moby/buildkit)
+- [Wolfi](https://github.com/wolfi-dev)
