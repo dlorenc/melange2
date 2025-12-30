@@ -33,5 +33,10 @@ data:
     backends:
       - addr: tcp://buildkit:1234
         arch: x86_64
+        maxJobs: 4
         labels:
           tier: standard
+    # Pool-wide throttling configuration
+    defaultMaxJobs: 4        # Default max concurrent jobs per backend
+    failureThreshold: 3      # Consecutive failures before circuit opens
+    recoveryTimeout: 30s     # How long circuit stays open

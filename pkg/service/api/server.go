@@ -50,6 +50,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/v1/builds", s.handleBuilds)
 	s.mux.HandleFunc("/api/v1/builds/", s.handleBuild)
 	s.mux.HandleFunc("/api/v1/backends", s.handleBackends)
+	s.mux.HandleFunc("/api/v1/backends/status", s.handleBackendsStatus)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 }
 
@@ -164,6 +165,23 @@ func (s *Server) removeBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleBackendsStatus returns detailed status of all backends including
+// active jobs, circuit breaker state, and failure counts.
+// GET /api/v1/backends/status
+func (s *Server) handleBackendsStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	status := s.pool.Status()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"backends": status,
+	})
 }
 
 // MaxBodySize is the maximum allowed request body size (10MB).

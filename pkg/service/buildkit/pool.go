@@ -21,8 +21,23 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+// Default configuration values.
+const (
+	DefaultMaxJobs         = 4
+	DefaultFailureThreshold = 3
+	DefaultRecoveryTimeout  = 30 * time.Second
+)
+
+// Errors returned by pool operations.
+var (
+	ErrNoAvailableBackend = errors.New("no available backend: all backends are at capacity or circuit-open")
+	ErrBackendAtCapacity  = errors.New("backend is at capacity")
+	ErrBackendNotFound    = errors.New("backend not found")
 )
 
 // Backend represents a BuildKit backend instance.
@@ -36,30 +51,81 @@ type Backend struct {
 	// Labels are arbitrary key-value pairs for backend selection.
 	// Examples: tier=high-memory, sandbox=privileged
 	Labels map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+
+	// MaxJobs is the maximum number of concurrent jobs this backend can handle.
+	// If 0, the pool's DefaultMaxJobs is used.
+	MaxJobs int `json:"maxJobs,omitempty" yaml:"maxJobs,omitempty"`
+}
+
+// backendState tracks runtime state for a backend (not serialized).
+type backendState struct {
+	// activeJobs is the current number of jobs running on this backend.
+	activeJobs atomic.Int32
+
+	// failures is the number of consecutive failures.
+	failures atomic.Int32
+
+	// lastFailure is the time of the last failure.
+	lastFailure time.Time
+
+	// circuitOpen is true if the circuit breaker is open (backend excluded).
+	circuitOpen atomic.Bool
+
+	// mu protects lastFailure
+	mu sync.Mutex
+}
+
+// BackendStatus represents the current status of a backend for observability.
+type BackendStatus struct {
+	Backend
+	ActiveJobs  int       `json:"activeJobs"`
+	Failures    int       `json:"failures"`
+	CircuitOpen bool      `json:"circuitOpen"`
+	LastFailure time.Time `json:"lastFailure,omitempty"`
 }
 
 // PoolConfig is the configuration for a BuildKit pool.
 type PoolConfig struct {
 	Backends []Backend `json:"backends" yaml:"backends"`
+
+	// DefaultMaxJobs is the default maximum concurrent jobs per backend.
+	// Used when a backend's MaxJobs is 0. Defaults to DefaultMaxJobs constant.
+	DefaultMaxJobs int `json:"defaultMaxJobs,omitempty" yaml:"defaultMaxJobs,omitempty"`
+
+	// FailureThreshold is the number of consecutive failures before opening the circuit.
+	// Defaults to DefaultFailureThreshold constant.
+	FailureThreshold int `json:"failureThreshold,omitempty" yaml:"failureThreshold,omitempty"`
+
+	// RecoveryTimeout is how long the circuit stays open before allowing a retry.
+	// Defaults to DefaultRecoveryTimeout constant.
+	RecoveryTimeout time.Duration `json:"recoveryTimeout,omitempty" yaml:"recoveryTimeout,omitempty"`
 }
 
 // Pool manages a collection of BuildKit backends.
 type Pool struct {
 	backends []Backend
+	state    map[string]*backendState // keyed by Addr
 	mu       sync.RWMutex
 
-	// Round-robin counters per architecture
-	counters map[string]*atomic.Uint64
+	// Configuration
+	defaultMaxJobs   int
+	failureThreshold int
+	recoveryTimeout  time.Duration
 }
 
-// NewPool creates a new BuildKit pool from the given backends.
+// NewPool creates a new BuildKit pool from the given backends with default configuration.
 func NewPool(backends []Backend) (*Pool, error) {
-	if len(backends) == 0 {
+	return NewPoolWithConfig(PoolConfig{Backends: backends})
+}
+
+// NewPoolWithConfig creates a new BuildKit pool from a configuration.
+func NewPoolWithConfig(config PoolConfig) (*Pool, error) {
+	if len(config.Backends) == 0 {
 		return nil, errors.New("at least one backend is required")
 	}
 
 	// Validate backends
-	for i, b := range backends {
+	for i, b := range config.Backends {
 		if b.Addr == "" {
 			return nil, fmt.Errorf("backend %d: addr is required", i)
 		}
@@ -68,17 +134,32 @@ func NewPool(backends []Backend) (*Pool, error) {
 		}
 	}
 
-	// Initialize counters for each architecture
-	counters := make(map[string]*atomic.Uint64)
-	for _, b := range backends {
-		if _, exists := counters[b.Arch]; !exists {
-			counters[b.Arch] = &atomic.Uint64{}
-		}
+	// Apply defaults
+	defaultMaxJobs := config.DefaultMaxJobs
+	if defaultMaxJobs == 0 {
+		defaultMaxJobs = DefaultMaxJobs
+	}
+	failureThreshold := config.FailureThreshold
+	if failureThreshold == 0 {
+		failureThreshold = DefaultFailureThreshold
+	}
+	recoveryTimeout := config.RecoveryTimeout
+	if recoveryTimeout == 0 {
+		recoveryTimeout = DefaultRecoveryTimeout
+	}
+
+	// Initialize state for each backend
+	state := make(map[string]*backendState)
+	for _, b := range config.Backends {
+		state[b.Addr] = &backendState{}
 	}
 
 	return &Pool{
-		backends: backends,
-		counters: counters,
+		backends:         config.Backends,
+		state:            state,
+		defaultMaxJobs:   defaultMaxJobs,
+		failureThreshold: failureThreshold,
+		recoveryTimeout:  recoveryTimeout,
 	}, nil
 }
 
@@ -94,7 +175,7 @@ func NewPoolFromConfig(configPath string) (*Pool, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
-	return NewPool(config.Backends)
+	return NewPoolWithConfig(config)
 }
 
 // NewPoolFromSingleAddr creates a pool with a single backend for backward compatibility.
@@ -113,34 +194,148 @@ func NewPoolFromSingleAddr(addr, arch string) (*Pool, error) {
 }
 
 // Select chooses a backend matching the given architecture and selector.
-// If multiple backends match, round-robin selection is used.
-// Returns an error if no matching backend is found.
+// It uses load-aware selection, picking the least-loaded available backend.
+// Backends with open circuits or at capacity are excluded.
+// Returns ErrNoAvailableBackend if all matching backends are unavailable.
 func (p *Pool) Select(arch string, selector map[string]string) (*Backend, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Find all matching backends
-	matches := make([]Backend, 0, len(p.backends))
-	for _, b := range p.backends {
+	var best *Backend
+	var bestLoad float64 = 2.0 // Start higher than max possible (1.0)
+
+	now := time.Now()
+
+	for i := range p.backends {
+		b := &p.backends[i]
+
+		// Filter by architecture
 		if b.Arch != arch {
 			continue
 		}
+
+		// Filter by labels
 		if !matchesSelector(b.Labels, selector) {
 			continue
 		}
-		matches = append(matches, b)
+
+		state := p.state[b.Addr]
+		if state == nil {
+			continue
+		}
+
+		// Check circuit breaker
+		if state.circuitOpen.Load() {
+			state.mu.Lock()
+			lastFailure := state.lastFailure
+			state.mu.Unlock()
+
+			if now.Sub(lastFailure) < p.recoveryTimeout {
+				// Circuit still open, skip this backend
+				continue
+			}
+			// Recovery timeout passed, allow one attempt (half-open state)
+			// The circuit will be reset on success or stay open on failure
+		}
+
+		// Get max jobs for this backend
+		maxJobs := b.MaxJobs
+		if maxJobs == 0 {
+			maxJobs = p.defaultMaxJobs
+		}
+
+		// Check capacity
+		active := int(state.activeJobs.Load())
+		if active >= maxJobs {
+			continue // At capacity
+		}
+
+		// Calculate load ratio
+		load := float64(active) / float64(maxJobs)
+		if best == nil || load < bestLoad {
+			best = b
+			bestLoad = load
+		}
 	}
 
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no backend found for arch=%s selector=%v", arch, selector)
+	if best == nil {
+		return nil, ErrNoAvailableBackend
 	}
 
-	// Round-robin selection
-	counter := p.counters[arch]
-	idx := counter.Add(1) - 1
-	selected := matches[idx%uint64(len(matches))]
+	// Return a copy to avoid mutation
+	result := *best
+	return &result, nil
+}
 
-	return &selected, nil
+// Acquire increments the active job count for a backend.
+// Returns true if a slot was acquired, false if the backend is at capacity.
+// This should be called after Select() and before starting a job.
+func (p *Pool) Acquire(addr string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	state := p.state[addr]
+	if state == nil {
+		return false
+	}
+
+	// Find the backend to get maxJobs
+	var maxJobs int
+	for i := range p.backends {
+		if p.backends[i].Addr == addr {
+			maxJobs = p.backends[i].MaxJobs
+			break
+		}
+	}
+	if maxJobs == 0 {
+		maxJobs = p.defaultMaxJobs
+	}
+
+	// CAS loop to atomically increment if under capacity
+	for {
+		current := state.activeJobs.Load()
+		if int(current) >= maxJobs {
+			return false
+		}
+		if state.activeJobs.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
+// Release decrements the active job count and records success/failure.
+// This should be called when a job completes (regardless of outcome).
+func (p *Pool) Release(addr string, success bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	state := p.state[addr]
+	if state == nil {
+		return
+	}
+
+	// Decrement active jobs
+	state.activeJobs.Add(-1)
+
+	if success {
+		// Reset failure count on success
+		state.failures.Store(0)
+		// Close circuit if it was open (half-open -> closed)
+		state.circuitOpen.Store(false)
+	} else {
+		// Increment failure count
+		failures := state.failures.Add(1)
+
+		// Update last failure time
+		state.mu.Lock()
+		state.lastFailure = time.Now()
+		state.mu.Unlock()
+
+		// Open circuit if threshold reached
+		if int(failures) >= p.failureThreshold {
+			state.circuitOpen.Store(true)
+		}
+	}
 }
 
 // matchesSelector checks if the backend labels match all selector requirements.
@@ -193,6 +388,32 @@ func (p *Pool) Architectures() []string {
 	return archs
 }
 
+// Status returns the current status of all backends for observability.
+func (p *Pool) Status() []BackendStatus {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	result := make([]BackendStatus, 0, len(p.backends))
+	for _, b := range p.backends {
+		status := BackendStatus{
+			Backend: b,
+		}
+
+		if state := p.state[b.Addr]; state != nil {
+			status.ActiveJobs = int(state.activeJobs.Load())
+			status.Failures = int(state.failures.Load())
+			status.CircuitOpen = state.circuitOpen.Load()
+
+			state.mu.Lock()
+			status.LastFailure = state.lastFailure
+			state.mu.Unlock()
+		}
+
+		result = append(result, status)
+	}
+	return result
+}
+
 // Add adds a new backend to the pool.
 // Returns an error if the backend is invalid or already exists.
 func (p *Pool) Add(backend Backend) error {
@@ -218,13 +439,9 @@ func (p *Pool) Add(backend Backend) error {
 		backend.Labels = map[string]string{}
 	}
 
-	// Add the backend
+	// Add the backend and initialize its state
 	p.backends = append(p.backends, backend)
-
-	// Initialize counter for new architecture if needed
-	if _, exists := p.counters[backend.Arch]; !exists {
-		p.counters[backend.Arch] = &atomic.Uint64{}
-	}
+	p.state[backend.Addr] = &backendState{}
 
 	return nil
 }
@@ -243,6 +460,7 @@ func (p *Pool) Remove(addr string) error {
 	for i, b := range p.backends {
 		if b.Addr == addr {
 			p.backends = append(p.backends[:i], p.backends[i+1:]...)
+			delete(p.state, addr)
 			return nil
 		}
 	}
