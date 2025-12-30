@@ -25,9 +25,11 @@ melange build [config.yaml]
 | Flag | Shorthand | Default | Description |
 |------|-----------|---------|-------------|
 | `--out-dir` | | `./packages/` | Directory where packages will be output |
-| `--source-dir` | | (none) | Directory used for included sources |
+| `--source-dir` | | (auto-detect) | Directory used for included sources |
 | `--workspace-dir` | | (none) | Directory used for the workspace at /home/build |
 | `--empty-workspace` | | `false` | Whether the build workspace should be empty |
+
+**Convention**: If `./$pkgname/` exists (where `$pkgname` is the package name from the config), it is automatically used as the source directory. The flag is only needed to override.
 
 ### Build Configuration
 
@@ -42,7 +44,9 @@ melange build [config.yaml]
 
 | Flag | Shorthand | Default | Description |
 |------|-----------|---------|-------------|
-| `--pipeline-dir` | | (none) | Directory used to extend defined built-in pipelines |
+| `--pipeline-dir` | | (auto-detect) | Directory used to extend defined built-in pipelines |
+
+**Convention**: If `./pipelines/` exists, it is automatically used. The flag is only needed to override.
 
 ### Caching
 
@@ -64,8 +68,10 @@ melange build [config.yaml]
 
 | Flag | Shorthand | Default | Description |
 |------|-----------|---------|-------------|
-| `--signing-key` | | (none) | Key to use for signing |
+| `--signing-key` | | (auto-detect) | Key to use for signing |
 | `--generate-index` | | `true` | Whether to generate APKINDEX.tar.gz |
+
+**Convention**: If `melange.rsa` or `local-signing.rsa` exists in the current directory, it is automatically used for signing. The flag is only needed to override or to use a key in a different location.
 
 ### Variables and Environment
 
@@ -223,6 +229,38 @@ Before building packages, you need a running BuildKit daemon:
 docker run -d --name buildkitd --privileged -p 1234:1234 \
   moby/buildkit:latest --addr tcp://0.0.0.0:1234
 ```
+
+## Convention-Based Defaults
+
+melange2 uses convention over configuration to simplify common workflows. The following conventions are automatically applied:
+
+| Convention | Location | What it does |
+|------------|----------|--------------|
+| Pipeline directory | `./pipelines/` | Custom pipelines are automatically loaded |
+| Source directory | `./$pkgname/` | Source files are loaded from a directory named after the package |
+| Signing key | `melange.rsa` or `local-signing.rsa` | First matching key is used for signing |
+
+### Example
+
+Given a directory structure:
+
+```
+myproject/
+├── curl.yaml              # Package config (package.name: curl)
+├── curl/                  # Source files (auto-detected)
+│   └── patches/
+│       └── fix.patch
+├── pipelines/             # Custom pipelines (auto-detected)
+│   └── custom-build.yaml
+└── melange.rsa            # Signing key (auto-detected)
+```
+
+Running `melange2 build curl.yaml` will automatically:
+- Load pipelines from `./pipelines/`
+- Use source files from `./curl/`
+- Sign packages with `melange.rsa`
+
+No additional flags are needed.
 
 ## See Also
 

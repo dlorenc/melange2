@@ -11,6 +11,7 @@ This guide covers how to submit builds to a melange-server using the CLI.
 
 ```bash
 # Submit a single package and wait for completion
+# (automatically includes ./pipelines/ and ./mypackage/ source files if they exist)
 ./melange2 remote submit mypackage.yaml --server http://localhost:8080 --wait
 
 # Check status of a build
@@ -39,17 +40,18 @@ melange2 remote submit [config.yaml...] [flags]
 | `--test` | bool | `false` | Run tests after build |
 | `--debug` | bool | `false` | Enable debug logging |
 | `--wait` | bool | `false` | Wait for build to complete |
-| `--pipeline-dir` | strings | - | Directories containing pipeline YAML files |
 | `--backend-selector` | strings | - | Backend label selector (`key=value`) |
 | `--git-repo` | string | - | Git repository URL for package configs |
 | `--git-ref` | string | - | Git ref (branch/tag/commit) to checkout |
 | `--git-pattern` | string | `*.yaml` | Glob pattern for config files in git repo |
 | `--git-path` | string | - | Subdirectory within git repo to search |
 
+**Convention-based defaults:** Pipelines from `./pipelines/` and source files from `./$pkgname/` are automatically included if they exist.
+
 **Examples:**
 
 ```bash
-# Submit a single package
+# Submit a single package (auto-includes ./pipelines/ and ./mypackage/ if they exist)
 melange2 remote submit mypackage.yaml --server http://localhost:8080
 
 # Submit and wait for completion
@@ -60,9 +62,6 @@ melange2 remote submit mypackage.yaml --arch aarch64
 
 # Submit multiple packages (builds in dependency order)
 melange2 remote submit lib-a.yaml lib-b.yaml app.yaml --wait
-
-# Submit with custom pipelines
-melange2 remote submit mypackage.yaml --pipeline-dir ./pipelines/
 
 # Submit with backend selector
 melange2 remote submit mypackage.yaml --backend-selector tier=high-memory
@@ -388,11 +387,18 @@ echo "Build succeeded!"
 
 ### Using Custom Pipelines
 
+Custom pipelines are automatically included from `./pipelines/` if the directory exists:
+
 ```bash
-# Include local pipelines directory
+# Project structure:
+# myproject/
+# ├── mypackage.yaml
+# └── pipelines/
+#     └── custom-build.yaml
+
+# Pipelines are automatically uploaded
 ./melange2 remote submit \
   --server http://localhost:8080 \
-  --pipeline-dir ./pipelines \
   --wait \
   mypackage.yaml
 ```

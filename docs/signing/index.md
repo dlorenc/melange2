@@ -38,15 +38,27 @@ melange2 provides several commands for signing:
 
 ## Signing During Builds
 
-You can sign packages automatically during the build process by providing the `--signing-key` flag:
+melange2 automatically detects and uses signing keys from conventional locations. If `melange.rsa` or `local-signing.rsa` exists in the current directory, it will be used automatically:
 
 ```bash
-melange build package.yaml --signing-key melange.rsa --buildkit-addr tcp://localhost:1234
+# Auto-detects melange.rsa or local-signing.rsa if present
+melange build package.yaml --buildkit-addr tcp://localhost:1234
+
+# Or explicitly specify a key
+melange build package.yaml --signing-key /path/to/mykey.rsa --buildkit-addr tcp://localhost:1234
 ```
 
-When a signing key is provided:
+When a signing key is provided (or auto-detected):
 1. Each built package is signed with the specified key
 2. The generated APKINDEX.tar.gz is also signed (if `--generate-index` is enabled, which is the default)
+
+### Key Auto-Detection
+
+melange2 checks for signing keys in this order:
+1. `melange.rsa` in the current directory
+2. `local-signing.rsa` in the current directory
+
+The first matching key is used. Use the `--signing-key` flag to override.
 
 ## Key Files
 

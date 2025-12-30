@@ -43,6 +43,10 @@ Supports three modes:
 
 For multi-package builds, packages are built in dependency order based on `environment.contents.packages` declarations.
 
+**Convention-based defaults**: The submit command automatically includes:
+- Pipelines from `./pipelines/` (if the directory exists)
+- Source files from `./$pkgname/` for each package (if the directory exists)
+
 ### Flags
 
 | Flag | Default | Description |
@@ -52,7 +56,6 @@ For multi-package builds, packages are built in dependency order based on `envir
 | `--test` | `false` | Run tests after build |
 | `--debug` | `false` | Enable debug logging |
 | `--wait` | `false` | Wait for build to complete |
-| `--pipeline-dir` | (none) | Directory containing pipeline YAML files (can be specified multiple times) |
 | `--backend-selector` | (none) | Backend label selector (key=value, can be specified multiple times) |
 
 #### Git Source Flags
@@ -67,7 +70,7 @@ For multi-package builds, packages are built in dependency order based on `envir
 ### Examples
 
 ```bash
-# Submit a single build
+# Submit a single build (auto-includes ./pipelines/ and ./mypackage/ if they exist)
 melange remote submit mypackage.yaml --server http://localhost:8080
 
 # Submit multiple packages (builds in dependency order)
@@ -84,9 +87,6 @@ melange remote submit mypackage.yaml --arch aarch64
 
 # Submit with backend selector
 melange remote submit mypackage.yaml --backend-selector tier=high-memory
-
-# Submit with custom pipelines
-melange remote submit mypackage.yaml --pipeline-dir ./custom-pipelines/
 ```
 
 ---
@@ -353,6 +353,43 @@ make gke-port-forward
 
 # 5. Submit and wait in one command
 ./melange2 remote submit mypackage.yaml --server http://localhost:8080 --wait
+```
+
+## Convention-Based Defaults
+
+The `remote submit` command automatically includes files based on conventions:
+
+| Convention | Location | What happens |
+|------------|----------|--------------|
+| Pipeline directory | `./pipelines/` | All YAML files are uploaded and available to builds |
+| Source directory | `./$pkgname/` | Files are uploaded for each package (where `$pkgname` is the package name) |
+
+### Example Directory Structure
+
+```
+myproject/
+├── curl.yaml              # Package config (package.name: curl)
+├── curl/                  # Source files for curl (auto-uploaded)
+│   └── patches/
+│       └── fix.patch
+├── jq.yaml                # Package config (package.name: jq)
+├── jq/                    # Source files for jq (auto-uploaded)
+│   └── config.ini
+└── pipelines/             # Custom pipelines (auto-uploaded)
+    └── custom-build.yaml
+```
+
+Running `./melange2 remote submit curl.yaml jq.yaml --wait` will automatically:
+- Upload pipelines from `./pipelines/`
+- Upload source files from `./curl/` for the curl package
+- Upload source files from `./jq/` for the jq package
+
+The output will confirm what was included:
+```
+Build submitted: bld-abc123
+Packages (2): curl, jq
+Included 1 pipeline(s) from ./pipelines/
+Included source files for 2 package(s)
 ```
 
 ## See Also

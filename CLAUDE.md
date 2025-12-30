@@ -414,6 +414,34 @@ make gke-port-forward
 make gke-stop-port-forward
 ```
 
+## Convention-Based Defaults
+
+melange2 uses convention over configuration for common paths. These are automatically detected and used:
+
+| Convention | Location | Description |
+|------------|----------|-------------|
+| Pipeline directory | `./pipelines/` | Custom pipelines are automatically loaded |
+| Source directory | `./$pkgname/` | Source files are loaded from a directory named after the package |
+| Signing key | `melange.rsa` or `local-signing.rsa` | First matching key is used for signing |
+
+**Example directory structure:**
+```
+myproject/
+├── curl.yaml              # Package config
+├── curl/                  # Source files for curl package (auto-detected)
+│   ├── patches/
+│   │   └── fix.patch
+│   └── config.ini
+├── pipelines/             # Custom pipelines (auto-detected)
+│   └── custom-build.yaml
+└── melange.rsa            # Signing key (auto-detected)
+```
+
+With this structure, running `./melange2 build curl.yaml` or `./melange2 remote submit curl.yaml` will automatically:
+- Include pipelines from `./pipelines/`
+- Include source files from `./curl/`
+- Use `melange.rsa` for signing (local builds only)
+
 ## Remote Build Commands
 
 The `melange remote` subcommand allows submitting builds to a remote melange-server.
@@ -422,6 +450,7 @@ The `melange remote` subcommand allows submitting builds to a remote melange-ser
 
 ```bash
 # Submit a single package and wait for completion
+# (automatically includes ./pipelines/ and ./$pkgname/ source files)
 ./melange2 remote submit pkg.yaml --server http://localhost:8080 --wait
 
 # Submit with specific architecture
@@ -429,9 +458,6 @@ The `melange remote` subcommand allows submitting builds to a remote melange-ser
 
 # Submit multiple packages (builds in dependency order)
 ./melange2 remote submit lib-a.yaml lib-b.yaml app.yaml --server http://localhost:8080 --wait
-
-# Submit with custom pipelines directory
-./melange2 remote submit pkg.yaml --server http://localhost:8080 --pipeline-dir ./pipelines/ --wait
 
 # Submit from a git repository
 ./melange2 remote submit --git-repo https://github.com/wolfi-dev/os --git-pattern "*.yaml" --server http://localhost:8080
@@ -487,9 +513,10 @@ The `melange remote` subcommand allows submitting builds to a remote melange-ser
 | `--arch` | Target architecture (e.g., x86_64, aarch64) |
 | `--wait` | Wait for job/build to complete before returning |
 | `--debug` | Enable debug logging |
-| `--pipeline-dir` | Directory containing pipeline YAML files |
 | `--backend-selector` | Label selector for backend (key=value) |
 | `--test` | Run tests after build |
+
+Note: Pipelines and source files are automatically included by convention (see [Convention-Based Defaults](#convention-based-defaults)).
 
 ## Dependencies
 
