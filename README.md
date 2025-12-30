@@ -138,6 +138,27 @@ The build process:
 3. **BuildKit** executes the build with caching and exports results
 4. **melange** packages the output as APK files
 
+## Remote Build Server
+
+melange2 includes `melange-server`, a remote build service for distributing builds across multiple BuildKit backends.
+
+```shell
+# Build and run the server
+go build -o melange-server ./cmd/melange-server/
+./melange-server --buildkit-addr tcp://localhost:1234
+
+# Submit a remote build
+melange2 remote submit package.yaml --server http://localhost:8080 --wait
+```
+
+Key features:
+- **Multi-backend support** - Route builds to different BuildKit instances by architecture
+- **Job scheduling** - Queue and execute builds with configurable concurrency
+- **GCS storage** - Store build artifacts in Google Cloud Storage for production deployments
+- **Backend pools** - Manage pools of BuildKit backends with labels and health checks
+
+See [docs/remote-builds/](docs/remote-builds/) for detailed documentation.
+
 ## Development
 
 ### Running Tests
