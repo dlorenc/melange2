@@ -77,14 +77,18 @@ spec:
           httpGet:
             path: /healthz
             port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 10
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 30
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /healthz
             port: 8080
           initialDelaySeconds: 5
-          periodSeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
         volumeMounts:
         - name: backends-config
           mountPath: /etc/melange
@@ -117,5 +121,5 @@ metadata:
   name: melange-server
   namespace: melange
   annotations:
-    # Workload Identity annotation - will be set by setup script
-    iam.gke.io/gcp-service-account: ""
+    # Workload Identity annotation
+    iam.gke.io/gcp-service-account: melange-server@dlorenc-chainguard.iam.gserviceaccount.com
