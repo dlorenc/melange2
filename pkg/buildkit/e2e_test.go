@@ -1338,9 +1338,11 @@ func TestE2E_BuiltinGitCheckout(t *testing.T) {
 		Pipeline: []config.Pipeline{
 			{
 				// This uses the built-in pipeline with native LLB operations
+				// Note: branch must be specified for native LLB (llb.Git requires explicit ref)
 				Uses: "git-checkout",
 				With: map[string]string{
 					"repository":  "https://github.com/octocat/Hello-World.git",
+					"branch":      "master",
 					"destination": "hello-world",
 					"depth":       "1",
 				},

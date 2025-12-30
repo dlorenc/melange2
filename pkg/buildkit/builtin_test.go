@@ -56,9 +56,10 @@ func TestBuildBuiltinPipeline_GitCheckout(t *testing.T) {
 		errorMsg    string
 	}{
 		{
-			name: "basic git clone",
+			name: "basic git clone with branch",
 			with: map[string]string{
 				"repository": "https://github.com/octocat/Hello-World.git",
+				"branch":     "master",
 			},
 			expectError: false,
 		},
@@ -83,6 +84,7 @@ func TestBuildBuiltinPipeline_GitCheckout(t *testing.T) {
 			name: "git clone with custom destination",
 			with: map[string]string{
 				"repository":  "https://github.com/octocat/Hello-World.git",
+				"branch":      "master",
 				"destination": "my-project",
 			},
 			expectError: false,
@@ -91,6 +93,7 @@ func TestBuildBuiltinPipeline_GitCheckout(t *testing.T) {
 			name: "git clone with depth",
 			with: map[string]string{
 				"repository": "https://github.com/octocat/Hello-World.git",
+				"branch":     "master",
 				"depth":      "1",
 			},
 			expectError: false,
@@ -99,9 +102,18 @@ func TestBuildBuiltinPipeline_GitCheckout(t *testing.T) {
 			name: "git clone with full history",
 			with: map[string]string{
 				"repository": "https://github.com/octocat/Hello-World.git",
+				"branch":     "master",
 				"depth":      "-1",
 			},
 			expectError: false,
+		},
+		{
+			name: "git clone without ref returns fallback error",
+			with: map[string]string{
+				"repository": "https://github.com/octocat/Hello-World.git",
+			},
+			expectError: true,
+			errorMsg:    "requires shell fallback",
 		},
 		{
 			name:        "missing repository",

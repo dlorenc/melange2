@@ -30,6 +30,10 @@ import (
 // indicating that the shell fallback should be used since BuildKit HTTP only supports sha256.
 var ErrFetchSHA512NotSupported = errors.New("fetch with expected-sha512 requires shell fallback (BuildKit HTTP only supports sha256)")
 
+// ErrGitCheckoutNoRef is returned when git-checkout is called without a branch, tag, or expected-commit,
+// indicating that the shell fallback should be used since BuildKit's llb.Git() requires an explicit ref.
+var ErrGitCheckoutNoRef = errors.New("git-checkout without branch/tag/expected-commit requires shell fallback (BuildKit Git requires explicit ref)")
+
 // BuiltinPipelines is the set of pipeline names that have native LLB implementations.
 var BuiltinPipelines = map[string]bool{
 	"git-checkout": true,
@@ -87,25 +91,20 @@ func buildGitCheckout(base llb.State, p *config.Pipeline) (llb.State, error) {
 		ref = expectedCommit
 	}
 
-	// If no ref specified, use HEAD
+	// If no ref specified, fall back to shell implementation
+	// BuildKit's llb.Git() requires an explicit ref and doesn't support "HEAD"
 	if ref == "" {
-		ref = "HEAD"
+		return llb.State{}, ErrGitCheckoutNoRef
 	}
 
 	// Build git options
 	var gitOpts []llb.GitOption
 
-	// Handle depth - BuildKit's Git() doesn't have a direct depth option,
-	// but we can use KeepGitDir to preserve .git for full history
-	depth := with["depth"]
-	keepGitDir := false
-	if depth == "-1" || depth == "unset" || depth == "" {
-		// Full clone or unset - keep git dir for cherry-picks
-		keepGitDir = true
-	}
-	if keepGitDir {
-		gitOpts = append(gitOpts, llb.KeepGitDir())
-	}
+	// Always keep the .git directory to match shell implementation behavior.
+	// Many builds rely on checking .git existence or running git commands.
+	// BuildKit's Git() doesn't have a direct depth option - it always does a
+	// shallow clone unless KeepGitDir is set, in which case it preserves .git.
+	gitOpts = append(gitOpts, llb.KeepGitDir())
 
 	// Custom name for progress display
 	gitOpts = append(gitOpts, llb.WithCustomNamef("[git] clone %s@%s", repo, ref))
