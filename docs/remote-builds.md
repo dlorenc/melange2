@@ -47,13 +47,11 @@ melange remote submit mypackage.yaml --arch aarch64 --debug
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `POST /api/v1/jobs` | POST | Submit a new build job (single or multi-package) |
-| `GET /api/v1/jobs` | GET | List all jobs |
-| `GET /api/v1/jobs/:id` | GET | Get job status and details |
-| `POST /api/v1/builds` | POST | Submit a multi-package build |
+| `POST /api/v1/builds` | POST | Submit a build (single or multi-package) |
 | `GET /api/v1/builds` | GET | List all builds |
 | `GET /api/v1/builds/:id` | GET | Get build status with per-package details |
 | `GET /api/v1/backends` | GET | List available BuildKit backends |
+| `GET /api/v1/backends/status` | GET | Get backend status (active jobs, circuit breaker) |
 | `POST /api/v1/backends` | POST | Add a new backend |
 | `DELETE /api/v1/backends` | DELETE | Remove a backend |
 | `GET /healthz` | GET | Health check |

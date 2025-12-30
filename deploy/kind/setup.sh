@@ -31,5 +31,5 @@ echo ""
 echo "Then test with:"
 echo '  curl http://localhost:8080/healthz'
 echo ""
-echo "To submit a build job:"
-echo '  curl -X POST http://localhost:8080/api/v1/jobs -H "Content-Type: application/json" -d @example-job.json'
+echo "To submit a build:"
+echo '  curl -X POST http://localhost:8080/api/v1/builds -H "Content-Type: application/json" -d @example-job.json'

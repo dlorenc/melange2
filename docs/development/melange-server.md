@@ -41,9 +41,11 @@ HTTP server providing REST endpoints:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/healthz` | GET | Health check |
-| `/api/v1/jobs` | POST | Create a new build job |
-| `/api/v1/jobs` | GET | List all jobs |
-| `/api/v1/jobs/:id` | GET | Get job status and details |
+| `/api/v1/builds` | POST | Create a new build |
+| `/api/v1/builds` | GET | List all builds |
+| `/api/v1/builds/:id` | GET | Get build status and details |
+| `/api/v1/backends` | GET | List BuildKit backends |
+| `/api/v1/backends/status` | GET | Get backend status (active jobs, circuit breaker) |
 
 ### Job Store (`pkg/service/store/`)
 
@@ -71,10 +73,10 @@ Core data types:
 
 ## API Reference
 
-### Create Job
+### Create Build
 
 ```bash
-POST /api/v1/jobs
+POST /api/v1/builds
 Content-Type: application/json
 
 {
@@ -87,40 +89,41 @@ Content-Type: application/json
 
 Response:
 ```json
-{"id": "abc12345"}
+{"id": "bld-abc12345", "packages": ["hello"]}
 ```
 
-### Get Job Status
+### Get Build Status
 
 ```bash
-GET /api/v1/jobs/:id
+GET /api/v1/builds/:id
 ```
 
 Response:
 ```json
 {
-  "id": "abc12345",
+  "id": "bld-abc12345",
   "status": "success",
   "spec": {...},
+  "packages": [
+    {"name": "hello", "status": "success", ...}
+  ],
   "created_at": "2025-01-01T00:00:00Z",
   "started_at": "2025-01-01T00:00:01Z",
-  "finished_at": "2025-01-01T00:00:30Z",
-  "log_path": "/var/lib/melange/output/abc12345/logs/build.log",
-  "output_path": "/var/lib/melange/output/abc12345"
+  "finished_at": "2025-01-01T00:00:30Z"
 }
 ```
 
-### List Jobs
+### List Builds
 
 ```bash
-GET /api/v1/jobs
+GET /api/v1/builds
 ```
 
 Response:
 ```json
 [
-  {"id": "abc12345", "status": "success", ...},
-  {"id": "def67890", "status": "running", ...}
+  {"id": "bld-abc12345", "status": "success", ...},
+  {"id": "bld-def67890", "status": "running", ...}
 ]
 ```
 
@@ -183,16 +186,16 @@ kubectl port-forward -n melange svc/melange-server 8080:8080
 ### Test a Build
 
 ```bash
-# Submit a job
-curl -X POST http://localhost:8080/api/v1/jobs \
+# Submit a build
+curl -X POST http://localhost:8080/api/v1/builds \
   -H "Content-Type: application/json" \
   -d @deploy/kind/example-job.json
 
-# Check status (replace with actual job ID)
-curl http://localhost:8080/api/v1/jobs/<job-id>
+# Check status (replace with actual build ID)
+curl http://localhost:8080/api/v1/builds/<build-id>
 
-# List all jobs
-curl http://localhost:8080/api/v1/jobs
+# List all builds
+curl http://localhost:8080/api/v1/builds
 ```
 
 ### View Build Output

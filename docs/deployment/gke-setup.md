@@ -137,10 +137,10 @@ curl http://localhost:8080/healthz
 # {"status":"ok"}
 ```
 
-### Submit a Build Job
+### Submit a Build
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/jobs \
+curl -X POST http://localhost:8080/api/v1/builds \
   -H "Content-Type: application/json" \
   -d '{
     "config_yaml": "package:\n  name: hello\n  version: 1.0.0\n  epoch: 0\n  description: Test package\n  copyright:\n    - license: Apache-2.0\n\nenvironment:\n  contents:\n    repositories:\n      - https://packages.wolfi.dev/os\n    keyring:\n      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub\n    packages:\n      - busybox\n\npipeline:\n  - runs: |\n      mkdir -p ${{targets.destdir}}/usr/bin\n      echo hello > ${{targets.destdir}}/usr/bin/hello\n      chmod +x ${{targets.destdir}}/usr/bin/hello\n",
@@ -148,16 +148,16 @@ curl -X POST http://localhost:8080/api/v1/jobs \
   }'
 ```
 
-### Check Job Status
+### Check Build Status
 
 ```bash
-curl http://localhost:8080/api/v1/jobs/{job_id}
+curl http://localhost:8080/api/v1/builds/{build_id}
 ```
 
-### List All Jobs
+### List All Builds
 
 ```bash
-curl http://localhost:8080/api/v1/jobs
+curl http://localhost:8080/api/v1/builds
 ```
 
 ## GCS Storage Layout
@@ -238,11 +238,11 @@ Common issues:
 - GCS bucket doesn't exist or no permissions
 - BuildKit service not reachable
 
-### Build Jobs Failing
+### Builds Failing
 
-1. Check job error message:
+1. Check build error message:
    ```bash
-   curl http://localhost:8080/api/v1/jobs/{job-id} | jq .error
+   curl http://localhost:8080/api/v1/builds/{build-id} | jq .error
    ```
 
 2. Check server logs:
