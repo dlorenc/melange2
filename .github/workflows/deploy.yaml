@@ -56,9 +56,10 @@ jobs:
           location: ${{ env.CLUSTER_ZONE }}
           project_id: ${{ env.PROJECT_ID }}
 
-      - name: Deploy BuildKit
+      - name: Deploy BuildKit and Registry
         run: |
           kubectl apply -f deploy/gke/namespace.yaml
+          kubectl apply -f deploy/gke/registry.yaml
           kubectl apply -f deploy/gke/buildkit.yaml
 
       - name: Deploy ConfigMap
@@ -77,6 +78,7 @@ jobs:
 
       - name: Wait for rollout
         run: |
+          kubectl rollout status deployment/registry -n melange --timeout=180s
           kubectl rollout status deployment/buildkit -n melange --timeout=180s
           kubectl rollout status deployment/melange-server -n melange --timeout=180s
 
