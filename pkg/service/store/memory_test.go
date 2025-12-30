@@ -203,13 +203,13 @@ func TestMemoryStore_Concurrency(t *testing.T) {
 	// Concurrent creates
 	wg.Add(numGoroutines)
 	for i := 0; i < numGoroutines; i++ {
-		go func(id int) {
+		go func() {
 			defer wg.Done()
 			for j := 0; j < jobsPerGoroutine; j++ {
 				_, err := store.Create(ctx, types.JobSpec{ConfigYAML: "test"})
 				assert.NoError(t, err)
 			}
-		}(i)
+		}()
 	}
 	wg.Wait()
 
