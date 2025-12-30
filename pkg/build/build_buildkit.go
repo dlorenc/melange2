@@ -162,6 +162,14 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 		ExportRef:       b.ExportRef,
 	}
 
+	// Add cache config if registry is configured
+	if b.CacheRegistry != "" {
+		cfg.CacheConfig = &buildkit.CacheConfig{
+			Registry: b.CacheRegistry,
+			Mode:     b.CacheMode,
+		}
+	}
+
 	log.Info("running build with BuildKit")
 	if err := builder.BuildWithLayers(ctx, layers, cfg); err != nil {
 		return fmt.Errorf("buildkit build failed: %w", err)

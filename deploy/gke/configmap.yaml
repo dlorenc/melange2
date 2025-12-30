@@ -22,6 +22,11 @@ data:
   # Will be replaced by setup script
   gcs-bucket: "melange-builds"
 
+  # Registry cache configuration
+  # Uses in-cluster registry for BuildKit cache-to/cache-from
+  cache-registry: "registry:5000/melange-cache"
+  cache-mode: "max"
+
   # BuildKit backends configuration
   # Add more backends or modify labels as needed
   backends.yaml: |

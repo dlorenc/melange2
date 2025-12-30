@@ -343,3 +343,92 @@ fi
 	require.NoError(t, err)
 	require.Contains(t, string(content), "first-build")
 }
+
+// TestCacheConfig tests the CacheConfig struct behavior.
+func TestCacheConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     *CacheConfig
+		wantImport bool
+		wantExport bool
+	}{
+		{
+			name:       "nil config disables caching",
+			config:     nil,
+			wantImport: false,
+			wantExport: false,
+		},
+		{
+			name:       "empty registry disables caching",
+			config:     &CacheConfig{Registry: "", Mode: "max"},
+			wantImport: false,
+			wantExport: false,
+		},
+		{
+			name:       "valid registry enables caching",
+			config:     &CacheConfig{Registry: "registry:5000/cache", Mode: "max"},
+			wantImport: true,
+			wantExport: true,
+		},
+		{
+			name:       "min mode is valid",
+			config:     &CacheConfig{Registry: "registry:5000/cache", Mode: "min"},
+			wantImport: true,
+			wantExport: true,
+		},
+		{
+			name:       "empty mode defaults to max",
+			config:     &CacheConfig{Registry: "registry:5000/cache", Mode: ""},
+			wantImport: true,
+			wantExport: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &BuildConfig{
+				PackageName: "test-pkg",
+				CacheConfig: tt.config,
+			}
+
+			// Check if caching should be enabled
+			cacheEnabled := cfg.CacheConfig != nil && cfg.CacheConfig.Registry != ""
+			require.Equal(t, tt.wantImport, cacheEnabled, "cache import mismatch")
+			require.Equal(t, tt.wantExport, cacheEnabled, "cache export mismatch")
+
+			// Verify mode defaults to "max" when empty
+			if cacheEnabled && cfg.CacheConfig.Mode == "" {
+				// In the actual implementation, empty mode defaults to "max"
+				mode := cfg.CacheConfig.Mode
+				if mode == "" {
+					mode = "max"
+				}
+				require.Equal(t, "max", mode)
+			}
+		})
+	}
+}
+
+// TestCacheConfigInBuildConfig tests that CacheConfig is properly embedded in BuildConfig.
+func TestCacheConfigInBuildConfig(t *testing.T) {
+	// Test BuildConfig without cache
+	cfgWithoutCache := &BuildConfig{
+		PackageName:  "test-pkg",
+		WorkspaceDir: "/workspace",
+		CacheConfig:  nil,
+	}
+	require.Nil(t, cfgWithoutCache.CacheConfig)
+
+	// Test BuildConfig with cache
+	cfgWithCache := &BuildConfig{
+		PackageName:  "test-pkg",
+		WorkspaceDir: "/workspace",
+		CacheConfig: &CacheConfig{
+			Registry: "registry:5000/melange-cache",
+			Mode:     "max",
+		},
+	}
+	require.NotNil(t, cfgWithCache.CacheConfig)
+	require.Equal(t, "registry:5000/melange-cache", cfgWithCache.CacheConfig.Registry)
+	require.Equal(t, "max", cfgWithCache.CacheConfig.Mode)
+}

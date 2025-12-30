@@ -334,6 +334,35 @@ curl http://localhost:8080/healthz
 
 See `docs/deployment/gke-setup.md` for full documentation.
 
+## Registry Cache
+
+The GKE deployment includes an in-cluster container registry for BuildKit cache-to/cache-from support. This significantly improves build performance by:
+- Persisting cache across BuildKit pod restarts
+- Sharing cache across multiple BuildKit instances
+- Enabling LLB layer cache reuse between builds
+
+**Configuration (server-side only):**
+
+The cache is configured via environment variables on the melange-server:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CACHE_REGISTRY` | Registry URL for cache storage | `registry:5000/melange-cache` |
+| `CACHE_MODE` | Export mode: `min` or `max` | `max` |
+
+**How it works:**
+- BuildKit's content-addressable cache handles deduplication automatically
+- No custom cache key logic needed - BuildKit computes keys from LLB graph content
+- `max` mode exports all intermediate layers (better cache hit rate)
+- `min` mode exports only final layers (smaller, faster export)
+
+**Deployment files:**
+- `deploy/gke/registry.yaml` - In-cluster Docker Registry
+- `deploy/gke/buildkit.yaml` - BuildKit config for insecure registry access
+- `deploy/gke/configmap.yaml` - Cache configuration (CACHE_REGISTRY, CACHE_MODE)
+
+**Note:** Cache is stored in `emptyDir` - it's ephemeral and will be cleared on pod restart. This is intentional as it's just a cache.
+
 ## GKE Makefile Targets
 
 The following Makefile targets simplify working with the GKE remote build infrastructure:

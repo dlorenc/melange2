@@ -42,6 +42,16 @@ spec:
             configMapKeyRef:
               name: melange-config
               key: gcs-bucket
+        - name: CACHE_REGISTRY
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: cache-registry
+        - name: CACHE_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: cache-mode
         ports:
         - containerPort: 8080
           name: http

@@ -553,3 +553,76 @@ func TestWithExportOnFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestWithCacheRegistry(t *testing.T) {
+	tests := []struct {
+		name     string
+		registry string
+	}{
+		{
+			name:     "in-cluster registry",
+			registry: "registry:5000/melange-cache",
+		},
+		{
+			name:     "external registry",
+			registry: "us-docker.pkg.dev/project/repo/cache",
+		},
+		{
+			name:     "empty registry",
+			registry: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Build{}
+			opt := WithCacheRegistry(tt.registry)
+			err := opt(b)
+			require.NoError(t, err)
+			require.Equal(t, tt.registry, b.CacheRegistry)
+		})
+	}
+}
+
+func TestWithCacheMode(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      string
+		wantError bool
+	}{
+		{
+			name:      "max mode",
+			mode:      "max",
+			wantError: false,
+		},
+		{
+			name:      "min mode",
+			mode:      "min",
+			wantError: false,
+		},
+		{
+			name:      "empty mode (defaults to max)",
+			mode:      "",
+			wantError: false,
+		},
+		{
+			name:      "invalid mode",
+			mode:      "invalid",
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Build{}
+			opt := WithCacheMode(tt.mode)
+			err := opt(b)
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.mode, b.CacheMode)
+			}
+		})
+	}
+}

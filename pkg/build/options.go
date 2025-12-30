@@ -436,3 +436,28 @@ func WithLogWriter(w io.Writer) Option {
 		return nil
 	}
 }
+
+// WithCacheRegistry sets the registry URL for BuildKit cache.
+// This enables registry-based cache import/export for faster builds.
+// The registry must be accessible from the BuildKit daemon.
+// Example: "registry:5000/melange-cache"
+func WithCacheRegistry(registry string) Option {
+	return func(b *Build) error {
+		b.CacheRegistry = registry
+		return nil
+	}
+}
+
+// WithCacheMode sets the cache export mode.
+// "min" - only export layers for final result (smaller, faster export)
+// "max" - export all intermediate layers (better cache hit rate)
+// Defaults to "max" if not set.
+func WithCacheMode(mode string) Option {
+	return func(b *Build) error {
+		if mode != "" && mode != "min" && mode != "max" {
+			return fmt.Errorf("invalid cache mode %q: must be 'min' or 'max'", mode)
+		}
+		b.CacheMode = mode
+		return nil
+	}
+}

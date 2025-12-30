@@ -45,6 +45,13 @@ type Config struct {
 	// MaxParallel is the maximum number of concurrent package builds.
 	// Defaults to number of CPUs.
 	MaxParallel int
+	// CacheRegistry is the registry URL for BuildKit cache.
+	// If empty, caching is disabled.
+	// Example: "registry:5000/melange-cache"
+	CacheRegistry string
+	// CacheMode is the cache export mode: "min" or "max".
+	// Defaults to "max" if empty.
+	CacheMode string
 }
 
 // Scheduler processes build jobs.
@@ -266,6 +273,14 @@ func (s *Scheduler) executeJob(ctx context.Context, job *types.Job) error {
 		build.WithConfigFileRepositoryCommit("inline-" + job.ID),
 		build.WithConfigFileLicense("Apache-2.0"),
 		build.WithNamespace("wolfi"),
+	}
+
+	// Add cache config if registry is configured
+	if s.config.CacheRegistry != "" {
+		opts = append(opts, build.WithCacheRegistry(s.config.CacheRegistry))
+		if s.config.CacheMode != "" {
+			opts = append(opts, build.WithCacheMode(s.config.CacheMode))
+		}
 	}
 
 	// Add inline pipelines directory if provided
@@ -567,6 +582,14 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		build.WithConfigFileRepositoryCommit("inline-" + jobID),
 		build.WithConfigFileLicense("Apache-2.0"),
 		build.WithNamespace("wolfi"),
+	}
+
+	// Add cache config if registry is configured
+	if s.config.CacheRegistry != "" {
+		opts = append(opts, build.WithCacheRegistry(s.config.CacheRegistry))
+		if s.config.CacheMode != "" {
+			opts = append(opts, build.WithCacheMode(s.config.CacheMode))
+		}
 	}
 
 	if len(pipelines) > 0 {

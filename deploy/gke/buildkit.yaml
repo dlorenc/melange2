@@ -12,6 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# BuildKit configuration for in-cluster registry cache access
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkit-config
+  namespace: melange
+data:
+  buildkit.toml: |
+    # Allow insecure access to in-cluster registry for cache
+    [registry."registry:5000"]
+      http = true
+      insecure = true
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,6 +46,8 @@ spec:
         args:
         - --addr
         - tcp://0.0.0.0:1234
+        - --config
+        - /etc/buildkit/buildkit.toml
         ports:
         - containerPort: 1234
           name: buildkit
@@ -41,6 +56,9 @@ spec:
         volumeMounts:
         - name: buildkit-data
           mountPath: /var/lib/buildkit
+        - name: buildkit-config
+          mountPath: /etc/buildkit
+          readOnly: true
         resources:
           requests:
             memory: "2Gi"
@@ -51,6 +69,9 @@ spec:
       volumes:
       - name: buildkit-data
         emptyDir: {}
+      - name: buildkit-config
+        configMap:
+          name: buildkit-config
 ---
 apiVersion: v1
 kind: Service

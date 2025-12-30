@@ -93,6 +93,20 @@ func (b *Builder) Close() error {
 	return b.client.Close()
 }
 
+// CacheConfig specifies remote cache configuration for BuildKit.
+type CacheConfig struct {
+	// Registry is the registry URL for cache storage.
+	// Example: "registry:5000/melange-cache"
+	// If empty, caching is disabled.
+	Registry string
+
+	// Mode controls cache export behavior.
+	// "min" - only export layers for final result (smaller, faster export)
+	// "max" - export all intermediate layers (better cache hit rate)
+	// Defaults to "max" if empty.
+	Mode string
+}
+
 // BuildConfig contains configuration for a build.
 type BuildConfig struct {
 	// PackageName is the name of the package being built.
@@ -132,6 +146,10 @@ type BuildConfig struct {
 	// For tarball: file path (e.g., "/tmp/debug.tar")
 	// For docker/registry: image reference (e.g., "debug:failed")
 	ExportRef string
+
+	// CacheConfig specifies remote cache configuration.
+	// If nil or Registry is empty, caching is disabled.
+	CacheConfig *CacheConfig
 }
 
 // Build executes a build using BuildKit.
@@ -295,13 +313,43 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 
 	// Solve goroutine
 	eg.Go(func() error {
-		_, err := b.client.Client().Solve(ctx, def, client.SolveOpt{
+		solveOpt := client.SolveOpt{
 			LocalDirs: localDirs,
 			Exports: []client.ExportEntry{{
 				Type:      client.ExporterLocal,
 				OutputDir: melangeOutDir,
 			}},
-		}, statusCh)
+		}
+
+		// Add cache import/export if configured
+		if cfg.CacheConfig != nil && cfg.CacheConfig.Registry != "" {
+			cacheRef := cfg.CacheConfig.Registry
+			mode := cfg.CacheConfig.Mode
+			if mode == "" {
+				mode = "max"
+			}
+
+			log.Infof("using registry cache: %s (mode=%s)", cacheRef, mode)
+
+			// Import from cache
+			solveOpt.CacheImports = []client.CacheOptionsEntry{{
+				Type: "registry",
+				Attrs: map[string]string{
+					"ref": cacheRef,
+				},
+			}}
+
+			// Export to cache
+			solveOpt.CacheExports = []client.CacheOptionsEntry{{
+				Type: "registry",
+				Attrs: map[string]string{
+					"ref":  cacheRef,
+					"mode": mode,
+				},
+			}}
+		}
+
+		_, err := b.client.Client().Solve(ctx, def, solveOpt, statusCh)
 		return err
 	})
 

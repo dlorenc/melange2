@@ -98,6 +98,8 @@ type Build struct {
 	BuildKitAddr          string // BuildKit daemon address
 	Debug                 bool
 	Remove                bool
+	CacheRegistry         string // Registry URL for BuildKit cache (e.g., "registry:5000/cache")
+	CacheMode             string // Cache export mode: "min" or "max" (default: "max")
 	LintRequire, LintWarn []string
 	Auth                  map[string]options.Auth
 	IgnoreSignatures      bool

@@ -125,10 +125,19 @@ func run(ctx context.Context) error {
 		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
+	// Get cache configuration from environment
+	cacheRegistry := os.Getenv("CACHE_REGISTRY")
+	cacheMode := os.Getenv("CACHE_MODE")
+	if cacheRegistry != "" {
+		log.Infof("using registry cache: %s (mode=%s)", cacheRegistry, cacheMode)
+	}
+
 	// Create scheduler
 	sched := scheduler.New(jobStore, buildStore, storageBackend, pool, scheduler.Config{
-		OutputDir:    *outputDir,
-		PollInterval: time.Second,
+		OutputDir:     *outputDir,
+		PollInterval:  time.Second,
+		CacheRegistry: cacheRegistry,
+		CacheMode:     cacheMode,
 	})
 
 	// Create output directory (for local storage)
