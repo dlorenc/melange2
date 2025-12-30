@@ -27,6 +27,13 @@ data:
   cache-registry: "registry:5000/melange-cache"
   cache-mode: "max"
 
+  # Apko base image cache configuration
+  # Caches apko-generated base images in the in-cluster registry.
+  # This significantly speeds up builds by allowing BuildKit to use
+  # llb.Image() instead of extracting layers to disk.
+  apko-registry: "registry:5000/apko-cache"
+  apko-registry-insecure: "true"
+
   # BuildKit backends configuration
   # 8 BuildKit workers using StatefulSet DNS names
   # Each worker can handle 16 concurrent jobs (matching 16-core machines)

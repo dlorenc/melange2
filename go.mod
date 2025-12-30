@@ -66,7 +66,9 @@ require (
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
 	github.com/docker/cli v29.1.3+incompatible // indirect
+	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker v28.5.2+incompatible // indirect
+	github.com/docker/docker-credential-helpers v0.9.4 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.35.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.2.1 // indirect
@@ -80,6 +82,7 @@ require (
 	github.com/in-toto/in-toto-golang v0.9.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/moby/go-archive v0.1.0 // indirect
 	github.com/moby/locker v1.0.1 // indirect
 	github.com/moby/patternmatcher v0.6.0 // indirect
