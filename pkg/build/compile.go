@@ -138,18 +138,11 @@ func (c *Compiled) compilePipeline(ctx context.Context, sm *SubstitutionMap, pip
 	name, uses, with := pipeline.Name, pipeline.Uses, maps.Clone(pipeline.With)
 
 	// Check if this is a built-in LLB pipeline
-	// Note: fetch with expected-none or sha512 cannot use native LLB
-	// - expected-none: no content-addressable caching possible
-	// - sha512: BuildKit's HTTP operation only supports sha256 checksums
+	// Note: fetch with sha512 cannot use native LLB - BuildKit HTTP only supports sha256
 	isBuiltin := buildkit.IsBuiltinPipeline(uses)
-	if uses == "fetch" {
-		if with["expected-none"] != "" {
-			isBuiltin = false
-			log.Debugf("fetch with expected-none will use shell fallback (no checksum for native LLB)")
-		} else if with["expected-sha512"] != "" {
-			isBuiltin = false
-			log.Debugf("fetch with expected-sha512 will use shell fallback (BuildKit HTTP only supports sha256)")
-		}
+	if uses == "fetch" && with["expected-sha512"] != "" {
+		isBuiltin = false
+		log.Debugf("fetch with expected-sha512 will use shell fallback (BuildKit HTTP only supports sha256)")
 	}
 
 	// When compiling an already-compiled config, `uses` will be redundant and FYI only,
