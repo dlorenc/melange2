@@ -160,13 +160,13 @@ func TestBuildBuiltinPipeline_Fetch(t *testing.T) {
 			errorMsg:    "sha512 requires shell fallback",
 		},
 		{
-			name: "fetch with expected-none returns error",
+			name: "fetch with expected-none returns fallback error",
 			with: map[string]string{
 				"uri":           "https://example.com/file.tar.gz",
 				"expected-none": "true",
 			},
 			expectError: true,
-			errorMsg:    "expected-none is not supported",
+			errorMsg:    "shell fallback",
 		},
 		{
 			name: "fetch with custom strip-components",

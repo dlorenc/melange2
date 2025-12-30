@@ -26,6 +26,10 @@ import (
 	"github.com/dlorenc/melange2/pkg/config"
 )
 
+// ErrFetchNeedsChecksum is returned when fetch is called with expected-none,
+// indicating that the shell fallback should be used instead of native LLB.
+var ErrFetchNeedsChecksum = errors.New("fetch with expected-none requires shell fallback")
+
 // ErrFetchSHA512NotSupported is returned when fetch is called with expected-sha512,
 // indicating that the shell fallback should be used since BuildKit HTTP only supports sha256.
 var ErrFetchSHA512NotSupported = errors.New("fetch with expected-sha512 requires shell fallback (BuildKit HTTP only supports sha256)")
@@ -78,12 +82,11 @@ func buildGitCheckout(base llb.State, p *config.Pipeline) (llb.State, error) {
 	branch := with["branch"]
 	expectedCommit := with["expected-commit"]
 
-	switch {
-	case tag != "":
+	if tag != "" {
 		ref = tag
-	case branch != "":
+	} else if branch != "" {
 		ref = branch
-	case expectedCommit != "":
+	} else if expectedCommit != "" {
 		ref = expectedCommit
 	}
 
@@ -208,9 +211,10 @@ func buildFetch(base llb.State, p *config.Pipeline) (llb.State, error) {
 	expectedSHA512 := with["expected-sha512"]
 	expectedNone := with["expected-none"]
 
-	// expected-none is not supported - a checksum is required
+	// For expected-none, we can't use native LLB (no content-addressable caching possible)
+	// Return a special error to signal fallback to shell implementation
 	if expectedNone != "" {
-		return llb.State{}, fmt.Errorf("fetch: expected-none is not supported, a checksum (expected-sha256 or expected-sha512) is required")
+		return llb.State{}, ErrFetchNeedsChecksum
 	}
 
 	// BuildKit's HTTP operation only supports sha256 checksums
