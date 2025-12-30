@@ -128,7 +128,6 @@ func newTestScheduler(t *testing.T, cfg Config) *Scheduler {
 	}
 
 	return New(
-		store.NewMemoryStore(),
 		store.NewMemoryBuildStore(),
 		localStorage,
 		pool,
@@ -148,7 +147,7 @@ func TestNew(t *testing.T) {
 		tmpDir := t.TempDir()
 		localStorage, _ := storage.NewLocalStorage(tmpDir)
 
-		s := New(store.NewMemoryStore(), store.NewMemoryBuildStore(), localStorage, pool, Config{})
+		s := New(store.NewMemoryBuildStore(), localStorage, pool, Config{})
 		assert.Equal(t, "/var/lib/melange/output", s.config.OutputDir)
 	})
 
@@ -174,15 +173,6 @@ func TestNew(t *testing.T) {
 		assert.NotNil(t, s.activeBuilds)
 		assert.Empty(t, s.activeBuilds)
 	})
-}
-
-func TestScheduler_ProcessNextJob_NoPending(t *testing.T) {
-	ctx := context.Background()
-	s := newTestScheduler(t, Config{})
-
-	// No jobs - should return nil without error
-	err := s.processNextJob(ctx)
-	assert.NoError(t, err)
 }
 
 func TestScheduler_ProcessBuilds_Empty(t *testing.T) {
