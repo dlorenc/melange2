@@ -80,6 +80,9 @@ type LicenseDiff struct {
 
 // Identify identifies the license of a file on a filesystem using the licenseclassifier.
 func (c *melangeClassifier) Identify(fsys fs.FS, licensePath string) ([]License, error) {
+	if fsys == nil {
+		return nil, fmt.Errorf("nil filesystem provided")
+	}
 	file, err := fsys.Open(licensePath)
 	if err != nil {
 		return nil, err
