@@ -383,9 +383,10 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 
 			// Check which layers are cached
 			cachedRefs, allCached, err := layerCache.CheckLayers(ctx, predictedGroups)
-			if err != nil {
+			switch {
+			case err != nil:
 				log.Warnf("failed to check layer cache: %v", err)
-			} else if allCached {
+			case allCached:
 				// All layers cached - pull and return without building
 				log.Infof("all %d layers cached, skipping apko build", len(predictedGroups))
 				cachedLayers, err := layerCache.PullLayers(ctx, cachedRefs)
@@ -400,7 +401,7 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 					}
 					return cachedLayers, releaseData, cleanup, nil
 				}
-			} else {
+			default:
 				log.Infof("partial cache hit: %d/%d layers cached, building all", len(cachedRefs), len(predictedGroups))
 			}
 		}

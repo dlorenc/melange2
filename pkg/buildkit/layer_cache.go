@@ -116,9 +116,9 @@ func (c *LayerCache) CheckLayers(ctx context.Context, groups []apko_build.LayerG
 		remoteOpts = append(remoteOpts, remote.WithTransport(&http.Transport{}))
 	}
 
-	for i, key := range keys {
+	for _, key := range keys {
 		wg.Add(1)
-		go func(idx int, k string) {
+		go func(k string) {
 			defer wg.Done()
 
 			ref := fmt.Sprintf("%s:%s", c.Registry, k)
@@ -135,7 +135,7 @@ func (c *LayerCache) CheckLayers(ctx context.Context, groups []apko_build.LayerG
 				found = append(found, CachedLayerRef{Key: k, Ref: ref})
 				mu.Unlock()
 			}
-		}(i, key)
+		}(key)
 	}
 	wg.Wait()
 
