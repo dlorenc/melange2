@@ -219,7 +219,6 @@ func NewFromConfig(ctx context.Context, cfg *BuildConfig) (*Build, error) {
 
 // initialize performs common initialization for NewFromConfig.
 func (b *Build) initialize(ctx context.Context) (*Build, error) {
-
 	log := clog.FromContext(ctx).With("arch", b.Arch.ToAPK())
 	ctx = clog.WithLogger(ctx, log)
 
