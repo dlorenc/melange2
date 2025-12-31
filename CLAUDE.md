@@ -83,8 +83,14 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 │   ├── kind/              # Local Kind cluster deployment
 │   └── gke/               # GKE deployment with GCS storage
 ├── docs/
-│   ├── user-guide/        # End-user documentation
-│   └── development/       # Developer documentation
+│   ├── getting-started/   # Installation and first build
+│   ├── build-files/       # Build file format documentation
+│   ├── cli/               # CLI command reference
+│   ├── development/       # Developer documentation
+│   ├── pipelines/         # Pipeline documentation
+│   ├── remote-builds/     # Remote build server docs
+│   ├── signing/           # Package signing docs
+│   └── testing/           # Testing documentation
 ├── examples/              # Example build files
 └── test/compare/          # Comparison tests vs Wolfi
 ```
@@ -303,11 +309,6 @@ To add a new native pipeline:
 - **Don't include timestamps** - Breaks cache determinism
 - **Don't use Docker Hub for tests** - Rate limits; use cgr.dev
 
-## Current Focus Areas
-
-- Issue #32: Comparison testing validation
-- Issue #4: Test coverage improvements
-
 ## CI/CD and Deployment
 
 ### Automatic Deployment
@@ -347,7 +348,7 @@ kubectl port-forward -n melange svc/melange-server 8080:8080
 curl http://localhost:8080/healthz
 ```
 
-See `docs/deployment/gke-setup.md` for full documentation.
+See `docs/remote-builds/gke-deployment.md` for full documentation.
 
 ## Registry Cache
 
@@ -479,16 +480,6 @@ The `melange remote` subcommand allows submitting builds to a remote melange-ser
 ./melange2 remote wait <job-id> --server http://localhost:8080
 ```
 
-### Multi-Package Builds
-
-```bash
-# Check status of a multi-package build
-./melange2 remote build-status <build-id> --server http://localhost:8080
-
-# List all multi-package builds
-./melange2 remote list-builds --server http://localhost:8080
-```
-
 ### Manage Backends
 
 ```bash
@@ -537,13 +528,13 @@ Note: Pipelines and source files are automatically included by convention (see [
 | Built-in pipelines | `pkg/build/pipelines/**/*.yaml` |
 | CLI commands | `pkg/cli/*.go` |
 | Example configs | `examples/*.yaml` |
-| User docs | `docs/user-guide/` |
+| User docs | `docs/getting-started/`, `docs/build-files/`, `docs/pipelines/` |
 | Dev docs | `docs/development/` |
+| Remote build docs | `docs/remote-builds/` |
 | Server main | `cmd/melange-server/main.go` |
 | Server API | `pkg/service/api/server.go` |
 | Storage backends | `pkg/service/storage/*.go` |
 | GKE deployment | `deploy/gke/*.yaml` |
 | Kind deployment | `deploy/kind/*.yaml` |
-| Deployment docs | `docs/deployment/gke-setup.md` |
 | Deploy workflow | `.github/workflows/deploy.yaml` |
 | CI workflow | `.github/workflows/ci.yaml` |
