@@ -79,8 +79,5 @@ func lint() *cobra.Command {
 	cmd.Flags().BoolVar(&persistLintResults, "persist-lint-results", false, "persist lint results to JSON files in packages/{arch}/ directory")
 	cmd.Flags().StringVar(&outDir, "out-dir", "packages", "directory where lint results JSON files will be saved (requires --persist-lint-results)")
 
-	_ = cmd.Flags().Bool("fail-on-lint-warning", false, "DEPRECATED: DO NOT USE")
-	_ = cmd.Flags().MarkDeprecated("fail-on-lint-warning", "use --lint-require and --lint-warn instead")
-
 	return cmd
 }

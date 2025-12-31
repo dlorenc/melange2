@@ -147,22 +147,19 @@ func TestPoolSelectLoadAware(t *testing.T) {
 	pool, err := NewPool(backends)
 	require.NoError(t, err)
 
-	// With no load, Select should pick any backend (all have 0 load)
-	backend, err := pool.Select("x86_64", nil)
+	// With no load, SelectAndAcquire should pick any backend (all have 0 load)
+	backend1, err := pool.SelectAndAcquire("x86_64", nil)
 	require.NoError(t, err)
-	require.NotNil(t, backend)
+	require.NotNil(t, backend1)
 
-	// Acquire on first backend to add load
-	ok := pool.Acquire("tcp://amd64-1:1234")
-	require.True(t, ok)
-
-	// Next select should pick a less-loaded backend (not amd64-1)
-	backend, err = pool.Select("x86_64", nil)
+	// Next SelectAndAcquire should pick a less-loaded backend (not the first one)
+	backend2, err := pool.SelectAndAcquire("x86_64", nil)
 	require.NoError(t, err)
-	require.NotEqual(t, "tcp://amd64-1:1234", backend.Addr)
+	require.NotEqual(t, backend1.Addr, backend2.Addr)
 
-	// Release the slot
-	pool.Release("tcp://amd64-1:1234", true)
+	// Release all slots
+	pool.Release(backend1.Addr, true)
+	pool.Release(backend2.Addr, true)
 }
 
 func TestPoolFromConfig(t *testing.T) {
@@ -319,26 +316,30 @@ func TestPoolAcquireRelease(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to acquire up to MaxJobs
-	ok := pool.Acquire("tcp://backend:1234")
-	require.True(t, ok)
+	backend1, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend1)
 
-	ok = pool.Acquire("tcp://backend:1234")
-	require.True(t, ok)
+	backend2, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend2)
 
 	// Third acquire should fail (at capacity)
-	ok = pool.Acquire("tcp://backend:1234")
-	require.False(t, ok)
+	_, err = pool.SelectAndAcquire("x86_64", nil)
+	require.Error(t, err)
+	require.Equal(t, ErrNoAvailableBackend, err)
 
 	// Release one slot
-	pool.Release("tcp://backend:1234", true)
+	pool.Release(backend1.Addr, true)
 
 	// Now can acquire again
-	ok = pool.Acquire("tcp://backend:1234")
-	require.True(t, ok)
+	backend3, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend3)
 
 	// Release all
-	pool.Release("tcp://backend:1234", true)
-	pool.Release("tcp://backend:1234", true)
+	pool.Release(backend2.Addr, true)
+	pool.Release(backend3.Addr, true)
 }
 
 func TestPoolCapacityLimit(t *testing.T) {
@@ -348,20 +349,23 @@ func TestPoolCapacityLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	// Acquire the only slot
-	ok := pool.Acquire("tcp://backend:1234")
-	require.True(t, ok)
+	backend, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	require.NotNil(t, backend)
 
-	// Select should fail because backend is at capacity
-	_, err = pool.Select("x86_64", nil)
+	// SelectAndAcquire should fail because backend is at capacity
+	_, err = pool.SelectAndAcquire("x86_64", nil)
 	require.Error(t, err)
 	require.Equal(t, ErrNoAvailableBackend, err)
 
-	// Release and select should succeed
-	pool.Release("tcp://backend:1234", true)
+	// Release and SelectAndAcquire should succeed
+	pool.Release(backend.Addr, true)
 
-	backend, err := pool.Select("x86_64", nil)
+	backend2, err := pool.SelectAndAcquire("x86_64", nil)
 	require.NoError(t, err)
-	require.Equal(t, "tcp://backend:1234", backend.Addr)
+	require.Equal(t, "tcp://backend:1234", backend2.Addr)
+
+	pool.Release(backend2.Addr, true)
 }
 
 func TestPoolCircuitBreaker(t *testing.T) {
@@ -375,20 +379,20 @@ func TestPoolCircuitBreaker(t *testing.T) {
 	require.NoError(t, err)
 
 	// First failure
-	pool.Acquire("tcp://backend:1234")
-	pool.Release("tcp://backend:1234", false)
+	backend, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	pool.Release(backend.Addr, false)
 
 	// Still available (threshold not reached)
-	backend, err := pool.Select("x86_64", nil)
+	backend, err = pool.SelectAndAcquire("x86_64", nil)
 	require.NoError(t, err)
 	require.NotNil(t, backend)
 
 	// Second failure (reaches threshold)
-	pool.Acquire("tcp://backend:1234")
-	pool.Release("tcp://backend:1234", false)
+	pool.Release(backend.Addr, false)
 
 	// Circuit should be open, select should fail
-	_, err = pool.Select("x86_64", nil)
+	_, err = pool.SelectAndAcquire("x86_64", nil)
 	require.Error(t, err)
 	require.Equal(t, ErrNoAvailableBackend, err)
 
@@ -396,18 +400,18 @@ func TestPoolCircuitBreaker(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Should be available again (half-open state)
-	backend, err = pool.Select("x86_64", nil)
+	backend, err = pool.SelectAndAcquire("x86_64", nil)
 	require.NoError(t, err)
 	require.NotNil(t, backend)
 
 	// Success should reset the circuit
-	pool.Acquire("tcp://backend:1234")
-	pool.Release("tcp://backend:1234", true)
+	pool.Release(backend.Addr, true)
 
 	// Should remain available
-	backend, err = pool.Select("x86_64", nil)
+	backend, err = pool.SelectAndAcquire("x86_64", nil)
 	require.NoError(t, err)
 	require.NotNil(t, backend)
+	pool.Release(backend.Addr, true)
 }
 
 func TestPoolStatus(t *testing.T) {
@@ -424,25 +428,26 @@ func TestPoolStatus(t *testing.T) {
 	require.Equal(t, 0, status[1].ActiveJobs)
 	require.False(t, status[0].CircuitOpen)
 
-	// Acquire some slots
-	pool.Acquire("tcp://backend-1:1234")
-	pool.Acquire("tcp://backend-1:1234")
-	pool.Acquire("tcp://backend-2:1234")
-
-	// Check status reflects active jobs
-	status = pool.Status()
-	for _, s := range status {
-		if s.Addr == "tcp://backend-1:1234" {
-			require.Equal(t, 2, s.ActiveJobs)
-		} else if s.Addr == "tcp://backend-2:1234" {
-			require.Equal(t, 1, s.ActiveJobs)
-		}
+	// Acquire some slots using SelectAndAcquire
+	acquired := make([]*Backend, 0, 3)
+	for i := 0; i < 3; i++ {
+		backend, err := pool.SelectAndAcquire("x86_64", nil)
+		require.NoError(t, err)
+		acquired = append(acquired, backend)
 	}
 
+	// Check status reflects active jobs (total should be 3)
+	status = pool.Status()
+	totalActive := 0
+	for _, s := range status {
+		totalActive += s.ActiveJobs
+	}
+	require.Equal(t, 3, totalActive)
+
 	// Release all
-	pool.Release("tcp://backend-1:1234", true)
-	pool.Release("tcp://backend-1:1234", true)
-	pool.Release("tcp://backend-2:1234", true)
+	for _, backend := range acquired {
+		pool.Release(backend.Addr, true)
+	}
 }
 
 func TestPoolDefaultMaxJobs(t *testing.T) {
@@ -456,17 +461,18 @@ func TestPoolDefaultMaxJobs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to acquire default (2) jobs
-	ok := pool.Acquire("tcp://backend:1234")
-	require.True(t, ok)
-	ok = pool.Acquire("tcp://backend:1234")
-	require.True(t, ok)
+	backend1, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
+	backend2, err := pool.SelectAndAcquire("x86_64", nil)
+	require.NoError(t, err)
 
 	// Third should fail
-	ok = pool.Acquire("tcp://backend:1234")
-	require.False(t, ok)
+	_, err = pool.SelectAndAcquire("x86_64", nil)
+	require.Error(t, err)
+	require.Equal(t, ErrNoAvailableBackend, err)
 
-	pool.Release("tcp://backend:1234", true)
-	pool.Release("tcp://backend:1234", true)
+	pool.Release(backend1.Addr, true)
+	pool.Release(backend2.Addr, true)
 }
 
 func TestPoolWithConfigFullOptions(t *testing.T) {

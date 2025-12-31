@@ -394,42 +394,6 @@ func (p *Pool) SelectAndAcquireWithContext(ctx context.Context, arch string, sel
 	return nil, ErrNoAvailableBackend
 }
 
-// Acquire increments the active job count for a backend.
-// Returns true if a slot was acquired, false if the backend is at capacity.
-// Deprecated: Use SelectAndAcquire() instead to avoid race conditions.
-func (p *Pool) Acquire(addr string) bool {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	state := p.state[addr]
-	if state == nil {
-		return false
-	}
-
-	// Find the backend to get maxJobs
-	var maxJobs int
-	for i := range p.backends {
-		if p.backends[i].Addr == addr {
-			maxJobs = p.backends[i].MaxJobs
-			break
-		}
-	}
-	if maxJobs == 0 {
-		maxJobs = p.defaultMaxJobs
-	}
-
-	// CAS loop to atomically increment if under capacity
-	for {
-		current := state.activeJobs.Load()
-		if int(current) >= maxJobs {
-			return false
-		}
-		if state.activeJobs.CompareAndSwap(current, current+1) {
-			return true
-		}
-	}
-}
-
 // Release decrements the active job count and records success/failure.
 // This should be called when a job completes (regardless of outcome).
 func (p *Pool) Release(addr string, success bool) {

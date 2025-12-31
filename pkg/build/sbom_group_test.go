@@ -7,12 +7,13 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	purl "github.com/package-url/packageurl-go"
 
+	"github.com/dlorenc/melange2/pkg/build/sbom/spdx"
 	"github.com/dlorenc/melange2/pkg/sbom"
 )
 
 func TestSBOMGroup_SubpackageUpstreamSource(t *testing.T) {
 	// Create a mock SBOM group with a main package and a subpackage
-	sg := NewSBOMGroup("main-pkg", "sub-pkg")
+	sg := spdx.NewSBOMGroup("main-pkg", "sub-pkg")
 	if sg == nil {
 		t.Fatal("expected SBOMGroup to be created")
 	}
@@ -140,7 +141,7 @@ func TestSBOMGroup_NewGroup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sg := NewSBOMGroup(tt.pkgNames...)
+			sg := spdx.NewSBOMGroup(tt.pkgNames...)
 			if sg == nil {
 				t.Fatal("expected SBOMGroup to be created")
 			}
@@ -156,7 +157,7 @@ func TestSBOMGroup_NewGroup(t *testing.T) {
 }
 
 func TestSBOMGroup_AddBuildConfigurationPackage(t *testing.T) {
-	sg := NewSBOMGroup("main-pkg", "sub-pkg")
+	sg := spdx.NewSBOMGroup("main-pkg", "sub-pkg")
 
 	// Set up the described packages for each document
 	mainDoc := sg.Document("main-pkg")

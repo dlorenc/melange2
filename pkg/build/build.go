@@ -130,7 +130,7 @@ type Build struct {
 	SBOMGenerator sbom.Generator
 
 	// SBOMGroup stores SBOMs for the main package and all subpackages.
-	SBOMGroup *SBOMGroup
+	SBOMGroup *spdx.SBOMGroup
 
 	Start time.Time
 	End   time.Time

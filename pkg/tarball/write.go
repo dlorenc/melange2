@@ -292,15 +292,6 @@ func (c *Context) writeTar(ctx context.Context, tw *tar.Writer, fsys fs.FS, user
 	return nil
 }
 
-// WriteArchive writes a tarball to the provided io.Writer from the provided fs.FS.
-// To override permissions, set the OverridePerms when creating the Context.
-// If you need to get multiple filesystems, merge them prior to calling WriteArchive.
-//
-// Deprecated: Use WriteTargz or WriteTar instead.
-func (c *Context) WriteArchive(dst io.Writer, src fs.FS) error {
-	return c.WriteTargz(context.Background(), dst, src, src)
-}
-
 // WriteTargz writes a gzipped tarball to the provided io.Writer from the provided fs.FS.
 // To override permissions, set the OverridePerms when creating the Context.
 // If you need to get multiple filesystems, merge them prior to calling WriteArchive.

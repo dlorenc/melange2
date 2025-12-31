@@ -448,26 +448,3 @@ func TestWriteTarSkipClose(t *testing.T) {
 	require.Equal(t, "test.txt", hdr.Name)
 }
 
-func TestWriteArchiveDeprecated(t *testing.T) {
-	m := fs.NewMemFS()
-	err := m.WriteFile("deprecated.txt", []byte("deprecated test"), 0o644)
-	require.NoError(t, err)
-
-	ctx, err := NewContext()
-	require.NoError(t, err)
-
-	var buf bytes.Buffer
-	// Test deprecated WriteArchive method (should still work)
-	err = ctx.WriteArchive(&buf, m)
-	require.NoError(t, err)
-
-	// Should produce valid gzipped tar
-	gr, err := gzip.NewReader(&buf)
-	require.NoError(t, err)
-	defer gr.Close()
-
-	tr := tar.NewReader(gr)
-	hdr, err := tr.Next()
-	require.NoError(t, err)
-	require.Equal(t, "deprecated.txt", hdr.Name)
-}

@@ -52,12 +52,10 @@ func New() *cobra.Command {
 	_ = cmd.PersistentFlags().MarkHidden("gcplog")
 
 	cmd.AddCommand(buildCmd())
-	cmd.AddCommand(bumpCmd())
 	cmd.AddCommand(completion())
 	cmd.AddCommand(compile())
 	cmd.AddCommand(indexCmd())
 	cmd.AddCommand(keygen())
-	cmd.AddCommand(licenseCheck())
 	cmd.AddCommand(lint())
 	cmd.AddCommand(packageVersion())
 	cmd.AddCommand(query())
@@ -65,7 +63,6 @@ func New() *cobra.Command {
 	cmd.AddCommand(signCmd())
 	cmd.AddCommand(signIndex())
 	cmd.AddCommand(test())
-	cmd.AddCommand(updateCache())
 	cmd.AddCommand(version.Version())
 	cmd.AddCommand(remoteCmd())
 	return cmd

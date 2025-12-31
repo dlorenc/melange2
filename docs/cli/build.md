@@ -136,12 +136,6 @@ melange build [config.yaml]
 |------|-----------|---------|-------------|
 | `--strip-origin-name` | | `false` | Whether origin names should be stripped (for bootstrap) |
 
-### Deprecated Flags
-
-| Flag | Description |
-|------|-------------|
-| `--fail-on-lint-warning` | DEPRECATED: Use `--lint-require` and `--lint-warn` instead |
-
 ## Examples
 
 ### Basic Build

@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -271,32 +270,3 @@ func isBinaryContent(content []byte) bool {
 	return false
 }
 
-// ParseYAMLPackageName extracts just the package.name from YAML data
-// using simple string parsing. This is useful when you want to avoid
-// importing the full YAML package.
-// Deprecated: Use ExtractPackageNameFromData instead for more reliable parsing.
-func ParseYAMLPackageName(data []byte) string {
-	lines := strings.Split(string(data), "\n")
-	inPackage := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "package:" {
-			inPackage = true
-			continue
-		}
-		if inPackage && strings.HasPrefix(trimmed, "name:") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				name := strings.TrimSpace(parts[1])
-				name = strings.Trim(name, "\"'")
-				return name
-			}
-		}
-		if inPackage && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			if !strings.HasPrefix(trimmed, "name:") {
-				break
-			}
-		}
-	}
-	return ""
-}

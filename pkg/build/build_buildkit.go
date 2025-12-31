@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/release-utils/version"
 
 	"github.com/dlorenc/melange2/pkg/build/sbom"
+	"github.com/dlorenc/melange2/pkg/build/sbom/spdx"
 	"github.com/dlorenc/melange2/pkg/buildkit"
 	"github.com/dlorenc/melange2/pkg/config"
 	"github.com/dlorenc/melange2/pkg/output"
@@ -91,7 +92,7 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 	for _, sp := range b.Configuration.Subpackages {
 		pkgNames = append(pkgNames, sp.Name)
 	}
-	b.SBOMGroup = NewSBOMGroup(pkgNames...)
+	b.SBOMGroup = spdx.NewSBOMGroup(pkgNames...)
 
 	// Prepare workspace directory
 	if !b.EmptyWorkspace {

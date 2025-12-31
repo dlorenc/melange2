@@ -80,8 +80,6 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.StringVar(&flags.ApkoRegistry, "apko-registry", "", "registry URL for caching apko base images (e.g., registry:5000/apko-cache)")
 	fs.BoolVar(&flags.ApkoRegistryInsecure, "apko-registry-insecure", false, "allow insecure (HTTP) connection to apko registry")
 
-	_ = fs.Bool("fail-on-lint-warning", false, "DEPRECATED: DO NOT USE")
-	_ = fs.MarkDeprecated("fail-on-lint-warning", "use --lint-require and --lint-warn instead")
 }
 
 // BuildFlags holds all parsed build command flags

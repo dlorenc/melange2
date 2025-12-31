@@ -57,8 +57,6 @@ These flags are available for all commands:
 |---------|-------------|
 | `index` | Create a repository index from a list of package files |
 | `lint` | Lint an APK, checking for problems and errors (EXPERIMENTAL) |
-| `bump` | Bump package version |
-| `update-cache` | Update the melange cache |
 
 ### Utilities
 
@@ -69,8 +67,6 @@ These flags are available for all commands:
 | `query` | Query package information |
 | `scan` | Scan packages |
 | `package-version` | Get package version |
-| `license-check` | Check package licenses |
-| `rebuild` | Rebuild packages |
 
 ## Quick Start
 
