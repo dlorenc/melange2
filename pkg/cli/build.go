@@ -79,7 +79,6 @@ func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
 	fs.StringVar(&flags.ExportRef, "export-ref", "", "path (for tarball) or image reference (for docker/registry) for debug image export")
 	fs.StringVar(&flags.ApkoRegistry, "apko-registry", "", "registry URL for caching apko base images (e.g., registry:5000/apko-cache)")
 	fs.BoolVar(&flags.ApkoRegistryInsecure, "apko-registry-insecure", false, "allow insecure (HTTP) connection to apko registry")
-
 }
 
 // BuildFlags holds all parsed build command flags
