@@ -171,6 +171,8 @@ func (c *LayerCache) PushLayers(ctx context.Context, layers []v1.Layer, groups [
 		remoteOpts = append(remoteOpts, remote.WithTransport(&http.Transport{}))
 	}
 
+	pushed := 0
+	skipped := 0
 	for i, layer := range layers {
 		key := LayerCacheKey(c.Arch, groups[i])
 		ref := fmt.Sprintf("%s:%s", c.Registry, key)
@@ -183,6 +185,7 @@ func (c *LayerCache) PushLayers(ctx context.Context, layers []v1.Layer, groups [
 		// Check if already exists
 		if _, err := remote.Head(imgRef, remoteOpts...); err == nil {
 			log.Debugf("layer %s already cached", key)
+			skipped++
 			continue
 		}
 
@@ -196,9 +199,14 @@ func (c *LayerCache) PushLayers(ctx context.Context, layers []v1.Layer, groups [
 			return fmt.Errorf("pushing layer %s: %w", ref, err)
 		}
 		log.Debugf("pushed layer %s", key)
+		pushed++
 	}
 
-	log.Infof("pushed %d layers to cache", len(layers))
+	if pushed > 0 {
+		log.Infof("pushed %d new layers to cache (%d already cached)", pushed, skipped)
+	} else {
+		log.Infof("all %d layers already cached", skipped)
+	}
 	return nil
 }
 
