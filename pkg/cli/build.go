@@ -16,7 +16,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,7 +30,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/trace"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/dlorenc/melange2/pkg/build"
 	"github.com/dlorenc/melange2/pkg/buildkit"
@@ -435,64 +433,6 @@ func detectGitHead(ctx context.Context, buildConfigFilePath string) (string, err
 // BuildCmdWithConfig executes builds for the given architectures using the provided BuildConfig.
 // This is the preferred entry point for programmatic builds.
 func BuildCmdWithConfig(ctx context.Context, archs []apko_types.Architecture, baseCfg *build.BuildConfig) error {
-	log := clog.FromContext(ctx)
-	ctx, span := otel.Tracer("melange").Start(ctx, "BuildCmd")
-	defer span.End()
-
-	if len(archs) == 0 {
-		archs = apko_types.AllArchs
-	}
-
-	// Set up the build contexts before running them.  This avoids various
-	// race conditions and the possibility that a context may be garbage
-	// collected before it is actually run.
-	//
-	// Yes, this happens.  Really.
-	// https://github.com/distroless/nginx/runs/7219233843?check_suite_focus=true
-	bcs := []*build.Build{}
-	for _, arch := range archs {
-		// Clone config and set architecture
-		cfg := baseCfg.Clone()
-		cfg.Arch = arch
-
-		bc, err := build.NewFromConfig(ctx, cfg)
-		if errors.Is(err, build.ErrSkipThisArch) {
-			log.Warnf("skipping arch %s", arch)
-			continue
-		} else if err != nil {
-			return err
-		}
-
-		defer bc.Close(ctx)
-
-		bcs = append(bcs, bc)
-	}
-
-	if len(bcs) == 0 {
-		log.Warn("target-architecture and --arch do not overlap, nothing to build")
-		return nil
-	}
-
-	var errg errgroup.Group
-
-	for _, bc := range bcs {
-		errg.Go(func() error {
-			lctx := ctx
-			if len(bcs) != 1 {
-				alog := log.With("arch", bc.Arch.ToAPK())
-				lctx = clog.WithLogger(ctx, alog)
-			}
-
-			if err := bc.BuildPackage(lctx); err != nil {
-				if !bc.Remove {
-					log.Error("ERROR: failed to build package. the build environment has been preserved:")
-					bc.SummarizePaths(lctx)
-				}
-
-				return fmt.Errorf("failed to build package: %w", err)
-			}
-			return nil
-		})
-	}
-	return errg.Wait()
+	orchestrator := build.NewBuildOrchestrator(baseCfg)
+	return orchestrator.RunForArchitectures(ctx, archs)
 }

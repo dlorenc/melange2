@@ -19,11 +19,8 @@ import (
 	"fmt"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
-	"github.com/chainguard-dev/clog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"go.opentelemetry.io/otel"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/dlorenc/melange2/pkg/build"
 	"github.com/dlorenc/melange2/pkg/buildkit"
@@ -141,44 +138,6 @@ func test() *cobra.Command {
 
 // TestCmdWithConfig executes tests for the given architectures using the provided TestConfig.
 func TestCmdWithConfig(ctx context.Context, archs []apko_types.Architecture, baseCfg *build.TestConfig) error {
-	log := clog.FromContext(ctx)
-	ctx, span := otel.Tracer("melange").Start(ctx, "TestCmd")
-	defer span.End()
-
-	if len(archs) == 0 {
-		archs = apko_types.AllArchs
-	}
-
-	// Set up the test contexts before running them.
-	tcs := []*build.TestBuildKit{}
-	for _, arch := range archs {
-		// Clone config and set architecture
-		cfg := baseCfg.Clone()
-		cfg.Arch = arch
-
-		tc, err := build.NewTestBuildKitFromConfig(ctx, cfg)
-		if err != nil {
-			return err
-		}
-
-		tcs = append(tcs, tc)
-	}
-
-	if len(tcs) == 0 {
-		log.Warnf("target-architecture and --arch do not overlap, nothing to test")
-		return nil
-	}
-
-	var errg errgroup.Group
-
-	for _, tc := range tcs {
-		errg.Go(func() error {
-			if err := tc.TestPackage(ctx); err != nil {
-				log.Errorf("ERROR: failed to test package: %v", err)
-				return fmt.Errorf("failed to test package: %w", err)
-			}
-			return nil
-		})
-	}
-	return errg.Wait()
+	orchestrator := build.NewTestOrchestrator(baseCfg)
+	return orchestrator.RunForArchitectures(ctx, archs)
 }
