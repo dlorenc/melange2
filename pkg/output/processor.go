@@ -277,7 +277,8 @@ func (p *Processor) runIndexGeneration(ctx context.Context, input *ProcessInput)
 	packageDir := filepath.Join(input.OutDir, input.Arch)
 	log.Infof("generating apk index from packages in %s", packageDir)
 
-	var apkFiles []string
+	// Pre-allocate slice for main package + subpackages
+	apkFiles := make([]string, 0, 1+len(input.Configuration.Subpackages))
 	pkgFileName := fmt.Sprintf("%s-%s-r%d.apk",
 		input.Configuration.Package.Name,
 		input.Configuration.Package.Version,
