@@ -102,7 +102,10 @@ func TestRLHTTPClient_Do(t *testing.T) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 		require.NoError(t, err)
 
-		_, err = client.Do(req)
+		resp, err := client.Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
 		assert.Error(t, err)
 	})
 
@@ -112,7 +115,10 @@ func TestRLHTTPClient_Do(t *testing.T) {
 		req, err := http.NewRequest(http.MethodGet, "http://localhost:99999", nil)
 		require.NoError(t, err)
 
-		_, err = client.Do(req)
+		resp, err := client.Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
 		assert.Error(t, err)
 	})
 }

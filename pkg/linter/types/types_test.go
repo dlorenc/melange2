@@ -16,6 +16,7 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,8 +54,8 @@ func TestNewStructuredError(t *testing.T) {
 		require.NotNil(t, err)
 		assert.Equal(t, "error message", err.Error())
 
-		structErr, ok := err.(*StructuredError)
-		require.True(t, ok)
+		var structErr *StructuredError
+		require.True(t, errors.As(err, &structErr))
 		assert.Equal(t, details, structErr.Details)
 	})
 

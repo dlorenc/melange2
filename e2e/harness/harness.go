@@ -317,7 +317,7 @@ func WaitForHTTP(url string, timeout time.Duration) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			resp, err := http.Get(url)
+			resp, err := http.Get(url) //nolint:gosec // URL is from trusted test harness
 			if err == nil {
 				resp.Body.Close()
 				return nil

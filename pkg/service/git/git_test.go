@@ -112,7 +112,7 @@ func TestSource_FindConfigs(t *testing.T) {
 			Pattern: "", // Default pattern
 		}
 
-		configs, err := s.FindConfigs(nil, tmpDir)
+		configs, err := s.FindConfigs(context.Background(), tmpDir)
 		require.NoError(t, err)
 		assert.Len(t, configs, 2)
 	})
@@ -128,7 +128,7 @@ func TestSource_FindConfigs(t *testing.T) {
 			Pattern: "pkg*.yaml",
 		}
 
-		configs, err := s.FindConfigs(nil, tmpDir)
+		configs, err := s.FindConfigs(context.Background(), tmpDir)
 		require.NoError(t, err)
 		assert.Len(t, configs, 2)
 	})
@@ -148,7 +148,7 @@ func TestSource_FindConfigs(t *testing.T) {
 			Pattern: "*.yaml",
 		}
 
-		configs, err := s.FindConfigs(nil, tmpDir)
+		configs, err := s.FindConfigs(context.Background(), tmpDir)
 		require.NoError(t, err)
 		assert.Len(t, configs, 1)
 		assert.Contains(t, configs[0], "app.yaml")
@@ -161,7 +161,7 @@ func TestSource_FindConfigs(t *testing.T) {
 			Pattern: "*.yaml",
 		}
 
-		configs, err := s.FindConfigs(nil, tmpDir)
+		configs, err := s.FindConfigs(context.Background(), tmpDir)
 		require.NoError(t, err)
 		assert.Empty(t, configs)
 	})
@@ -174,7 +174,7 @@ func TestSource_FindConfigs(t *testing.T) {
 			Pattern: "*.yaml",
 		}
 
-		configs, err := s.FindConfigs(nil, tmpDir)
+		configs, err := s.FindConfigs(context.Background(), tmpDir)
 		require.NoError(t, err)
 		assert.Empty(t, configs)
 	})

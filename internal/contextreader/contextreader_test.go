@@ -33,9 +33,7 @@ func TestNew(t *testing.T) {
 	cr := New(ctx, r)
 
 	require.NotNil(t, cr)
-	// Should implement io.Reader
-	_, ok := cr.(io.Reader)
-	assert.True(t, ok)
+	// New returns io.Reader, so cr is guaranteed to implement io.Reader
 }
 
 func TestContextReader_Read(t *testing.T) {
