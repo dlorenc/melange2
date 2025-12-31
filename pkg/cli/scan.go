@@ -110,6 +110,9 @@ func scanCmd(ctx context.Context, file string, sc *scanConfig) error {
 			if err != nil {
 				return fmt.Errorf("get %s: %w", u, err)
 			}
+			if resp == nil {
+				return fmt.Errorf("nil response from %s", u)
+			}
 			defer resp.Body.Close()
 			r = resp.Body
 		} else {
@@ -200,6 +203,9 @@ func scanCmd(ctx context.Context, file string, sc *scanConfig) error {
 				resp, err := http.Get(u)
 				if err != nil {
 					return fmt.Errorf("get %s: %w", u, err)
+				}
+				if resp == nil {
+					return fmt.Errorf("nil response from %s", u)
 				}
 				defer resp.Body.Close()
 				if resp.StatusCode != http.StatusOK {

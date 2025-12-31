@@ -59,6 +59,9 @@ func (c *RLHTTPClient) GetArtifactSHA256(ctx context.Context, artifactURI string
 	if err != nil {
 		return "", fmt.Errorf("getting %s: %w", artifactURI, err)
 	}
+	if resp == nil {
+		return "", fmt.Errorf("nil response from %s", artifactURI)
+	}
 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

@@ -57,6 +57,9 @@ func LintAPK(ctx context.Context, path string, require, warn []string, outputDir
 		if err != nil {
 			return fmt.Errorf("getting apk %q: %w", path, err)
 		}
+		if resp == nil {
+			return fmt.Errorf("nil response from %q", path)
+		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("getting apk %q: %s", path, resp.Status)
 		}
