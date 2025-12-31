@@ -1369,6 +1369,100 @@ func TestE2E_BuiltinGitCheckout(t *testing.T) {
 	verifyFileExists(t, outDir, "builtin-git-test/usr/share/builtin-git/README")
 }
 
+// TestE2E_BuiltinGitCheckoutPreservesExistingFiles verifies that the native git-checkout
+// implementation preserves existing files in the workspace (like user-provided source files).
+// This tests the tar-based copy approach that matches the shell implementation.
+func TestE2E_BuiltinGitCheckoutPreservesExistingFiles(t *testing.T) {
+	e := newE2ETestContext(t)
+
+	// Create a config that:
+	// 1. Creates a file in the workspace BEFORE git-checkout runs
+	// 2. Runs git-checkout using the native LLB implementation
+	// 3. Verifies both the pre-existing file AND the cloned files exist
+	cfg := &config.Configuration{
+		Package: config.Package{
+			Name:    "builtin-git-preserve-test",
+			Version: "1.0.0",
+		},
+		Environment: apko_types.ImageConfiguration{
+			Environment: map[string]string{
+				"TEST_INSTALL_PACKAGES": "git",
+			},
+		},
+		Pipeline: []config.Pipeline{
+			{
+				// First, create a file in the workspace that should be preserved
+				Name: "create-existing-file",
+				Runs: `
+					mkdir -p /home/build/hello-world
+					echo "this-file-should-survive-git-checkout" > /home/build/hello-world/user-provided-file.txt
+					echo "another-preserved-file" > /home/build/preserved-at-root.txt
+				`,
+			},
+			{
+				// Now run git-checkout which should overlay, not replace
+				Uses: "git-checkout",
+				With: map[string]string{
+					"repository":  "https://github.com/octocat/Hello-World.git",
+					"branch":      "master",
+					"destination": "hello-world",
+					"depth":       "1",
+				},
+			},
+			{
+				// Verify both the pre-existing files AND the cloned files exist
+				Name: "verify-preservation",
+				Runs: `
+					mkdir -p ${{targets.destdir}}/usr/share/preserve-test
+
+					# Check that the git clone succeeded
+					if [ ! -d /home/build/hello-world/.git ]; then
+						echo "FAIL: .git directory missing" > ${{targets.destdir}}/usr/share/preserve-test/status.txt
+						exit 1
+					fi
+
+					# Check that the cloned README exists
+					if [ ! -f /home/build/hello-world/README ]; then
+						echo "FAIL: README from git missing" > ${{targets.destdir}}/usr/share/preserve-test/status.txt
+						exit 1
+					fi
+
+					# Check that the pre-existing file in the destination dir was preserved
+					if [ ! -f /home/build/hello-world/user-provided-file.txt ]; then
+						echo "FAIL: user-provided-file.txt was overwritten by git-checkout" > ${{targets.destdir}}/usr/share/preserve-test/status.txt
+						exit 1
+					fi
+
+					# Check the content is correct
+					if ! grep -q "this-file-should-survive-git-checkout" /home/build/hello-world/user-provided-file.txt; then
+						echo "FAIL: user-provided-file.txt content was corrupted" > ${{targets.destdir}}/usr/share/preserve-test/status.txt
+						exit 1
+					fi
+
+					# Check that file at workspace root was also preserved
+					if [ ! -f /home/build/preserved-at-root.txt ]; then
+						echo "FAIL: preserved-at-root.txt was deleted" > ${{targets.destdir}}/usr/share/preserve-test/status.txt
+						exit 1
+					fi
+
+					echo "SUCCESS: all files preserved" > ${{targets.destdir}}/usr/share/preserve-test/status.txt
+					cp /home/build/hello-world/user-provided-file.txt ${{targets.destdir}}/usr/share/preserve-test/
+					cp /home/build/hello-world/README ${{targets.destdir}}/usr/share/preserve-test/
+				`,
+			},
+		},
+	}
+
+	outDir, err := e.buildConfig(cfg)
+	require.NoError(t, err, "builtin git-checkout preserve test should succeed")
+
+	// Verify the preservation was successful
+	verifyFileContains(t, outDir, "builtin-git-preserve-test/usr/share/preserve-test/status.txt", "SUCCESS: all files preserved")
+	verifyFileExists(t, outDir, "builtin-git-preserve-test/usr/share/preserve-test/user-provided-file.txt")
+	verifyFileContains(t, outDir, "builtin-git-preserve-test/usr/share/preserve-test/user-provided-file.txt", "this-file-should-survive-git-checkout")
+	verifyFileExists(t, outDir, "builtin-git-preserve-test/usr/share/preserve-test/README")
+}
+
 // TestE2E_BuiltinFetch tests the built-in fetch pipeline using native LLB operations
 func TestE2E_BuiltinFetch(t *testing.T) {
 	e := newE2ETestContext(t)

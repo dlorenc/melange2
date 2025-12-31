@@ -321,15 +321,10 @@ func PrepareWorkspace(base llb.State, pkgName string) llb.State {
 }
 
 // CopySourceToWorkspace copies source files from a Local mount to the workspace.
-// Files are chowned to the build user to ensure they're accessible during build.
 func CopySourceToWorkspace(base llb.State, localName string) llb.State {
 	return base.File(
 		llb.Copy(llb.Local(localName), "/", DefaultWorkDir+"/", &llb.CopyInfo{
 			CopyDirContentsOnly: true,
-			ChownOpt: &llb.ChownOpt{
-				User:  &llb.UserOpt{UID: BuildUserUID},
-				Group: &llb.UserOpt{UID: BuildUserGID},
-			},
 		}),
 		llb.WithCustomName("copy source to workspace"),
 	)

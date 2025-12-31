@@ -60,6 +60,10 @@ func BuildBuiltinPipeline(base llb.State, p *config.Pipeline) (llb.State, error)
 
 // buildGitCheckout implements the git-checkout pipeline using native LLB operations.
 // This uses BuildKit's llb.Git() source operation for efficient, cached git clones.
+//
+// Like the shell implementation, the git clone is mounted at a temporary location
+// and then tar-copied into the destination. This ensures existing files in the
+// destination (like user-provided source files) are preserved, not overwritten.
 func buildGitCheckout(base llb.State, p *config.Pipeline) (llb.State, error) {
 	with := p.With
 
@@ -118,26 +122,20 @@ func buildGitCheckout(base llb.State, p *config.Pipeline) (llb.State, error) {
 		destPath = filepath.Join(DefaultWorkDir, destPath)
 	}
 
-	// Copy git contents to the workspace
-	// We need to ensure the destination directory exists and has proper ownership
+	// Mount the git clone at a temporary location and use tar to copy to destination.
+	// This matches the shell implementation's behavior of:
+	//   tar -c . | tar -C "$dest_fullpath" -x --no-same-owner
+	// This ensures existing files in the destination (like user-provided source files)
+	// are preserved, not deleted or overwritten (unless they conflict with git files).
 	state := base.Run(
-		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf("mkdir -p %s && chown %d:%d %s",
-			destPath, BuildUserUID, BuildUserGID, destPath)}),
-		llb.WithCustomNamef("[git-checkout] prepare %s", destPath),
+		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
+mkdir -p %s
+cd /mnt/gitclone && tar -c . | tar -C %s -x --no-same-owner
+chown -R %d:%d %s
+`, destPath, destPath, BuildUserUID, BuildUserGID, destPath)}),
+		llb.AddMount("/mnt/gitclone", gitState, llb.Readonly),
+		llb.WithCustomNamef("[git-checkout] clone and copy to %s", destPath),
 	).Root()
-
-	// Copy the git clone to the destination
-	state = state.File(
-		llb.Copy(gitState, "/", destPath+"/", &llb.CopyInfo{
-			CopyDirContentsOnly: true,
-			CreateDestPath:      true,
-			ChownOpt: &llb.ChownOpt{
-				User:  &llb.UserOpt{UID: BuildUserUID},
-				Group: &llb.UserOpt{UID: BuildUserGID},
-			},
-		}),
-		llb.WithCustomNamef("[git-checkout] copy to %s", destPath),
-	)
 
 	// Handle expected-commit verification and cherry-picks if needed
 	// These require shell commands since BuildKit's Git doesn't support them directly
