@@ -29,6 +29,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/convention"
 )
 
 func compile() *cobra.Command {
@@ -128,7 +129,7 @@ func compile() *cobra.Command {
 			if pipelineDir != "" {
 				cfg.PipelineDirs = append(cfg.PipelineDirs, pipelineDir)
 			}
-			cfg.PipelineDirs = append(cfg.PipelineDirs, BuiltinPipelineDir)
+			cfg.PipelineDirs = append(cfg.PipelineDirs, convention.BuiltinPipelineDir)
 
 			if len(args) > 0 {
 				cfg.ConfigFile = args[0]

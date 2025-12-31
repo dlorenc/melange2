@@ -33,10 +33,9 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/build"
 	"github.com/dlorenc/melange2/pkg/buildkit"
+	"github.com/dlorenc/melange2/pkg/convention"
 	"github.com/dlorenc/melange2/pkg/linter"
 )
-
-const BuiltinPipelineDir = "/usr/share/melange/pipelines"
 
 // addBuildFlags registers all build command flags to the provided FlagSet using the BuildFlags struct
 func addBuildFlags(fs *pflag.FlagSet, flags *BuildFlags) {
@@ -184,7 +183,7 @@ func (flags *BuildFlags) ToBuildConfig(ctx context.Context, args ...string) (*bu
 	// Convention: auto-detect pipeline directory
 	pipelineDir := flags.PipelineDir
 	if pipelineDir == "" {
-		if detected := detectConventionalPipelineDir(); detected != "" {
+		if detected := convention.DetectPipelineDir(); detected != "" {
 			log.Infof("using conventional pipeline directory: %s", detected)
 			pipelineDir = detected
 		}
@@ -192,12 +191,12 @@ func (flags *BuildFlags) ToBuildConfig(ctx context.Context, args ...string) (*bu
 	if pipelineDir != "" {
 		cfg.PipelineDirs = append(cfg.PipelineDirs, pipelineDir)
 	}
-	cfg.PipelineDirs = append(cfg.PipelineDirs, BuiltinPipelineDir)
+	cfg.PipelineDirs = append(cfg.PipelineDirs, convention.BuiltinPipelineDir)
 
 	// Convention: auto-detect signing key
 	signingKey := flags.SigningKey
 	if signingKey == "" {
-		if detected := detectConventionalSigningKey(); detected != "" {
+		if detected := convention.DetectSigningKey(); detected != "" {
 			log.Infof("using conventional signing key: %s", detected)
 			signingKey = detected
 		}
@@ -208,7 +207,7 @@ func (flags *BuildFlags) ToBuildConfig(ctx context.Context, args ...string) (*bu
 	if flags.SourceDir != "" {
 		cfg.SourceDir = flags.SourceDir
 	} else if len(args) > 0 {
-		if detected := detectConventionalSourceDir(buildConfigFilePath); detected != "" {
+		if detected := convention.DetectSourceDir(buildConfigFilePath); detected != "" {
 			log.Infof("using conventional source directory: %s", detected)
 			cfg.SourceDir = detected
 		}
@@ -263,97 +262,6 @@ func (flags *BuildFlags) ToBuildConfig(ctx context.Context, args ...string) (*bu
 	}
 
 	return cfg, nil
-}
-
-// detectConventionalPipelineDir checks if the conventional ./pipelines/ directory exists.
-func detectConventionalPipelineDir() string {
-	const conventionalDir = "pipelines"
-	if info, err := os.Stat(conventionalDir); err == nil && info.IsDir() {
-		return conventionalDir
-	}
-	return ""
-}
-
-// detectConventionalSigningKey checks for signing keys in conventional locations.
-// It looks for (in order): melange.rsa, local-signing.rsa
-func detectConventionalSigningKey() string {
-	conventionalKeys := []string{
-		"melange.rsa",
-		"local-signing.rsa",
-	}
-	for _, key := range conventionalKeys {
-		if _, err := os.Stat(key); err == nil {
-			return key
-		}
-	}
-	return ""
-}
-
-// detectConventionalSourceDir checks if a directory named after the package exists.
-// It parses the config file to extract the package name and checks if $pkgname/ exists.
-func detectConventionalSourceDir(configPath string) string {
-	if configPath == "" {
-		return ""
-	}
-
-	// Read and parse the config file to get the package name
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
-	}
-
-	// Simple parsing to extract package.name - avoid importing full config package
-	// to prevent circular dependencies
-	var cfg struct {
-		Package struct {
-			Name string `yaml:"name"`
-		} `yaml:"package"`
-	}
-
-	parseYAMLPackageName(data, &cfg.Package.Name)
-
-	if cfg.Package.Name == "" {
-		return ""
-	}
-
-	// Check if a directory named after the package exists
-	sourceDir := cfg.Package.Name
-	if info, err := os.Stat(sourceDir); err == nil && info.IsDir() {
-		return sourceDir
-	}
-
-	return ""
-}
-
-// parseYAMLPackageName extracts just the package.name from YAML data
-// using simple string parsing to avoid YAML import issues.
-func parseYAMLPackageName(data []byte, name *string) {
-	// Simple line-by-line parsing for package.name
-	lines := strings.Split(string(data), "\n")
-	inPackage := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "package:" {
-			inPackage = true
-			continue
-		}
-		if inPackage && strings.HasPrefix(trimmed, "name:") {
-			// Extract the name value
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				*name = strings.TrimSpace(parts[1])
-				// Remove quotes if present
-				*name = strings.Trim(*name, "\"'")
-				return
-			}
-		}
-		// If we hit another top-level key, we've left the package section
-		if inPackage && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			if !strings.HasPrefix(trimmed, "name:") {
-				break
-			}
-		}
-	}
 }
 
 func buildCmd() *cobra.Command {

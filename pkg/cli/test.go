@@ -24,6 +24,7 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/build"
 	"github.com/dlorenc/melange2/pkg/buildkit"
+	"github.com/dlorenc/melange2/pkg/convention"
 )
 
 // addTestFlags registers all test command flags to the provided FlagSet using the TestFlags struct
@@ -102,7 +103,7 @@ func (flags *TestFlags) ToTestConfig(ctx context.Context, args ...string) (*buil
 
 	// Add pipeline directories
 	cfg.PipelineDirs = append(cfg.PipelineDirs, flags.PipelineDirs...)
-	cfg.PipelineDirs = append(cfg.PipelineDirs, BuiltinPipelineDir)
+	cfg.PipelineDirs = append(cfg.PipelineDirs, convention.BuiltinPipelineDir)
 
 	return cfg, nil
 }

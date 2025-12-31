@@ -23,6 +23,7 @@ import (
 	"chainguard.dev/apko/pkg/options"
 
 	"github.com/dlorenc/melange2/pkg/config"
+	"github.com/dlorenc/melange2/pkg/linter"
 )
 
 // BuildConfig contains all immutable configuration for a build.
@@ -290,6 +291,10 @@ func NewBuildConfigForRemote(params RemoteBuildParams) *BuildConfig {
 	// Default repos and keys for Wolfi
 	cfg.ExtraRepos = []string{"https://packages.wolfi.dev/os"}
 	cfg.ExtraKeys = []string{"https://packages.wolfi.dev/os/wolfi-signing.rsa.pub"}
+
+	// Enable default linting for remote builds
+	cfg.LintRequire = linter.DefaultRequiredLinters()
+	cfg.LintWarn = linter.DefaultWarnLinters()
 
 	return cfg
 }
