@@ -86,6 +86,8 @@ melange build [config.yaml]
 |------|-----------|---------|-------------|
 | `--buildkit-addr` | | `tcp://localhost:1234` | BuildKit daemon address (e.g., tcp://localhost:1234) |
 | `--max-layers` | | `50` | Maximum number of layers for build environment (1 for single layer, higher for better cache efficiency) |
+| `--apko-registry` | | (none) | Registry URL for caching apko base images (e.g., registry:5000/apko-cache) |
+| `--apko-registry-insecure` | | `false` | Allow insecure (HTTP) connection to apko registry |
 
 ### Linting
 

@@ -57,6 +57,7 @@ For multi-package builds, packages are built in dependency order based on `envir
 | `--debug` | `false` | Enable debug logging |
 | `--wait` | `false` | Wait for build to complete |
 | `--backend-selector` | (none) | Backend label selector (key=value, can be specified multiple times) |
+| `--mode` | `flat` | Build scheduling mode: `flat` (parallel, no deps) or `dag` (dependency order) |
 
 #### Git Source Flags
 

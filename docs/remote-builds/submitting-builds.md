@@ -41,6 +41,7 @@ melange2 remote submit [config.yaml...] [flags]
 | `--debug` | bool | `false` | Enable debug logging |
 | `--wait` | bool | `false` | Wait for build to complete |
 | `--backend-selector` | strings | - | Backend label selector (`key=value`) |
+| `--mode` | string | `flat` | Build scheduling mode: `flat` (parallel) or `dag` (dependency order) |
 | `--git-repo` | string | - | Git repository URL for package configs |
 | `--git-ref` | string | - | Git ref (branch/tag/commit) to checkout |
 | `--git-pattern` | string | `*.yaml` | Glob pattern for config files in git repo |
