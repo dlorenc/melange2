@@ -143,8 +143,14 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 	}
 
 	// Build base environment from apko configuration
+	// Use a minimum SOURCE_DATE_EPOCH of Jan 1, 1980 (315532800) to avoid issues
+	// with software that can't handle very old timestamps (e.g., Ruby's gem build)
+	sourceEpoch := b.SourceDateEpoch.Unix()
+	if sourceEpoch < 315532800 {
+		sourceEpoch = 315532800
+	}
 	baseEnv := map[string]string{
-		"SOURCE_DATE_EPOCH": fmt.Sprintf("%d", b.SourceDateEpoch.Unix()),
+		"SOURCE_DATE_EPOCH": fmt.Sprintf("%d", sourceEpoch),
 	}
 	maps.Copy(baseEnv, b.Configuration.Environment.Environment)
 
