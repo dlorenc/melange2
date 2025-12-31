@@ -368,6 +368,44 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 
 	bc.Summarize(ctx)
 
+	// Try per-layer cache if registry is configured
+	var layerCache *buildkit.LayerCache
+	var predictedGroups []apko_build.LayerGroup
+	if b.ApkoRegistry != "" {
+		layerCache = buildkit.NewLayerCache(b.ApkoRegistry, b.Arch.ToAPK(), b.ApkoRegistryInsecure)
+
+		// Predict layer groups without building
+		predictedGroups, err = bc.PredictLayerGroups(ctx)
+		if err != nil {
+			log.Warnf("failed to predict layer groups, falling back to full build: %v", err)
+		} else {
+			log.Infof("predicted %d layer groups", len(predictedGroups))
+
+			// Check which layers are cached
+			cachedRefs, allCached, err := layerCache.CheckLayers(ctx, predictedGroups)
+			if err != nil {
+				log.Warnf("failed to check layer cache: %v", err)
+			} else if allCached {
+				// All layers cached - pull and return without building
+				log.Infof("all %d layers cached, skipping apko build", len(predictedGroups))
+				cachedLayers, err := layerCache.PullLayers(ctx, cachedRefs)
+				if err != nil {
+					log.Warnf("failed to pull cached layers, falling back to full build: %v", err)
+				} else {
+					// Get release data (limited info when using cache)
+					releaseData := &apko_build.ReleaseData{
+						ID:        "cached",
+						Name:      "melange-cached package",
+						VersionID: "cached",
+					}
+					return cachedLayers, releaseData, cleanup, nil
+				}
+			} else {
+				log.Infof("partial cache hit: %d/%d layers cached, building all", len(cachedRefs), len(predictedGroups))
+			}
+		}
+	}
+
 	// Use BuildLayers which internally calls buildImage and handles layering
 	// We don't call BuildImage separately as BuildLayers does it internally
 	layers, err := bc.BuildLayers(ctx)
@@ -376,6 +414,13 @@ func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.R
 		return nil, nil, nil, fmt.Errorf("building layers: %w", err)
 	}
 	log.Infof("apko generated %d layer(s)", len(layers))
+
+	// Push layers to cache for future builds
+	if layerCache != nil && predictedGroups != nil && len(layers) == len(predictedGroups) {
+		if err := layerCache.PushLayers(ctx, layers, predictedGroups); err != nil {
+			log.Warnf("failed to push layers to cache: %v", err)
+		}
+	}
 
 	// Get release data
 	releaseData := &apko_build.ReleaseData{

@@ -212,3 +212,5 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	k8s.io/apimachinery v0.34.3 // indirect
 )
+
+replace chainguard.dev/apko => github.com/dlorenc/apko v0.0.0-20251231210046-9355b40ca7cd
