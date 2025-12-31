@@ -1,0 +1,20 @@
+# Environment variables test - validates env var propagation
+package:
+  name: env-test
+  version: 1.0.0
+
+environment:
+  environment:
+    CUSTOM_VAR: custom-env-value
+    BUILD_TYPE: release
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/env-test"
+
+      # Capture environment variables
+      echo "CUSTOM_VAR=$CUSTOM_VAR" > "${{targets.destdir}}/usr/share/env-test/global-env.txt"
+      echo "BUILD_TYPE=$BUILD_TYPE" >> "${{targets.destdir}}/usr/share/env-test/global-env.txt"
+
+      # HOME should always be set
+      echo "HOME=$HOME" > "${{targets.destdir}}/usr/share/env-test/home.txt"

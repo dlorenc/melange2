@@ -9,7 +9,7 @@ This document is optimized for AI agents working on the melange2 codebase.
 | Build binary | `go build -o melange2 .` |
 | Build server | `go build -o melange-server ./cmd/melange-server/` |
 | Unit tests | `go test -short ./...` |
-| E2E tests | `go test -v ./pkg/buildkit/...` |
+| E2E tests | `go test -v ./e2e/...` |
 | All tests | `go test ./...` |
 | Lint | `go vet ./...` |
 | Build package | `./melange2 build pkg.yaml --buildkit-addr tcp://localhost:1234` |
@@ -62,13 +62,18 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 .
 ├── cmd/
 │   └── melange-server/    # Build service entry point
+├── e2e/                   # E2E test framework
+│   ├── harness/           # Test infrastructure (BuildKit, registry, server)
+│   ├── fixtures/          # Test fixtures (build/, test/, remote/)
+│   ├── build_test.go      # Local build E2E tests
+│   ├── remote_test.go     # Remote build E2E tests
+│   └── test_test.go       # Test pipeline E2E tests
 ├── pkg/buildkit/          # CORE - BuildKit integration
 │   ├── builder.go         # Main Build() method
 │   ├── llb.go             # Pipeline → LLB conversion
 │   ├── builtin.go         # Native LLB implementations (git-checkout, fetch)
 │   ├── cache.go           # Cache mount definitions
-│   ├── progress.go        # Build progress display
-│   └── e2e_test.go        # E2E tests
+│   └── progress.go        # Build progress display
 ├── pkg/build/             # Build orchestration
 │   └── pipelines/         # Built-in pipeline YAMLs
 ├── pkg/cli/               # CLI commands (build, test, etc.)
@@ -103,7 +108,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 | Add CLI flag | `pkg/cli/build.go` |
 | Add built-in pipeline | `pkg/build/pipelines/{category}/{name}.yaml` |
 | Add native LLB pipeline | `pkg/buildkit/builtin.go`, `pkg/build/compile.go` |
-| Debug test failures | `pkg/buildkit/e2e_test.go` |
+| Debug test failures | `e2e/*.go`, `e2e/harness/*.go` |
 | Understand caching | `pkg/buildkit/cache.go` |
 | Config parsing | `pkg/config/config.go` |
 | Modify server API | `pkg/service/api/server.go` |
@@ -524,7 +529,7 @@ Note: Pipelines and source files are automatically included by convention (see [
 
 | What | Where |
 |------|-------|
-| E2E test fixtures | `pkg/buildkit/testdata/e2e/*.yaml` |
+| E2E test fixtures | `e2e/fixtures/**/*.yaml` |
 | Built-in pipelines | `pkg/build/pipelines/**/*.yaml` |
 | CLI commands | `pkg/cli/*.go` |
 | Example configs | `examples/*.yaml` |

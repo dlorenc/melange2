@@ -1,0 +1,15 @@
+# Simple remote build test
+package:
+  name: remote-simple
+  version: 1.0.0
+
+environment:
+  contents:
+    packages:
+      - busybox
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/remote-simple"
+      echo "remote build successful" > "${{targets.destdir}}/usr/share/remote-simple/status.txt"
+      echo "version=${{package.version}}" >> "${{targets.destdir}}/usr/share/remote-simple/status.txt"

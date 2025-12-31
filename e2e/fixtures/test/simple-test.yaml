@@ -1,0 +1,27 @@
+# Simple test pipeline fixture
+# Note: Tests run against a base image, not the built package
+package:
+  name: simple-test-pkg
+  version: 1.0.0
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      echo '#!/bin/sh' > "${{targets.destdir}}/usr/bin/myapp"
+      echo 'echo "Hello from myapp"' >> "${{targets.destdir}}/usr/bin/myapp"
+      chmod +x "${{targets.destdir}}/usr/bin/myapp"
+
+test:
+  pipeline:
+    - runs: |
+        # Test basic shell functionality and environment
+        echo "Running test pipeline"
+
+        # Verify we can create files and directories
+        mkdir -p /home/build/test-results/simple-test-pkg
+
+        # Verify environment is set up correctly
+        test -d /home/build
+
+        # Record test result
+        echo "PASSED" > /home/build/test-results/simple-test-pkg/status.txt

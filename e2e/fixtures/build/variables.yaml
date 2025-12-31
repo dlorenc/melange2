@@ -1,0 +1,27 @@
+# Variable substitution test - validates package variables and custom vars
+package:
+  name: var-test
+  version: 2.3.4
+  epoch: 5
+
+vars:
+  custom-var: custom-value
+  another-var: another-value
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/var-test"
+
+      # Test package variables
+      cat > "${{targets.destdir}}/usr/share/var-test/package-vars.txt" << 'EOF'
+      name=${{package.name}}
+      version=${{package.version}}
+      epoch=${{package.epoch}}
+      full-version=${{package.full-version}}
+      EOF
+
+      # Test custom variables
+      cat > "${{targets.destdir}}/usr/share/var-test/custom-vars.txt" << 'EOF'
+      custom-var=${{vars.custom-var}}
+      another-var=${{vars.another-var}}
+      EOF

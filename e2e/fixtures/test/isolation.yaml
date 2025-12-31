@@ -1,0 +1,71 @@
+# Subpackage test isolation fixture
+# Each subpackage's test runs in its own environment
+# Note: Tests run against a base image, so we test the isolation mechanism
+# by verifying each test can create its own state independently
+package:
+  name: isolation-test
+  version: 1.0.0
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/isolation-test"
+      echo "main-marker" > "${{targets.destdir}}/usr/share/isolation-test/marker.txt"
+
+test:
+  pipeline:
+    - runs: |
+        # Test basic environment for main package
+        mkdir -p /home/build/test-results/isolation-test
+
+        # Verify HOME is set correctly
+        test -d /home/build
+
+        # Create a marker to prove this test ran
+        echo "main-test-ran" > /tmp/main-marker.txt
+
+        echo "PASSED" > /home/build/test-results/isolation-test/status.txt
+
+subpackages:
+  - name: isolation-test-sub1
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}/usr/share/sub1"
+          echo "sub1-marker" > "${{targets.subpkgdir}}/usr/share/sub1/marker.txt"
+
+    test:
+      pipeline:
+        - runs: |
+            # Test basic environment for sub1
+            mkdir -p /home/build/test-results/isolation-test-sub1
+
+            # Verify isolation - main test marker should NOT exist
+            # (each subpackage test starts fresh)
+            if [ -f /tmp/main-marker.txt ]; then
+              echo "FAIL: main test marker visible in sub1 test" > /home/build/test-results/isolation-test-sub1/status.txt
+              exit 1
+            fi
+
+            # Create sub1's marker
+            echo "sub1-test-ran" > /tmp/sub1-marker.txt
+
+            echo "PASSED" > /home/build/test-results/isolation-test-sub1/status.txt
+
+  - name: isolation-test-sub2
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}/usr/share/sub2"
+          echo "sub2-marker" > "${{targets.subpkgdir}}/usr/share/sub2/marker.txt"
+
+    test:
+      pipeline:
+        - runs: |
+            # Test basic environment for sub2
+            mkdir -p /home/build/test-results/isolation-test-sub2
+
+            # Verify isolation - sub1's marker should NOT exist
+            if [ -f /tmp/sub1-marker.txt ]; then
+              echo "FAIL: sub1 test marker visible in sub2 test" > /home/build/test-results/isolation-test-sub2/status.txt
+              exit 1
+            fi
+
+            echo "PASSED" > /home/build/test-results/isolation-test-sub2/status.txt

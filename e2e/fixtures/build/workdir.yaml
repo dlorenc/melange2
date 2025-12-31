@@ -1,0 +1,20 @@
+# Working directory test - validates working-directory pipeline option
+package:
+  name: workdir-test
+  version: 1.0.0
+
+pipeline:
+  - runs: |
+      # Create a project structure
+      mkdir -p /home/build/src/project/nested
+      echo "source file 1" > /home/build/src/project/file1.txt
+      echo "nested file" > /home/build/src/project/nested/file2.txt
+
+  - working-directory: /home/build/src/project
+    runs: |
+      # These commands should run in /home/build/src/project
+      mkdir -p "${{targets.destdir}}/usr/share/workdir-test"
+      pwd > "${{targets.destdir}}/usr/share/workdir-test/workdir.txt"
+
+      # Use relative paths - this proves working directory is set correctly
+      cat file1.txt nested/file2.txt > "${{targets.destdir}}/usr/share/workdir-test/combined.txt"

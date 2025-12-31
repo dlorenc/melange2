@@ -1,0 +1,14 @@
+# Simple build test - validates basic shell command execution
+package:
+  name: simple-test
+  version: 1.0.0
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      echo '#!/bin/sh' > "${{targets.destdir}}/usr/bin/hello"
+      echo 'echo Hello World' >> "${{targets.destdir}}/usr/bin/hello"
+      chmod +x "${{targets.destdir}}/usr/bin/hello"
+  - runs: |
+      mkdir -p "${{targets.destdir}}/etc"
+      echo "version=1.0.0" > "${{targets.destdir}}/etc/simple.conf"

@@ -1,0 +1,37 @@
+# Subpackages test - validates multi-package builds
+package:
+  name: multi-subpkg
+  version: 2.0.0
+
+pipeline:
+  - runs: |
+      # Main package: binary, library, header
+      mkdir -p "${{targets.destdir}}/usr/bin"
+      mkdir -p "${{targets.destdir}}/usr/lib"
+      mkdir -p "${{targets.destdir}}/usr/include"
+
+      echo '#!/bin/sh' > "${{targets.destdir}}/usr/bin/multi-app"
+      echo 'echo multi-app' >> "${{targets.destdir}}/usr/bin/multi-app"
+      chmod +x "${{targets.destdir}}/usr/bin/multi-app"
+
+      echo "library-content" > "${{targets.destdir}}/usr/lib/libmulti.so.2.0.0"
+      echo "#ifndef MULTI_H" > "${{targets.destdir}}/usr/include/multi.h"
+
+subpackages:
+  - name: multi-subpkg-dev
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}/usr"
+          echo "dev-marker" > "${{targets.subpkgdir}}/usr/dev-marker.txt"
+
+  - name: multi-subpkg-doc
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}/usr/share"
+          echo "doc-marker" > "${{targets.subpkgdir}}/usr/share/doc-marker.txt"
+
+  - name: multi-subpkg-libs
+    pipeline:
+      - runs: |
+          mkdir -p "${{targets.subpkgdir}}/usr/lib"
+          echo "libs-marker" > "${{targets.subpkgdir}}/usr/lib/libs-marker.txt"

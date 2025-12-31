@@ -1,0 +1,31 @@
+# Multi-pipeline test - validates sequential pipeline execution
+package:
+  name: multi-pipeline-test
+  version: 1.0.0
+
+pipeline:
+  - name: step1
+    runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/multi-pipeline"
+      echo "step1" > "${{targets.destdir}}/usr/share/multi-pipeline/progress.txt"
+
+  - name: step2
+    runs: |
+      echo "step2" >> "${{targets.destdir}}/usr/share/multi-pipeline/progress.txt"
+
+  - name: step3
+    runs: |
+      echo "step3" >> "${{targets.destdir}}/usr/share/multi-pipeline/progress.txt"
+
+  - name: step4
+    runs: |
+      echo "step4" >> "${{targets.destdir}}/usr/share/multi-pipeline/progress.txt"
+
+  - name: step5
+    runs: |
+      echo "step5" >> "${{targets.destdir}}/usr/share/multi-pipeline/progress.txt"
+
+  - name: validate
+    runs: |
+      # Count lines to verify all steps ran
+      wc -l < "${{targets.destdir}}/usr/share/multi-pipeline/progress.txt" | tr -d ' ' > "${{targets.destdir}}/usr/share/multi-pipeline/count.txt"

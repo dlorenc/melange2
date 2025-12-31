@@ -9,7 +9,7 @@ melange2 uses three categories of tests:
 | Category | Command | Duration | Requires |
 |----------|---------|----------|----------|
 | Unit Tests | `go test -short ./...` | ~2 min | Nothing |
-| E2E Tests | `go test -v ./pkg/buildkit/...` | ~2 min | BuildKit |
+| E2E Tests | `go test -v ./e2e/...` | ~3 min | Docker (testcontainers) |
 | Comparison Tests | `make compare ...` | ~4 hr | BuildKit, Wolfi OS |
 
 ## Running Tests
@@ -31,24 +31,25 @@ go test -v -race -short -coverprofile=coverage.out ./...
 
 ### E2E Tests
 
-E2E tests require a running BuildKit daemon:
+E2E tests use testcontainers to automatically spin up BuildKit and other dependencies:
 
 ```bash
-# Start BuildKit
-docker run -d --name buildkitd --privileged -p 1234:1234 \
-  moby/buildkit:latest --addr tcp://0.0.0.0:1234
+# Run all E2E tests
+go test -v ./e2e/...
 
-# Run E2E tests
-go test -v ./pkg/buildkit/...
+# Run specific test category
+go test -v -run TestBuild ./e2e/...     # Build tests
+go test -v -run TestRemote ./e2e/...    # Remote build tests
+go test -v -run TestTestPipeline ./e2e/... # Test pipeline tests
 
-# Run specific E2E test
-go test -v -run TestE2E_SimpleRun ./pkg/buildkit/...
+# Run with verbose output
+go test -v -count=1 ./e2e/...
 ```
 
 ### All Tests
 
 ```bash
-# Run all tests (requires BuildKit)
+# Run all tests (requires Docker for E2E)
 go test ./...
 ```
 
@@ -60,180 +61,189 @@ The CI workflow (`.github/workflows/ci.yaml`) runs these jobs:
 |-----|---------|----------|-------------|
 | Build | `go build -v ./...` | ~30s | Compile all packages |
 | Test | `go test -v -race -short -coverprofile=coverage.out ./...` | ~2min | Unit tests with coverage |
-| E2E | `go test -v -coverprofile=e2e-coverage.out -run "TestE2E_..." ./pkg/buildkit/...` | ~2min | E2E tests |
+| E2E | `go test -v -coverprofile=e2e-coverage.out ./e2e/...` | ~3min | E2E tests with testcontainers |
 | Lint | `golangci-lint run` | ~1min | Code linting |
 | Verify | `go mod tidy && git diff --exit-code` | ~20s | Module verification |
 
-### What Each Job Validates
-
-- **Build**: Ensures all code compiles without errors
-- **Test**: Runs unit tests with race detection; `-short` skips E2E tests
-- **E2E**: Runs BuildKit integration tests using testcontainers (Docker required)
-- **Lint**: Runs golangci-lint with project configuration
-- **Verify**: Ensures `go.mod` and `go.sum` are up to date
-
-All jobs must pass before merging a PR.
-
-### Viewing CI Results
-
-```bash
-# List recent workflow runs
-gh run list --limit 5
-
-# View a specific run
-gh run view <run-id>
-
-# Watch a running workflow
-gh run watch
-
-# View failed job logs
-gh run view <run-id> --log-failed
-```
-
 ## E2E Test Framework
 
-### Test Context
+### Architecture
 
-E2E tests use a shared context with BuildKit:
+The E2E test framework is located in `e2e/` and has this structure:
 
-```go
-type e2eTestContext struct {
-    t          *testing.T
-    ctx        context.Context
-    bk         *buildKitContainer
-    workingDir string
-}
-
-func newE2ETestContext(t *testing.T) *e2eTestContext {
-    if testing.Short() {
-        t.Skip("skipping e2e test in short mode")
-    }
-    ctx := context.Background()
-    bk := startBuildKitContainer(t, ctx)
-    workingDir := t.TempDir()
-    return &e2eTestContext{t: t, ctx: ctx, bk: bk, workingDir: workingDir}
-}
+```
+e2e/
+├── DESIGN.md           # Framework design document
+├── harness/
+│   ├── harness.go      # Test harness (BuildKit, registry, server)
+│   ├── buildkit.go     # BuildKit testcontainer management
+│   ├── registry.go     # Registry testcontainer management
+│   └── assertions.go   # Common test assertions
+├── fixtures/
+│   ├── build/          # Build test fixtures
+│   ├── test/           # Test pipeline fixtures
+│   └── remote/         # Remote build fixtures
+├── build_test.go       # Local build tests
+├── test_test.go        # Test pipeline tests
+└── remote_test.go      # Remote build tests
 ```
 
-### Test Pattern
+### Test Harness
 
-Typical E2E test structure:
+The test harness manages infrastructure:
 
 ```go
-func TestE2E_FeatureName(t *testing.T) {
-    // Create test context (starts BuildKit if needed)
-    e := newE2ETestContext(t)
+// Create a basic harness with BuildKit
+h := harness.New(t)
+addr := h.BuildKitAddr()
 
-    // Load test configuration
-    cfg := loadTestConfig(t, "XX-feature-name.yaml")
+// Create a harness with in-process server
+h := harness.New(t, harness.WithServer())
+client := h.Client()
 
-    // Execute build
-    outDir, err := e.buildConfig(cfg)
-    require.NoError(t, err, "build should succeed")
-
-    // Verify outputs
-    verifyFileExists(t, outDir, "package-name/path/to/expected/file")
-    verifyFileContains(t, outDir, "package-name/path/to/file", "expected content")
-}
+// Create a harness with registry
+h := harness.New(t, harness.WithServer(), harness.WithRegistry())
 ```
+
+The harness automatically:
+- Starts BuildKit via testcontainers
+- Starts optional registry via testcontainers
+- Runs the melange server in-process (for coverage measurement)
+- Cleans up on test completion
+
+### Test Categories
+
+#### Build Tests (`build_test.go`)
+
+Test local build functionality:
+
+| Test | Description |
+|------|-------------|
+| `TestBuild_Simple` | Basic shell command execution |
+| `TestBuild_Variables` | Package variable substitution |
+| `TestBuild_Environment` | Environment variable propagation |
+| `TestBuild_WorkingDirectory` | Working directory handling |
+| `TestBuild_MultiPipeline` | Sequential pipeline execution |
+| `TestBuild_Conditional` | if: conditions |
+| `TestBuild_Subpackages` | Multiple package outputs |
+| `TestBuild_FullIntegration` | Full build path |
+
+#### Remote Tests (`remote_test.go`)
+
+Test remote build server:
+
+| Test | Description |
+|------|-------------|
+| `TestRemote_HealthCheck` | Server health endpoint |
+| `TestRemote_ListBackends` | Backend listing |
+| `TestRemote_BackendManagement` | Add/remove backends |
+| `TestRemote_SinglePackageBuild` | Single package submission |
+| `TestRemote_MultiPackageBuild` | Multi-package (flat mode) |
+| `TestRemote_DAGModeBuild` | Dependency-ordered builds |
+| `TestRemote_BuildStatusPolling` | Status updates |
+| `TestRemote_ListBuilds` | Build listing |
+
+#### Test Pipeline Tests (`test_test.go`)
+
+Test `melange test` functionality:
+
+| Test | Description |
+|------|-------------|
+| `TestTestPipeline_Simple` | Basic test execution |
+| `TestTestPipeline_SubpackageIsolation` | Subpackage isolation |
+| `TestTestPipeline_FailureDetection` | Failure reporting |
+| `TestTestPipeline_NoTests` | No-test handling |
 
 ### Test Fixtures
 
-Test configurations are stored in `pkg/buildkit/testdata/e2e/`:
+Fixtures are in `e2e/fixtures/`:
 
+#### Build Fixtures (`fixtures/build/`)
 | File | Purpose |
 |------|---------|
-| `01-simple-run.yaml` | Basic shell command execution |
-| `02-variable-substitution.yaml` | Package variable substitution |
-| `03-environment-vars.yaml` | Environment variable handling |
-| `04-subpackage-basic.yaml` | Basic subpackage handling |
-| `05-working-directory.yaml` | Working directory handling |
-| `06-multi-pipeline.yaml` | Multiple pipeline steps |
-| `07-test-pipeline.yaml` | Test pipeline execution |
-| `08-uses-pipeline.yaml` | Uses built-in pipeline |
-| `09-conditional-if.yaml` | Conditional pipeline execution |
-| `10-script-assertions.yaml` | Script assertions and chaining |
-| `11-nested-pipelines.yaml` | Nested pipeline execution |
-| `12-permissions.yaml` | File permissions and symlinks |
-| `13-fetch-source.yaml` | Source fetching with checksums |
-| `14-git-operations.yaml` | Git clone and checkout |
-| `15-multiple-subpackages.yaml` | Multiple subpackage handling |
-| `16-cache-mounts.yaml` | Cache mount isolation |
-| `17-go-cache.yaml` | Go cache persistence |
-| `18-python-cache.yaml` | Python pip cache |
-| `19-node-cache.yaml` | Node.js npm cache |
-| `20-rust-cache.yaml` | Rust cargo cache |
-| `21-apk-cache.yaml` | APK package cache |
-| `22-cache-dir.yaml` | Host cache directory |
-| `23-autoconf-build.yaml` | Autoconf workflow |
-| `24-cmake-build.yaml` | CMake workflow |
-| `25-go-build.yaml` | Go build workflow |
-| `26-simple-test.yaml` | Simple test pipeline |
-| `27-subpackage-test-isolation.yaml` | Subpackage test isolation |
-| `28-test-failure.yaml` | Test failure detection |
-| `29-test-with-sources.yaml` | Test with source directory |
+| `simple.yaml` | Basic shell commands |
+| `variables.yaml` | Variable substitution |
+| `environment.yaml` | Environment variables |
+| `workdir.yaml` | Working directory |
+| `multi-pipeline.yaml` | Sequential pipelines |
+| `conditional.yaml` | Conditional pipelines |
+| `subpackages.yaml` | Multi-package builds |
+
+#### Test Fixtures (`fixtures/test/`)
+| File | Purpose |
+|------|---------|
+| `simple-test.yaml` | Basic test pipeline |
+| `isolation.yaml` | Subpackage isolation |
+| `failure.yaml` | Failure detection |
+
+#### Remote Fixtures (`fixtures/remote/`)
+| File | Purpose |
+|------|---------|
+| `simple.yaml` | Basic remote build |
 
 ### Helper Functions
 
+The harness provides assertion helpers:
+
 ```go
-// Load a test configuration from testdata/e2e/
-func loadTestConfig(t *testing.T, name string) *config.Configuration
+// Check file exists
+harness.FileExists(t, outDir, "path/to/file")
 
-// Verify a file exists in the output directory
-func verifyFileExists(t *testing.T, outDir, path string)
+// Check file does not exist
+harness.FileNotExists(t, outDir, "path/to/file")
 
-// Verify a file contains expected content
-func verifyFileContains(t *testing.T, outDir, path, expected string)
+// Check file contains string
+harness.FileContains(t, outDir, "path/to/file", "expected content")
+
+// Check file does not contain string
+harness.FileNotContains(t, outDir, "path/to/file", "unexpected")
+
+// Check multiple files exist
+harness.FilesExist(t, outDir, "file1", "file2", "file3")
+
+// Read file content
+content := harness.ReadFile(t, outDir, "path/to/file")
 ```
 
 ## Adding New E2E Tests
 
 ### 1. Create Test Fixture
 
-Create `pkg/buildkit/testdata/e2e/XX-feature-name.yaml`:
+Create a fixture in the appropriate directory:
 
 ```yaml
+# e2e/fixtures/build/my-feature.yaml
 package:
-  name: feature-test
+  name: my-feature-test
   version: 1.0.0
-  epoch: 0
-  description: Test for feature X
-  copyright:
-    - license: Apache-2.0
-
-environment:
-  contents:
-    packages:
-      - busybox
 
 pipeline:
-  - name: Test feature X
-    runs: |
-      mkdir -p ${{targets.destdir}}/usr/share/feature-test
-      echo "feature output" > ${{targets.destdir}}/usr/share/feature-test/result.txt
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/my-feature"
+      echo "test output" > "${{targets.destdir}}/usr/share/my-feature/result.txt"
 ```
 
 ### 2. Add Test Function
 
-Add to `pkg/buildkit/e2e_test.go`:
+Add to the appropriate test file:
 
 ```go
-func TestE2E_FeatureName(t *testing.T) {
-    e := newE2ETestContext(t)
-    cfg := loadTestConfig(t, "XX-feature-name.yaml")
+// e2e/build_test.go
+func TestBuild_MyFeature(t *testing.T) {
+    c := newBuildTestContext(t)
+    cfg := c.loadConfig("my-feature.yaml")
 
-    outDir, err := e.buildConfig(cfg)
-    require.NoError(t, err, "build should succeed")
+    outDir := c.buildConfig(cfg)
 
-    verifyFileExists(t, outDir, "feature-test/usr/share/feature-test/result.txt")
-    verifyFileContains(t, outDir, "feature-test/usr/share/feature-test/result.txt", "feature output")
+    harness.FileExists(t, outDir, "my-feature-test/usr/share/my-feature/result.txt")
+    harness.FileContains(t, outDir, "my-feature-test/usr/share/my-feature/result.txt", "test output")
 }
 ```
 
 ### 3. Run the Test
 
 ```bash
-go test -v -run TestE2E_FeatureName ./pkg/buildkit/...
+go test -v -run TestBuild_MyFeature ./e2e/...
 ```
 
 ## Comparison Tests
@@ -258,64 +268,27 @@ make compare WOLFI_OS_PATH=/tmp/wolfi-os PACKAGES_FILE=packages.txt
 
 # With custom BuildKit address
 make compare WOLFI_OS_PATH=/tmp/wolfi-os PACKAGES="jq" BUILDKIT_ADDR=tcp://localhost:8372
-
-# With specific architecture
-make compare WOLFI_OS_PATH=/tmp/wolfi-os PACKAGES="jq" BUILD_ARCH=aarch64
 ```
 
-### Makefile Variables
+## Coverage
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `WOLFI_OS_PATH` | Path to wolfi-dev/os clone | (required) |
-| `PACKAGES` | Space-separated packages | (required unless PACKAGES_FILE) |
-| `PACKAGES_FILE` | File with package list | (required unless PACKAGES) |
-| `BUILDKIT_ADDR` | BuildKit address | `tcp://localhost:8372` |
-| `BUILD_ARCH` | Target architecture | `x86_64` |
-| `KEEP_OUTPUTS` | Keep output directories | (unset) |
+### Generate Coverage
 
-## Test Cache Mounts
+```bash
+# E2E tests run server in-process for coverage measurement
+go test -coverprofile=coverage.out ./e2e/... ./pkg/...
 
-Testing cache mount functionality requires multiple builds:
-
-```go
-func TestE2E_CacheMountPersistence(t *testing.T) {
-    e := newE2ETestContext(t)
-    cfg := loadTestConfig(t, "17-go-cache.yaml")
-
-    cacheMounts := GoCacheMounts()
-
-    // First build - populates cache
-    outDir1, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "1"})
-    require.NoError(t, err)
-    verifyFileContains(t, outDir1, "go-cache-test/usr/share/go-cache-test/mod-count.txt", "1")
-
-    // Second build - should see cached data
-    outDir2, err := e.buildConfigWithCacheMounts(cfg, cacheMounts, map[string]string{"BUILD_ID": "2"})
-    require.NoError(t, err)
-    verifyFileContains(t, outDir2, "go-cache-test/usr/share/go-cache-test/mod-count.txt", "2")
-}
+# View coverage report
+go tool cover -html=coverage.out
 ```
 
-## Test Pipeline Execution
+### Coverage in CI
 
-Testing test pipelines (as opposed to build pipelines):
+The CI pipeline uploads coverage artifacts:
+- `coverage-unit`: Unit test coverage
+- `coverage-e2e`: E2E test coverage
 
-```go
-func TestE2E_SimpleTestPipeline(t *testing.T) {
-    e := newE2ETestContext(t)
-    cfg := loadTestConfig(t, "26-simple-test.yaml")
-
-    outDir, err := e.testConfig(cfg)
-    require.NoError(t, err, "test should succeed")
-
-    // Verify test results were exported
-    verifyFileExists(t, outDir, "test-results/simple-test/status.txt")
-    verifyFileContains(t, outDir, "test-results/simple-test/status.txt", "PASSED")
-}
-```
-
-## Troubleshooting Tests
+## Troubleshooting
 
 ### E2E Tests Skipped
 
@@ -323,61 +296,35 @@ If E2E tests are skipped, you're using `-short` flag:
 
 ```bash
 # This skips E2E tests
-go test -short ./pkg/buildkit/...
+go test -short ./e2e/...
 
 # This runs E2E tests
-go test -v ./pkg/buildkit/...
+go test -v ./e2e/...
 ```
 
-### BuildKit Connection Issues
+### Docker Not Available
+
+E2E tests require Docker for testcontainers:
 
 ```bash
-# Check if BuildKit is running
-docker ps | grep buildkitd
+# Check Docker is running
+docker info
 
-# Restart BuildKit
-docker restart buildkitd
-
-# Check BuildKit logs
-docker logs buildkitd
+# Run Docker daemon if not running
+sudo systemctl start docker
 ```
 
 ### Rate Limit Errors
 
-Use cgr.dev images instead of Docker Hub:
-
-```go
-const TestBaseImage = "cgr.dev/chainguard/wolfi-base:latest"
-```
+The tests use `cgr.dev/chainguard/wolfi-base` to avoid Docker Hub rate limits.
 
 ### Timeout Issues
 
-E2E tests may timeout on slow systems. The default timeout is 10 minutes for comparison tests:
+E2E tests may timeout on slow systems:
 
 ```bash
-go test -v -timeout 30m ./pkg/buildkit/...
+go test -v -timeout 30m ./e2e/...
 ```
-
-## Coverage Reports
-
-### Generate Coverage
-
-```bash
-go test -coverprofile=coverage.out ./...
-```
-
-### View Coverage
-
-```bash
-go tool cover -html=coverage.out
-```
-
-### Coverage in CI
-
-The CI pipeline uploads coverage artifacts:
-
-- `coverage-unit`: Unit test coverage
-- `coverage-e2e`: E2E test coverage
 
 ## Linting
 
@@ -399,8 +346,9 @@ goimports -w $(find . -type f -name '*.go')
 
 ## Best Practices
 
-1. **Skip E2E in unit test runs**: Use `testing.Short()` to skip E2E tests during quick iterations
+1. **Skip E2E in unit test runs**: Use `testing.Short()` to skip E2E tests
 2. **Use testify/require**: Fail fast on assertion failures
-3. **Clean up resources**: Use `t.Cleanup()` for automatic cleanup
-4. **Parallel tests**: E2E tests use shared BuildKit but can run concurrently
+3. **Clean up resources**: The harness handles cleanup automatically
+4. **Use in-process server**: Remote tests run the server in-process for coverage
 5. **Descriptive names**: Test function names should describe what they test
+6. **Isolated fixtures**: Each test uses its own fixture file

@@ -1,0 +1,17 @@
+# Test failure detection fixture
+# This test intentionally fails to verify failure detection
+package:
+  name: failure-test
+  version: 1.0.0
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/failure-test"
+      echo "built" > "${{targets.destdir}}/usr/share/failure-test/status.txt"
+
+test:
+  pipeline:
+    - runs: |
+        # This test intentionally fails
+        echo "This test will fail"
+        exit 1

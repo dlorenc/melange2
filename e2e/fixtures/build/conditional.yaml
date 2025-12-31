@@ -1,0 +1,20 @@
+# Conditional pipeline test - validates if: conditions
+package:
+  name: conditional-test
+  version: 1.0.0
+
+pipeline:
+  - name: always-run
+    runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/conditional-test"
+      echo "always" > "${{targets.destdir}}/usr/share/conditional-test/always.txt"
+
+  - name: enabled-feature
+    if: '"enabled" == "enabled"'
+    runs: |
+      echo "enabled" > "${{targets.destdir}}/usr/share/conditional-test/enabled.txt"
+
+  - name: disabled-feature
+    if: '"enabled" == "disabled"'
+    runs: |
+      echo "disabled" > "${{targets.destdir}}/usr/share/conditional-test/disabled.txt"
