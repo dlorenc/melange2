@@ -263,15 +263,11 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 	// Prepare workspace directories
 	state = PrepareWorkspace(state, cfg.PackageName)
 
-	// If we have source files, copy them to the workspace
-	if cfg.SourceDir != "" {
-		// Only mount source directory if it exists
-		if _, err := os.Stat(cfg.SourceDir); err == nil {
-			sourceLocalName := "source"
-			state = CopySourceToWorkspace(state, sourceLocalName)
-			localDirs[sourceLocalName] = cfg.SourceDir
-		}
-	}
+	// NOTE: Source files are copied AFTER the main pipelines run, not before.
+	// This is because git-checkout/fetch pipelines clone source into the workspace,
+	// and user-provided source files (like cargobump-deps.yaml) need to be overlaid
+	// on top of the cloned source, not overwritten by it.
+	// The source copy happens after BuildPipelinesWithRecovery below.
 
 	// If we have a cache directory, copy it to /var/cache/melange
 	if cfg.CacheDir != "" {
@@ -316,13 +312,42 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		return fmt.Errorf("%s: %w", context, pipelineErr)
 	}
 
-	// Run main pipelines with recovery support
-	log.Info("running main pipelines")
-	result := b.pipeline.BuildPipelinesWithRecovery(state, cfg.Pipelines)
-	if result.Error != nil {
-		return exportOnFailure(result.State, result.Error, "building main pipelines")
+	// Split pipelines into source-fetching (git-checkout, fetch, patch) and build pipelines.
+	// Source files need to be overlaid AFTER source-fetching pipelines run, so that
+	// user-provided files (like cargobump-deps.yaml) aren't overwritten by git-checkout.
+	sourcePipelines, buildPipelines := splitSourceAndBuildPipelines(cfg.Pipelines)
+
+	// Run source-fetching pipelines first
+	if len(sourcePipelines) > 0 {
+		log.Infof("running %d source-fetching pipeline(s)", len(sourcePipelines))
+		result := b.pipeline.BuildPipelinesWithRecovery(state, sourcePipelines)
+		if result.Error != nil {
+			return exportOnFailure(result.State, result.Error, "building source pipelines")
+		}
+		state = result.State
 	}
-	state = result.State
+
+	// Now copy source files on top of the fetched source.
+	// This overlay step ensures user-provided files like cargobump-deps.yaml,
+	// patches, and configs are present in the workspace after git-checkout.
+	if cfg.SourceDir != "" {
+		if _, err := os.Stat(cfg.SourceDir); err == nil {
+			sourceLocalName := "source"
+			log.Infof("overlaying source files from %s", cfg.SourceDir)
+			state = CopySourceToWorkspace(state, sourceLocalName)
+			localDirs[sourceLocalName] = cfg.SourceDir
+		}
+	}
+
+	// Run build pipelines
+	if len(buildPipelines) > 0 {
+		log.Infof("running %d build pipeline(s)", len(buildPipelines))
+		result := b.pipeline.BuildPipelinesWithRecovery(state, buildPipelines)
+		if result.Error != nil {
+			return exportOnFailure(result.State, result.Error, "building main pipelines")
+		}
+		state = result.State
+	}
 
 	// Run subpackage pipelines
 	for _, sp := range cfg.Subpackages {
@@ -820,4 +845,42 @@ func (b *Builder) runTestPipelinesWithImage(ctx context.Context, imageRef string
 	}
 
 	return nil
+}
+
+// sourceFetchingPipelines is the set of pipelines that fetch source code.
+// User-provided source files should be overlaid AFTER these pipelines run.
+var sourceFetchingPipelines = map[string]bool{
+	"git-checkout": true,
+	"fetch":        true,
+	"patch":        true,
+}
+
+// isSourceFetchingPipeline returns true if the pipeline is a source-fetching pipeline.
+func isSourceFetchingPipeline(p *config.Pipeline) bool {
+	return sourceFetchingPipelines[p.Uses]
+}
+
+// splitSourceAndBuildPipelines splits pipelines into source-fetching and build pipelines.
+// Source-fetching pipelines (git-checkout, fetch, patch) are grouped together at the start,
+// maintaining their relative order. All other pipelines are considered build pipelines.
+// This allows user-provided source files to be overlaid after source is fetched but before
+// build steps run.
+func splitSourceAndBuildPipelines(pipelines []config.Pipeline) (source []config.Pipeline, build []config.Pipeline) {
+	// Find the last source-fetching pipeline in the original order
+	// Everything up to and including that point goes in source,
+	// everything after goes in build.
+	lastSourceIdx := -1
+	for i := range pipelines {
+		if isSourceFetchingPipeline(&pipelines[i]) {
+			lastSourceIdx = i
+		}
+	}
+
+	if lastSourceIdx == -1 {
+		// No source-fetching pipelines, everything is a build pipeline
+		return nil, pipelines
+	}
+
+	// Split at lastSourceIdx + 1
+	return pipelines[:lastSourceIdx+1], pipelines[lastSourceIdx+1:]
 }
