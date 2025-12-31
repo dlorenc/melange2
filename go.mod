@@ -213,4 +213,4 @@ require (
 	k8s.io/apimachinery v0.34.3 // indirect
 )
 
-replace chainguard.dev/apko => github.com/dlorenc/apko v0.0.0-20251231222749-fffa8bfbdbe8
+replace chainguard.dev/apko => github.com/dlorenc/apko v0.0.0-20251231223709-7b3f0323719d
