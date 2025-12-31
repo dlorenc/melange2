@@ -34,9 +34,16 @@ data:
   apko-registry: "registry:5000/apko-cache"
   apko-registry-insecure: "true"
 
+  # Scaling configuration for large builds
+  # Max concurrent GCS uploads (default: 200, was 50)
+  max-concurrent-uploads: "200"
+  # Scheduler poll interval (increase for thousands of packages)
+  poll-interval: "2s"
+
   # BuildKit backends configuration
-  # 8 BuildKit workers using StatefulSet DNS names
+  # 15 BuildKit workers using StatefulSet DNS names
   # Each worker can handle 16 concurrent jobs (matching 16-core machines)
+  # Total capacity: 15 × 16 = 240 concurrent package builds
   backends.yaml: |
     backends:
       - addr: tcp://buildkit-0.buildkit-headless.melange.svc.cluster.local:1234
@@ -79,7 +86,42 @@ data:
         maxJobs: 16
         labels:
           tier: standard
+      - addr: tcp://buildkit-8.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-9.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-10.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-11.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-12.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-13.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
+      - addr: tcp://buildkit-14.buildkit-headless.melange.svc.cluster.local:1234
+        arch: x86_64
+        maxJobs: 16
+        labels:
+          tier: standard
     # Pool-wide configuration
     defaultMaxJobs: 16       # Default max concurrent jobs per backend
-    failureThreshold: 3      # Consecutive failures before circuit opens
+    failureThreshold: 5      # Consecutive failures before circuit opens (increased for scale)
     recoveryTimeout: 30s     # How long circuit stays open

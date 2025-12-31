@@ -70,8 +70,10 @@ fi
 
 # Create or update BuildKit node pool with autoscaling
 # Uses larger machines (n2-standard-16) for BuildKit workloads
+# 15 nodes needed for full Wolfi build (240 concurrent builds)
 BUILDKIT_POOL="buildkit-pool"
-echo "==> Setting up BuildKit node pool with autoscaling..."
+BUILDKIT_MAX_NODES="${BUILDKIT_MAX_NODES:-15}"
+echo "==> Setting up BuildKit node pool with autoscaling (max ${BUILDKIT_MAX_NODES} nodes)..."
 if ! gcloud container node-pools describe "${BUILDKIT_POOL}" --cluster="${CLUSTER_NAME}" --zone="${ZONE}" &>/dev/null; then
     gcloud container node-pools create "${BUILDKIT_POOL}" \
         --cluster="${CLUSTER_NAME}" \
@@ -80,7 +82,7 @@ if ! gcloud container node-pools describe "${BUILDKIT_POOL}" --cluster="${CLUSTE
         --num-nodes=1 \
         --enable-autoscaling \
         --min-nodes=0 \
-        --max-nodes=8 \
+        --max-nodes="${BUILDKIT_MAX_NODES}" \
         --node-labels=workload=buildkit \
         --node-taints=workload=buildkit:NoSchedule
     echo "    Created node pool: ${BUILDKIT_POOL}"
@@ -92,7 +94,7 @@ else
         --node-pool="${BUILDKIT_POOL}" \
         --enable-autoscaling \
         --min-nodes=0 \
-        --max-nodes=8 || true
+        --max-nodes="${BUILDKIT_MAX_NODES}" || true
     echo "    Updated autoscaling for: ${BUILDKIT_POOL}"
 fi
 

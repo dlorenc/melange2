@@ -51,6 +51,10 @@ type BuildStore interface {
 	// ListBuilds returns all builds.
 	ListBuilds(ctx context.Context) ([]*types.Build, error)
 
+	// ListActiveBuilds returns only non-terminal builds (pending/running).
+	// This is optimized for frequent polling by the scheduler.
+	ListActiveBuilds(ctx context.Context) ([]*types.Build, error)
+
 	// ClaimReadyPackage atomically claims a package that is ready to build.
 	// A package is ready when all its in-graph dependencies have succeeded.
 	// Returns nil if no packages are ready.
@@ -78,6 +82,10 @@ type MemoryBuildStore struct {
 	mu     sync.RWMutex
 	builds map[string]*types.Build
 	config MemoryBuildStoreConfig
+
+	// activeBuilds is an index of non-terminal builds for fast ListBuilds
+	// This avoids O(n) scans when the scheduler polls every second
+	activeBuilds map[string]struct{}
 
 	// For background eviction
 	stopCh chan struct{}
@@ -111,7 +119,8 @@ func WithEvictionInterval(interval time.Duration) MemoryBuildStoreOption {
 // NewMemoryBuildStore creates a new in-memory build store with default settings.
 func NewMemoryBuildStore(opts ...MemoryBuildStoreOption) *MemoryBuildStore {
 	s := &MemoryBuildStore{
-		builds: make(map[string]*types.Build),
+		builds:       make(map[string]*types.Build),
+		activeBuilds: make(map[string]struct{}),
 		config: MemoryBuildStoreConfig{
 			MaxCompletedBuilds: DefaultMaxCompletedBuilds,
 			BuildTTL:           DefaultBuildTTL,
@@ -185,6 +194,7 @@ func (s *MemoryBuildStore) evictOldBuilds() {
 		// Check TTL first
 		if s.config.BuildTTL > 0 && now.Sub(finishedAt) > s.config.BuildTTL {
 			delete(s.builds, id)
+			delete(s.activeBuilds, id) // Clean index too
 			continue
 		}
 
@@ -205,6 +215,7 @@ func (s *MemoryBuildStore) evictOldBuilds() {
 		toEvict := len(completed) - s.config.MaxCompletedBuilds
 		for i := 0; i < toEvict; i++ {
 			delete(s.builds, completed[i].id)
+			delete(s.activeBuilds, completed[i].id) // Clean index too
 		}
 	}
 }
@@ -260,6 +271,7 @@ func (s *MemoryBuildStore) CreateBuild(ctx context.Context, packages []dag.Node,
 	}
 
 	s.builds[build.ID] = build
+	s.activeBuilds[build.ID] = struct{}{} // Track as active
 	return build, nil
 }
 
@@ -287,6 +299,11 @@ func (s *MemoryBuildStore) UpdateBuild(ctx context.Context, build *types.Build) 
 	}
 
 	s.builds[build.ID] = s.copyBuild(build)
+
+	// Update active index based on terminal status
+	if isTerminalStatus(build.Status) {
+		delete(s.activeBuilds, build.ID)
+	}
 	return nil
 }
 
@@ -298,6 +315,27 @@ func (s *MemoryBuildStore) ListBuilds(ctx context.Context) ([]*types.Build, erro
 	builds := make([]*types.Build, 0, len(s.builds))
 	for _, build := range s.builds {
 		builds = append(builds, s.copyBuild(build))
+	}
+
+	// Sort by CreatedAt for deterministic ordering
+	sort.Slice(builds, func(i, j int) bool {
+		return builds[i].CreatedAt.Before(builds[j].CreatedAt)
+	})
+
+	return builds, nil
+}
+
+// ListActiveBuilds returns only non-terminal builds using the active index.
+// This is O(active) instead of O(total) - critical for scheduler performance at scale.
+func (s *MemoryBuildStore) ListActiveBuilds(ctx context.Context) ([]*types.Build, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	builds := make([]*types.Build, 0, len(s.activeBuilds))
+	for id := range s.activeBuilds {
+		if build, ok := s.builds[id]; ok {
+			builds = append(builds, s.copyBuild(build))
+		}
 	}
 
 	// Sort by CreatedAt for deterministic ordering

@@ -37,6 +37,8 @@ spec:
         - --backends-config=/etc/melange/backends.yaml
         - --gcs-bucket=$(GCS_BUCKET)
         - --enable-tracing
+        # max-parallel=0 means use pool capacity (8 backends × 16 jobs = 128)
+        - --max-parallel=0
         env:
         - name: GCS_BUCKET
           valueFrom:
@@ -63,16 +65,27 @@ spec:
             configMapKeyRef:
               name: melange-config
               key: apko-registry-insecure
+        # Scaling env vars
+        - name: MAX_CONCURRENT_UPLOADS
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: max-concurrent-uploads
+        - name: POLL_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: poll-interval
         ports:
         - containerPort: 8080
           name: http
         resources:
           requests:
-            memory: "2Gi"
-            cpu: "500m"
+            memory: "4Gi"
+            cpu: "1000m"
           limits:
-            memory: "8Gi"
-            cpu: "2000m"
+            memory: "16Gi"
+            cpu: "4000m"
         livenessProbe:
           httpGet:
             path: /healthz

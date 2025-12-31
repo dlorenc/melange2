@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -45,6 +46,7 @@ var (
 	outputDir      = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
 	gcsBucket      = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
 	enableTracing  = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
+	maxParallel    = flag.Int("max-parallel", 0, "Maximum number of concurrent package builds (0 = use pool capacity)")
 )
 
 func main() {
@@ -89,8 +91,16 @@ func run(ctx context.Context) error {
 	// Initialize storage backend
 	var storageBackend storage.Storage
 	if *gcsBucket != "" {
-		log.Infof("using GCS storage: gs://%s", *gcsBucket)
-		storageBackend, err = storage.NewGCSStorage(ctx, *gcsBucket)
+		// Get GCS configuration from environment
+		maxConcurrentUploads := 200 // Default for scale
+		if v := os.Getenv("MAX_CONCURRENT_UPLOADS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				maxConcurrentUploads = n
+			}
+		}
+		log.Infof("using GCS storage: gs://%s (max concurrent uploads: %d)", *gcsBucket, maxConcurrentUploads)
+		storageBackend, err = storage.NewGCSStorage(ctx, *gcsBucket,
+			storage.WithMaxConcurrentUploads(maxConcurrentUploads))
 		if err != nil {
 			return fmt.Errorf("creating GCS storage: %w", err)
 		}
@@ -160,10 +170,20 @@ func run(ctx context.Context) error {
 		log.Infof("using apko registry cache: %s (insecure=%v)", apkoRegistry, apkoRegistryInsecure)
 	}
 
+	// Get scheduler poll interval from environment (default 1s, increase for large builds)
+	pollInterval := time.Second
+	if v := os.Getenv("POLL_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			pollInterval = d
+		}
+	}
+	log.Infof("scheduler poll interval: %s", pollInterval)
+
 	// Create scheduler
 	sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
 		OutputDir:            *outputDir,
-		PollInterval:         time.Second,
+		PollInterval:         pollInterval,
+		MaxParallel:          *maxParallel,
 		CacheRegistry:        cacheRegistry,
 		CacheMode:            cacheMode,
 		ApkoRegistry:         apkoRegistry,

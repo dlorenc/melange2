@@ -131,13 +131,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 // processBuilds processes builds.
 func (s *Scheduler) processBuilds(ctx context.Context) error {
-	builds, err := s.buildStore.ListBuilds(ctx)
+	// Use ListActiveBuilds for O(active) instead of O(total) performance
+	builds, err := s.buildStore.ListActiveBuilds(ctx)
 	if err != nil {
-		return fmt.Errorf("listing builds: %w", err)
+		return fmt.Errorf("listing active builds: %w", err)
 	}
 
 	for _, build := range builds {
-		// Only process pending or running builds
+		// ListActiveBuilds already filters to non-terminal, but double-check
 		if build.Status != types.BuildStatusPending && build.Status != types.BuildStatusRunning {
 			continue
 		}
