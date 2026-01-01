@@ -202,31 +202,41 @@ func (b *Builder) Build(ctx context.Context, layer v1.Layer, cfg *BuildConfig) e
 func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *BuildConfig) error {
 	log := clog.FromContext(ctx)
 
-	if len(layers) == 0 {
-		return fmt.Errorf("at least one layer is required")
-	}
-
 	var state llb.State
 	var localDirs map[string]string
 	var cleanup func()
 
 	// Check if we should use registry-based caching for apko layers
-	if cfg.ApkoRegistryConfig != nil && cfg.ApkoRegistryConfig.Registry != "" && cfg.ImgConfig != nil {
-		// Use registry-based approach: push layers to registry, reference via llb.Image()
-		log.Infof("using apko registry cache: %s", cfg.ApkoRegistryConfig.Registry)
-		loadStart := time.Now()
+	// When ApkoRegistryConfig.Registry is set (e.g., from apko service), we use llb.Image()
+	// and don't need layers to be passed in.
+	if cfg.ApkoRegistryConfig != nil && cfg.ApkoRegistryConfig.Registry != "" {
+		var imgRef string
 
-		cache := NewApkoImageCache(cfg.ApkoRegistryConfig.Registry, cfg.ApkoRegistryConfig.Insecure)
-		imgRef, cacheHit, err := cache.GetOrCreate(ctx, *cfg.ImgConfig, layers)
-		if err != nil {
-			return fmt.Errorf("caching apko image: %w", err)
-		}
-
-		loadDuration := time.Since(loadStart)
-		if cacheHit {
-			log.Infof("apko_registry_cache_hit took %s", loadDuration)
+		// Check if Registry already contains a full image reference (from apko service)
+		// or if we need to push layers ourselves
+		if len(layers) == 0 {
+			// Layers were built by remote apko service, Registry contains the full image ref
+			imgRef = cfg.ApkoRegistryConfig.Registry
+			log.Infof("using pre-built apko image from service: %s", imgRef)
 		} else {
-			log.Infof("apko_registry_push took %s", loadDuration)
+			// Layers provided locally, push to registry cache
+			log.Infof("using apko registry cache: %s", cfg.ApkoRegistryConfig.Registry)
+			loadStart := time.Now()
+
+			cache := NewApkoImageCache(cfg.ApkoRegistryConfig.Registry, cfg.ApkoRegistryConfig.Insecure)
+			var cacheHit bool
+			var err error
+			imgRef, cacheHit, err = cache.GetOrCreate(ctx, *cfg.ImgConfig, layers)
+			if err != nil {
+				return fmt.Errorf("caching apko image: %w", err)
+			}
+
+			loadDuration := time.Since(loadStart)
+			if cacheHit {
+				log.Infof("apko_registry_cache_hit took %s", loadDuration)
+			} else {
+				log.Infof("apko_registry_push took %s", loadDuration)
+			}
 		}
 
 		// Use llb.Image() to reference the cached image
@@ -234,6 +244,8 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		state = llb.Image(imgRef, llb.WithCustomName("apko base image (cached)"))
 		localDirs = make(map[string]string)
 		cleanup = func() {} // No cleanup needed for registry-based approach
+	} else if len(layers) == 0 {
+		return fmt.Errorf("at least one layer is required")
 	} else {
 		// Use traditional llb.Local() approach: extract layers to disk
 		log.Infof("loading %d apko layer(s) into BuildKit (local mode)", len(layers))
