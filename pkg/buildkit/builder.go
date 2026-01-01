@@ -206,10 +206,14 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 	var localDirs map[string]string
 	var cleanup func()
 
-	// Check if we should use registry-based caching for apko layers
-	// When ApkoRegistryConfig.Registry is set (e.g., from apko service), we use llb.Image()
-	// and don't need layers to be passed in.
-	if cfg.ApkoRegistryConfig != nil && cfg.ApkoRegistryConfig.Registry != "" {
+	// Determine the layer loading mode
+	hasApkoRegistry := cfg.ApkoRegistryConfig != nil && cfg.ApkoRegistryConfig.Registry != ""
+
+	switch {
+	case hasApkoRegistry:
+		// Check if we should use registry-based caching for apko layers
+		// When ApkoRegistryConfig.Registry is set (e.g., from apko service), we use llb.Image()
+		// and don't need layers to be passed in.
 		var imgRef string
 
 		// Check if Registry already contains a full image reference (from apko service)
@@ -244,9 +248,11 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		state = llb.Image(imgRef, llb.WithCustomName("apko base image (cached)"))
 		localDirs = make(map[string]string)
 		cleanup = func() {} // No cleanup needed for registry-based approach
-	} else if len(layers) == 0 {
+
+	case len(layers) == 0:
 		return fmt.Errorf("at least one layer is required")
-	} else {
+
+	default:
 		// Use traditional llb.Local() approach: extract layers to disk
 		log.Infof("loading %d apko layer(s) into BuildKit (local mode)", len(layers))
 		loadStart := time.Now()
