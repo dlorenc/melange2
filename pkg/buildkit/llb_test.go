@@ -294,7 +294,7 @@ echo "hello from pipeline" > /home/build/melange-out/test-pkg/output.txt
 		},
 	}
 
-	// Start with test base state (with build user) and prepare workspace
+	// Start with test base state and prepare workspace
 	base := testBaseState()
 	state := PrepareWorkspace(base, "test-pkg")
 

@@ -127,12 +127,12 @@ func buildGitCheckout(base llb.State, p *config.Pipeline) (llb.State, error) {
 	//   tar -c . | tar -C "$dest_fullpath" -x --no-same-owner
 	// This ensures existing files in the destination (like user-provided source files)
 	// are preserved, not deleted or overwritten (unless they conflict with git files).
+	// Running as root (matching QEMU runner behavior), so no chown needed.
 	state := base.Run(
 		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
 mkdir -p %s
 cd /mnt/gitclone && tar -c . | tar -C %s -x --no-same-owner
-chown -R %d:%d %s
-`, destPath, destPath, BuildUserUID, BuildUserGID, destPath)}),
+`, destPath, destPath)}),
 		llb.AddMount("/mnt/gitclone", gitState, llb.Readonly),
 		llb.WithCustomNamef("[git-checkout] clone and copy to %s", destPath),
 	).Root()

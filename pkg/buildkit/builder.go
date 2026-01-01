@@ -298,12 +298,11 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		localDirs[CacheLocalName] = cfg.CacheDir
 	}
 
-	// Create subpackage output directories with proper ownership
+	// Create subpackage output directories
 	for _, sp := range cfg.Subpackages {
 		state = state.File(
 			llb.Mkdir(WorkspaceOutputDir(sp.Name), 0755,
 				llb.WithParents(true),
-				llb.WithUIDGID(BuildUserUID, BuildUserGID),
 			),
 			llb.WithCustomName(fmt.Sprintf("create output directory for %s", sp.Name)),
 		)
@@ -557,16 +556,13 @@ func (b *Builder) runTestPipelinesWithLayers(ctx context.Context, layers []v1.La
 	// Use the pre-built state from LoadLayers which already combines all layers
 	state := loadResult.State
 
-	// Ensure build user exists (for images that don't have it, like plain alpine)
-	// This is idempotent - if the user already exists, adduser/addgroup will succeed silently
+	// Setup build environment (ensure /tmp exists, etc.)
 	state = SetupBuildUser(state)
 
 	// Prepare workspace (simpler than build - no output dirs needed)
-	// Owned by build user for permission parity with baseline melange
 	state = state.File(
 		llb.Mkdir(DefaultWorkDir, 0755,
 			llb.WithParents(true),
-			llb.WithUIDGID(BuildUserUID, BuildUserGID),
 		),
 		llb.WithCustomName("create workspace"),
 	)
@@ -722,14 +718,13 @@ func (b *Builder) runTestPipelinesWithImage(ctx context.Context, imageRef string
 	// Start from the image reference
 	state := llb.Image(imageRef)
 
-	// Ensure build user exists (idempotent)
+	// Setup build environment (ensure /tmp exists, etc.)
 	state = SetupBuildUser(state)
 
 	// Prepare workspace
 	state = state.File(
 		llb.Mkdir(DefaultWorkDir, 0755,
 			llb.WithParents(true),
-			llb.WithUIDGID(BuildUserUID, BuildUserGID),
 		),
 		llb.WithCustomName("create workspace"),
 	)

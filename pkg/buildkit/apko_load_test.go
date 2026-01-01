@@ -402,8 +402,7 @@ func startBuildKitContainer(t *testing.T, ctx context.Context) *buildKitContaine
 }
 
 // testBaseState returns a base LLB state suitable for integration tests.
-// It sets up the build user in the test image since wolfi-base doesn't
-// include it by default.
+// It sets up the build environment (ensures /tmp exists, etc.).
 func testBaseState() llb.State {
 	return SetupBuildUser(llb.Image(TestBaseImage))
 }

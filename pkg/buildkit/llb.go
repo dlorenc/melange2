@@ -43,18 +43,17 @@ const (
 	CacheLocalName = "cache"
 
 	// BuildUserUID is the UID for the build user.
-	// This matches baseline melange and ensures consistent file permissions.
-	BuildUserUID = 1000
+	// This matches the QEMU runner behavior in baseline melange which uses root.
+	BuildUserUID = 0
 
 	// BuildUserGID is the GID for the build user/group.
-	BuildUserGID = 1000
+	BuildUserGID = 0
 
 	// BuildUserName is the username for the build user.
-	BuildUserName = "build"
+	BuildUserName = "root"
 
 	// TestBaseImage is the base image used for e2e tests.
-	// Uses wolfi-base to avoid Docker Hub rate limits and because it already
-	// has the build user (UID 1000) configured.
+	// Uses wolfi-base to avoid Docker Hub rate limits.
 	TestBaseImage = "cgr.dev/chainguard/wolfi-base:latest"
 )
 
@@ -257,56 +256,36 @@ func WorkspaceOutputDir(pkgName string) string {
 	return filepath.Join(DefaultWorkDir, MelangeOutDir, pkgName)
 }
 
-// SetupBuildUser creates the build user and group in the base image.
-// This is idempotent - it safely handles images that already have the build user
-// (e.g., wolfi-base) as well as those that don't.
-// The build user (UID/GID 1000) matches baseline melange behavior.
-// Also ensures /tmp exists with proper permissions for temporary files.
+// SetupBuildUser prepares the build environment.
+// Since we run as root (matching QEMU runner behavior), this just ensures
+// /tmp exists with proper permissions for temporary files.
 func SetupBuildUser(base llb.State) llb.State {
-	// Create group and user, ensure home directory exists with proper ownership,
-	// and create /tmp with world-writable permissions (standard Linux behavior)
-	script := fmt.Sprintf(`addgroup -g %d %s 2>/dev/null || true
-adduser -D -u %d -G %s -h %s %s 2>/dev/null || true
-mkdir -p %s
-chown %d:%d %s
+	// Ensure /tmp exists with world-writable permissions (standard Linux behavior)
+	// and create the work directory
+	script := fmt.Sprintf(`mkdir -p %s
 mkdir -p /tmp
 chmod 1777 /tmp`,
-		BuildUserGID, BuildUserName,
-		BuildUserUID, BuildUserName, DefaultWorkDir, BuildUserName,
 		DefaultWorkDir,
-		BuildUserUID, BuildUserGID, DefaultWorkDir,
 	)
 
 	return base.Run(
 		llb.Args([]string{"/bin/sh", "-c", script}),
-		llb.WithCustomName("setup build user"),
+		llb.WithCustomName("setup build environment"),
 	).Root()
 }
 
 // PrepareWorkspace creates the initial workspace structure.
 // Returns a state with workspace and melange-out directories created.
-// All directories are owned by the build user (UID/GID 1000) to match
-// baseline melange behavior and ensure consistent file permissions.
-//
-// Note: llb.Mkdir doesn't change ownership of existing directories, so we
-// explicitly run chown to ensure proper ownership when the directory already
-// exists (e.g., when apko creates /home/build for the build user).
+// Runs as root (matching QEMU runner behavior).
 func PrepareWorkspace(base llb.State, pkgName string) llb.State {
-	// First ensure the workspace directory exists with correct ownership and permissions.
-	// This handles the case where apko already created /home/build with
-	// restricted permissions (700) or incorrect ownership (root:root).
-	// We explicitly set 755 permissions to allow the build user to create files.
-	// Also ensure /tmp exists with world-writable permissions (standard Linux behavior)
-	// so that mktemp and other tools work properly.
-	// Also set up the cache directory at /var/cache/melange with build user ownership
-	// so that package managers (go, pip, npm, etc.) can write to their cache directories.
+	// Ensure workspace, cache, and tmp directories exist with proper permissions.
 	state := base.Run(
 		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(
-			"mkdir -p %s && chown %d:%d %s && chmod 755 %s && "+
+			"mkdir -p %s && chmod 755 %s && "+
 				"mkdir -p /tmp && chmod 1777 /tmp && "+
-				"mkdir -p %s && chown %d:%d %s && chmod 755 %s",
-			DefaultWorkDir, BuildUserUID, BuildUserGID, DefaultWorkDir, DefaultWorkDir,
-			DefaultCacheDir, BuildUserUID, BuildUserGID, DefaultCacheDir, DefaultCacheDir,
+				"mkdir -p %s && chmod 755 %s",
+			DefaultWorkDir, DefaultWorkDir,
+			DefaultCacheDir, DefaultCacheDir,
 		)}),
 		llb.WithCustomName("create workspace"),
 	).Root()
@@ -314,7 +293,6 @@ func PrepareWorkspace(base llb.State, pkgName string) llb.State {
 	return state.File(
 		llb.Mkdir(WorkspaceOutputDir(pkgName), 0755,
 			llb.WithParents(true),
-			llb.WithUIDGID(BuildUserUID, BuildUserGID),
 		),
 		llb.WithCustomName("create output directory"),
 	)

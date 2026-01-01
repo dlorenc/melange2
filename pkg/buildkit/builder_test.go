@@ -375,7 +375,7 @@ echo "hello" > /home/build/melange-out/test-pkg/result.txt
 		},
 	}
 
-	// Build the LLB graph using test base state (with build user configured)
+	// Build the LLB graph using test base state
 	state := PrepareWorkspace(testBaseState(), "test-pkg")
 	state, err = pipeline.BuildPipelines(state, pipelines)
 	require.NoError(t, err)
