@@ -97,12 +97,12 @@ func (c *ApkoImageCache) GetOrCreate(ctx context.Context, imgConfig apko_types.I
 	pushStart := time.Now()
 
 	// Build the image from layers
-	img := empty.Image
-	for i, layer := range layers {
-		img, err = mutate.AppendLayers(img, layer)
-		if err != nil {
-			return "", false, fmt.Errorf("appending layer %d: %w", i, err)
-		}
+	// IMPORTANT: Use AppendLayers with all layers at once to avoid O(n²) memory
+	// usage from nested lazy wrappers. Each individual AppendLayers call creates
+	// a wrapper that triggers recursive compute() when the image is pushed.
+	img, err := mutate.AppendLayers(empty.Image, layers...)
+	if err != nil {
+		return "", false, fmt.Errorf("appending %d layers: %w", len(layers), err)
 	}
 
 	// Push the image
