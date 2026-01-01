@@ -42,7 +42,8 @@ data:
 
   # APK disk cache configuration
   # Directory for caching downloaded APK packages
-  apk-cache-dir: "/var/cache/apk"
+  # Using /tmp since container runs as non-root
+  apk-cache-dir: "/tmp/apk-cache"
   # TTL for cached APK files (files older than this are evicted)
   # Set to 30m for aggressive cleanup during bulk builds
   apk-cache-ttl: "30m"
