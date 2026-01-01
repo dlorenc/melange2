@@ -31,6 +31,12 @@ spec:
       # Schedule on buildkit-pool nodes which have 60Gi RAM (default-pool only has 13Gi)
       nodeSelector:
         cloud.google.com/gke-nodepool: buildkit-pool
+      # Tolerate the buildkit taint on the pool
+      tolerations:
+      - key: "workload"
+        operator: "Equal"
+        value: "buildkit"
+        effect: "NoSchedule"
       containers:
       - name: melange-server
         # ko:// reference - ko apply will build and push this image
