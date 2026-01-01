@@ -141,11 +141,7 @@ data:
         maxJobs: 16
         labels:
           tier: standard
-      - addr: tcp://buildkit-14.buildkit-headless.melange.svc.cluster.local:1234
-        arch: x86_64
-        maxJobs: 16
-        labels:
-          tier: standard
+      # buildkit-14 removed: melange-server reserves 1 buildkit-pool node
     # Pool-wide configuration
     defaultMaxJobs: 16       # Default max concurrent jobs per backend
     failureThreshold: 5      # Consecutive failures before circuit opens (increased for scale)

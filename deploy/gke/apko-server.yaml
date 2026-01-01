@@ -24,6 +24,17 @@ spec:
         app: apko-server
     spec:
       serviceAccountName: melange-server
+      # Prefer scheduling on default pool nodes, avoid buildkit pool nodes
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-nodepool
+                operator: In
+                values:
+                - default-pool
       containers:
         - name: apko-server
           image: ko://github.com/dlorenc/melange2/cmd/apko-server

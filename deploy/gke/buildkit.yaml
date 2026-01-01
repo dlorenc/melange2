@@ -55,10 +55,11 @@ spec:
     targetPort: 1234
     name: buildkit
 ---
-# StatefulSet for 15 BuildKit workers (240 concurrent builds at maxJobs=16)
+# StatefulSet for 14 BuildKit workers (224 concurrent builds at maxJobs=16)
 # Each pod gets a stable hostname and DNS entry for backend pool configuration
 # Scale calculation: 3673 packages × 5 min avg / 120 min = 153 parallel needed
-# 15 workers × 16 jobs = 240 capacity (headroom for dependency ordering)
+# 14 workers × 16 jobs = 224 capacity (headroom for dependency ordering)
+# Note: Using 14 replicas because melange-server reserves 1 buildkit-pool node
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -66,7 +67,7 @@ metadata:
   namespace: melange
 spec:
   serviceName: buildkit-headless
-  replicas: 15
+  replicas: 14
   podManagementPolicy: Parallel  # Start all pods simultaneously
   selector:
     matchLabels:
