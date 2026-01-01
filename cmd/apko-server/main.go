@@ -63,13 +63,13 @@ func main() {
 
 	// Handle signals for graceful shutdown
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	if err := run(ctx); err != nil {
 		clog.ErrorContext(ctx, "error", "err", err)
 		cancel()
 		os.Exit(1)
 	}
+	cancel()
 }
 
 func run(ctx context.Context) error {
