@@ -97,6 +97,12 @@ jobs:
           kubectl patch configmap melange-config -n melange \
             --type merge -p '{"data":{"gcs-bucket":"${{ env.GCS_BUCKET }}"}}'
 
+      - name: Build and Deploy apko-server
+        env:
+          KO_DOCKER_REPO: ${{ env.AR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}
+        run: |
+          ko apply -f deploy/gke/apko-server.yaml
+
       - name: Build and Deploy melange-server
         env:
           KO_DOCKER_REPO: ${{ env.AR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}
@@ -109,6 +115,7 @@ jobs:
         run: |
           kubectl rollout status deployment/registry -n melange --timeout=180s
           kubectl rollout status statefulset/buildkit -n melange --timeout=600s
+          kubectl rollout status deployment/apko-server -n melange --timeout=180s
           kubectl rollout status deployment/melange-server -n melange --timeout=180s
 
       - name: Verify deployment

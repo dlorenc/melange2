@@ -104,6 +104,13 @@ spec:
             configMapKeyRef:
               name: melange-config
               key: apk-cache-ttl
+        # Apko service address for remote layer generation
+        - name: APKO_SERVICE_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apko-service-addr
+              optional: true
         ports:
         - containerPort: 8080
           name: http
