@@ -37,6 +37,14 @@ spec:
         operator: "Equal"
         value: "buildkit"
         effect: "NoSchedule"
+      # Keep server on its own node, away from BuildKit pods that fill disk
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: buildkit
+            topologyKey: kubernetes.io/hostname
       containers:
       - name: melange-server
         # ko:// reference - ko apply will build and push this image

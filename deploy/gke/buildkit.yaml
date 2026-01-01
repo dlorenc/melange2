@@ -130,7 +130,8 @@ spec:
           periodSeconds: 20
       volumes:
       - name: buildkit-data
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 50Gi  # Prevent filling node disk; pod evicted if exceeded
       - name: buildkit-config
         configMap:
           name: buildkit-config
