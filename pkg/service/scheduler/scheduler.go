@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	apko_build "chainguard.dev/apko/pkg/build"
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
 	"go.opentelemetry.io/otel/attribute"
@@ -308,6 +309,10 @@ func (s *Scheduler) executePackageBuild(ctx context.Context, buildID string, pkg
 	if err := s.buildStore.UpdatePackageJob(ctx, buildID, pkg); err != nil {
 		log.Errorf("failed to update package %s: %v", pkg.Name, err)
 	}
+
+	// Clear apko pools after each build to free memory immediately
+	// instead of waiting for periodic maintenance
+	apko_build.ClearPools()
 }
 
 // executePackageJob executes a package build with the given spec.
