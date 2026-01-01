@@ -21,9 +21,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof" //nolint:gosec // Intentionally exposing pprof for debugging
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -141,9 +143,22 @@ func run(ctx context.Context) error {
 
 	// Create API server
 	apiServer := api.NewServer(buildStore, pool)
+
+	// Create a mux that routes /debug/pprof/ to pprof handlers and everything else to API
+	mux := http.NewServeMux()
+	mux.Handle("/debug/pprof/", http.DefaultServeMux) // pprof registers to DefaultServeMux
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Route non-pprof requests to API server
+		if !strings.HasPrefix(r.URL.Path, "/debug/pprof/") {
+			apiServer.ServeHTTP(w, r)
+			return
+		}
+		http.DefaultServeMux.ServeHTTP(w, r)
+	})
+
 	httpServer := &http.Server{
 		Addr:              *listenAddr,
-		Handler:           apiServer,
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      60 * time.Second,
