@@ -18,6 +18,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -88,7 +89,7 @@ func RunMigrations(dsn string) error {
 	}
 	defer m.Close()
 
-	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
@@ -161,7 +162,7 @@ func (s *PostgresBuildStore) CreateBuild(ctx context.Context, packages []dag.Nod
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Insert build
 	_, err = tx.Exec(ctx, `
@@ -224,7 +225,7 @@ func (s *PostgresBuildStore) GetBuild(ctx context.Context, id string) (*types.Bu
 		&build.ID, &build.Status, &build.CreatedAt,
 		&build.StartedAt, &build.FinishedAt, &specJSON,
 	)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("build not found: %s", id)
 	}
 	if err != nil {
@@ -357,7 +358,7 @@ func (s *PostgresBuildStore) ClaimReadyPackage(ctx context.Context, buildID stri
 	if err != nil {
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// First, build a map of package statuses for dependency checking
 	// (must complete this query before starting another)
