@@ -40,6 +40,13 @@ data:
   # Scheduler poll interval (increase for thousands of packages)
   poll-interval: "2s"
 
+  # APK disk cache configuration
+  # Directory for caching downloaded APK packages
+  apk-cache-dir: "/var/cache/apk"
+  # TTL for cached APK files (files older than this are evicted)
+  # Set to 30m for aggressive cleanup during bulk builds
+  apk-cache-ttl: "30m"
+
   # BuildKit backends configuration
   # 15 BuildKit workers using StatefulSet DNS names
   # Each worker can handle 16 concurrent jobs (matching 16-core machines)
