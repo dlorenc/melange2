@@ -514,6 +514,111 @@ The `melange remote` subcommand allows submitting builds to a remote melange-ser
 
 Note: Pipelines and source files are automatically included by convention (see [Convention-Based Defaults](#convention-based-defaults)).
 
+### Bulk Package Builds
+
+For building large numbers of packages (100+) against the GKE cluster:
+
+```bash
+# Submit 500 packages from a package repository (e.g., wolfi-dev/os)
+cd /path/to/os
+ls *.yaml | head -500 > /tmp/packages.txt
+./melange2 remote submit $(cat /tmp/packages.txt | tr '\n' ' ') --server http://localhost:8080
+
+# Monitor build progress
+./melange2 remote status <build-id> --server http://localhost:8080
+
+# Get summary counts
+./melange2 remote status <build-id> --server http://localhost:8080 2>&1 | \
+  grep -oE "(success|failed|running|pending)" | sort | uniq -c
+```
+
+**Memory Monitoring:**
+
+The server exposes pprof endpoints for memory profiling during bulk builds:
+
+```bash
+# Check current memory usage
+kubectl top pod -n melange -l app=melange-server
+
+# Get heap profile summary
+curl -s 'http://localhost:8080/debug/pprof/heap?debug=1' | head -5
+
+# View top memory allocators
+curl -s 'http://localhost:8080/debug/pprof/heap?debug=1' | \
+  grep -E "^[0-9]+: [0-9]+" | sort -t: -k2 -rn | head -10
+
+# Check if memory pools are active (optimization indicator)
+curl -s 'http://localhost:8080/debug/pprof/heap?debug=1' | \
+  grep -E "(BoundedPool|sync\.\(\*Pool\))"
+```
+
+**Expected Memory Usage:**
+- Baseline (idle): ~10-20Mi
+- Per concurrent build: ~300-400Mi
+- 30 concurrent builds: ~10-12Gi (memory stabilizes due to per-build cleanup)
+- Memory pools (BoundedPool) recycle bufio writers to prevent unbounded growth
+
+**Scheduling Bulk Builds:**
+
+To schedule recurring bulk builds (e.g., nightly rebuilds of all packages), use a Kubernetes CronJob or standard cron:
+
+```bash
+# Example: Submit all packages from wolfi-dev/os at 2am daily
+# Create a script: /usr/local/bin/nightly-build.sh
+#!/bin/bash
+set -euo pipefail
+
+WOLFI_OS_PATH="${WOLFI_OS_PATH:-/path/to/os}"
+MELANGE_SERVER="${MELANGE_SERVER:-http://localhost:8080}"
+MELANGE_BIN="${MELANGE_BIN:-/usr/local/bin/melange2}"
+
+cd "$WOLFI_OS_PATH"
+git pull origin main
+
+# Submit all packages (no --wait to avoid blocking)
+BUILD_ID=$("$MELANGE_BIN" remote submit *.yaml --server "$MELANGE_SERVER" 2>&1 | grep "Build submitted" | awk '{print $3}')
+echo "$(date): Started build $BUILD_ID with $(ls *.yaml | wc -l) packages" >> /var/log/melange-builds.log
+```
+
+```bash
+# Add to crontab (run at 2am daily)
+0 2 * * * /usr/local/bin/nightly-build.sh >> /var/log/melange-cron.log 2>&1
+```
+
+For Kubernetes, create a CronJob:
+
+```yaml
+# deploy/gke/cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-build
+  namespace: melange
+spec:
+  schedule: "0 2 * * *"  # 2am daily
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: submit
+            image: ko://github.com/dlorenc/melange2
+            command:
+            - /bin/sh
+            - -c
+            - |
+              cd /workspace
+              git clone --depth 1 https://github.com/wolfi-dev/os .
+              melange2 remote submit *.yaml --server http://melange-server:8080
+            volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          volumes:
+          - name: workspace
+            emptyDir: {}
+          restartPolicy: OnFailure
+```
+
 ## Dependencies
 
 | Package | Purpose |
