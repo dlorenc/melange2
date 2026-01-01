@@ -93,6 +93,17 @@ spec:
             configMapKeyRef:
               name: melange-config
               key: poll-interval
+        # APK cache env vars
+        - name: APK_CACHE_DIR
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apk-cache-dir
+        - name: APK_CACHE_TTL
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apk-cache-ttl
         ports:
         - containerPort: 8080
           name: http

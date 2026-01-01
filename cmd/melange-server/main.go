@@ -202,6 +202,27 @@ func run(ctx context.Context) error {
 	}
 	log.Infof("scheduler poll interval: %s", pollInterval)
 
+	// Get APK cache configuration from environment
+	// APK_CACHE_DIR: Directory for persistent APK package cache
+	// APK_CACHE_TTL: How long to keep cached APK files (default 1h)
+	apkCacheDir := os.Getenv("APK_CACHE_DIR")
+	var apkCacheTTL time.Duration
+	if v := os.Getenv("APK_CACHE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			apkCacheTTL = d
+		}
+	}
+	if apkCacheDir != "" {
+		if apkCacheTTL == 0 {
+			apkCacheTTL = time.Hour
+		}
+		log.Infof("using APK cache: dir=%s ttl=%s", apkCacheDir, apkCacheTTL)
+		// Create the cache directory
+		if err := os.MkdirAll(apkCacheDir, 0755); err != nil {
+			return fmt.Errorf("creating APK cache directory: %w", err)
+		}
+	}
+
 	// Create scheduler
 	sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
 		OutputDir:            *outputDir,
@@ -211,6 +232,8 @@ func run(ctx context.Context) error {
 		CacheMode:            cacheMode,
 		ApkoRegistry:         apkoRegistry,
 		ApkoRegistryInsecure: apkoRegistryInsecure,
+		ApkCacheDir:          apkCacheDir,
+		ApkCacheTTL:          apkCacheTTL,
 	})
 
 	// Create output directory (for local storage)
@@ -240,6 +263,11 @@ func run(ctx context.Context) error {
 	// Run apko cache maintenance (evict stale entries, clear pools, log stats)
 	eg.Go(func() error {
 		return runApkoMaintenance(ctx, log)
+	})
+
+	// Run APK disk cache cleanup (if configured)
+	eg.Go(func() error {
+		return sched.RunCacheCleanup(ctx)
 	})
 
 	// Handle shutdown

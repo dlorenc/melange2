@@ -65,6 +65,13 @@ type Config struct {
 	// ApkoRegistryInsecure allows connecting to the apko registry over HTTP.
 	// This should only be used for in-cluster registries.
 	ApkoRegistryInsecure bool
+	// ApkCacheDir is the directory for caching APK packages.
+	// If empty, uses a temp directory that is cleaned up per-build.
+	// When set, enables persistent caching with TTL-based eviction.
+	ApkCacheDir string
+	// ApkCacheTTL is how long to keep APK cache files before eviction.
+	// Only used when ApkCacheDir is set. Defaults to 1 hour.
+	ApkCacheTTL time.Duration
 }
 
 // Scheduler processes builds.
@@ -478,6 +485,7 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		SourceDir:            func() string { if len(sourceFiles) > 0 { return sourceDir }; return "" }(),
 		OutputDir:            outputDir,
 		CacheDir:             cacheDir,
+		ApkCacheDir:          s.config.ApkCacheDir,
 		BackendAddr:          backend.Addr,
 		Debug:                spec.Debug,
 		JobID:                jobID,
@@ -664,4 +672,112 @@ func (s *Scheduler) updateBuildStatus(ctx context.Context, buildID string) {
 		log.Infof("build %s status: %s (%d success, %d failed, %d skipped)",
 			buildID, newStatus, success, failed, skipped)
 	}
+}
+
+// RunCacheCleanup runs periodic cleanup of the APK cache directory.
+// It removes files older than the configured TTL.
+// This should be called in a separate goroutine.
+func (s *Scheduler) RunCacheCleanup(ctx context.Context) error {
+	if s.config.ApkCacheDir == "" {
+		return nil // No persistent cache configured
+	}
+
+	log := clog.FromContext(ctx)
+	ttl := s.config.ApkCacheTTL
+	if ttl == 0 {
+		ttl = time.Hour // Default to 1 hour
+	}
+
+	// Run cleanup every 10 minutes
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	log.Infof("APK cache cleanup started: dir=%s ttl=%s", s.config.ApkCacheDir, ttl)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			evicted, freed, err := s.cleanupCacheDir(s.config.ApkCacheDir, ttl)
+			if err != nil {
+				log.Errorf("cache cleanup error: %v", err)
+			} else if evicted > 0 {
+				log.Infof("APK cache cleanup: evicted %d files, freed %s", evicted, formatBytes(freed))
+			}
+		}
+	}
+}
+
+// cleanupCacheDir removes files older than ttl from the cache directory.
+// Returns the number of files evicted and bytes freed.
+func (s *Scheduler) cleanupCacheDir(cacheDir string, ttl time.Duration) (int, int64, error) {
+	cutoff := time.Now().Add(-ttl)
+	var evicted int
+	var freed int64
+
+	err := filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil // Skip files we can't stat
+		}
+
+		// Check if file is older than TTL (using modification time)
+		if info.ModTime().Before(cutoff) {
+			size := info.Size()
+			if err := os.Remove(path); err == nil {
+				evicted++
+				freed += size
+			}
+		}
+		return nil
+	})
+
+	// Also clean up empty directories
+	if err == nil {
+		s.cleanupEmptyDirs(cacheDir)
+	}
+
+	return evicted, freed, err
+}
+
+// cleanupEmptyDirs removes empty directories from the cache.
+func (s *Scheduler) cleanupEmptyDirs(cacheDir string) {
+	// Walk in reverse order (depth-first) to clean up empty nested dirs
+	var dirs []string
+	_ = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() && path != cacheDir {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+
+	// Remove empty dirs from deepest to shallowest
+	for i := len(dirs) - 1; i >= 0; i-- {
+		entries, err := os.ReadDir(dirs[i])
+		if err == nil && len(entries) == 0 {
+			_ = os.Remove(dirs[i])
+		}
+	}
+}
+
+// formatBytes formats bytes as a human-readable string.
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
 }

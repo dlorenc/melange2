@@ -248,6 +248,7 @@ type RemoteBuildParams struct {
 	SourceDir    string
 	OutputDir    string
 	CacheDir     string
+	ApkCacheDir  string
 	BackendAddr  string
 	Debug        bool
 	JobID        string
@@ -276,6 +277,7 @@ func NewBuildConfigForRemote(params RemoteBuildParams) *BuildConfig {
 
 	cfg.OutDir = params.OutputDir
 	cfg.CacheDir = params.CacheDir
+	cfg.ApkCacheDir = params.ApkCacheDir
 	cfg.BuildKitAddr = params.BackendAddr
 	cfg.Debug = params.Debug
 	cfg.GenerateIndex = true
