@@ -59,6 +59,9 @@ var (
 	otlpInsecure    = flag.Bool("otlp-insecure", true, "Use insecure OTLP connection (no TLS)")
 	traceSampleRate = flag.Float64("trace-sample-rate", 1.0, "Trace sampling rate (0.0-1.0)")
 	enableMetrics   = flag.Bool("enable-metrics", true, "Enable Prometheus metrics endpoint")
+	// PostgreSQL flags
+	postgresDSN     = flag.String("postgres-dsn", "", "PostgreSQL connection string (if set, uses PostgreSQL instead of in-memory store)")
+	postgresMaxConn = flag.Int("postgres-max-conn", 25, "Maximum PostgreSQL connections")
 )
 
 func main() {
@@ -111,8 +114,35 @@ func run(ctx context.Context) error {
 	apkobuild.ConfigurePoolsForService()
 	log.Info("configured apko pools for service mode")
 
-	// Create shared components
-	buildStore := store.NewMemoryBuildStore()
+	// Create build store (PostgreSQL or in-memory)
+	// Check environment variable if flag not set
+	pgDSN := *postgresDSN
+	if pgDSN == "" {
+		pgDSN = os.Getenv("POSTGRES_DSN")
+	}
+
+	var buildStore store.BuildStore
+	if pgDSN != "" {
+		log.Infof("using PostgreSQL store")
+
+		// Run migrations
+		if err := store.RunMigrations(pgDSN); err != nil {
+			return fmt.Errorf("running PostgreSQL migrations: %w", err)
+		}
+
+		pgStore, err := store.NewPostgresBuildStore(ctx, pgDSN,
+			store.WithPostgresMaxConns(int32(*postgresMaxConn)),
+		)
+		if err != nil {
+			return fmt.Errorf("creating PostgreSQL store: %w", err)
+		}
+		defer pgStore.Close()
+		buildStore = pgStore
+		log.Info("PostgreSQL store initialized")
+	} else {
+		log.Info("using in-memory store")
+		buildStore = store.NewMemoryBuildStore()
+	}
 
 	// Initialize storage backend
 	var storageBackend storage.Storage

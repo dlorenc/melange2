@@ -37,33 +37,6 @@ const (
 	DefaultEvictionInterval = 5 * time.Minute
 )
 
-// BuildStore defines the interface for build storage.
-type BuildStore interface {
-	// CreateBuild creates a new multi-package build from DAG nodes.
-	CreateBuild(ctx context.Context, packages []dag.Node, spec types.BuildSpec) (*types.Build, error)
-
-	// GetBuild retrieves a build by ID.
-	GetBuild(ctx context.Context, id string) (*types.Build, error)
-
-	// UpdateBuild updates an existing build.
-	UpdateBuild(ctx context.Context, build *types.Build) error
-
-	// ListBuilds returns all builds.
-	ListBuilds(ctx context.Context) ([]*types.Build, error)
-
-	// ListActiveBuilds returns only non-terminal builds (pending/running).
-	// This is optimized for frequent polling by the scheduler.
-	ListActiveBuilds(ctx context.Context) ([]*types.Build, error)
-
-	// ClaimReadyPackage atomically claims a package that is ready to build.
-	// A package is ready when all its in-graph dependencies have succeeded.
-	// Returns nil if no packages are ready.
-	ClaimReadyPackage(ctx context.Context, buildID string) (*types.PackageJob, error)
-
-	// UpdatePackageJob updates a package job within a build.
-	UpdatePackageJob(ctx context.Context, buildID string, pkg *types.PackageJob) error
-}
-
 // MemoryBuildStoreConfig configures the in-memory build store.
 type MemoryBuildStoreConfig struct {
 	// MaxCompletedBuilds is the maximum number of completed builds to retain.
@@ -182,7 +155,7 @@ func (s *MemoryBuildStore) evictOldBuilds() {
 	completed := make([]completedBuild, 0, len(s.builds))
 
 	for id, build := range s.builds {
-		if !isTerminalStatus(build.Status) {
+		if !IsTerminalStatus(build.Status) {
 			continue
 		}
 
@@ -220,15 +193,6 @@ func (s *MemoryBuildStore) evictOldBuilds() {
 	}
 }
 
-// isTerminalStatus returns true if the build is in a terminal state.
-func isTerminalStatus(status types.BuildStatus) bool {
-	switch status {
-	case types.BuildStatusSuccess, types.BuildStatusFailed, types.BuildStatusPartial:
-		return true
-	default:
-		return false
-	}
-}
 
 // Stats returns current store statistics.
 func (s *MemoryBuildStore) Stats() (total, active, completed int) {
@@ -237,7 +201,7 @@ func (s *MemoryBuildStore) Stats() (total, active, completed int) {
 
 	for _, build := range s.builds {
 		total++
-		if isTerminalStatus(build.Status) {
+		if IsTerminalStatus(build.Status) {
 			completed++
 		} else {
 			active++
@@ -301,7 +265,7 @@ func (s *MemoryBuildStore) UpdateBuild(ctx context.Context, build *types.Build) 
 	s.builds[build.ID] = s.copyBuild(build)
 
 	// Update active index based on terminal status
-	if isTerminalStatus(build.Status) {
+	if IsTerminalStatus(build.Status) {
 		delete(s.activeBuilds, build.ID)
 	}
 	return nil

@@ -304,3 +304,242 @@ func TestMemoryBuildStore_CopyBuild(t *testing.T) {
 	assert.Equal(t, "dep-1", original.Packages[0].Dependencies[0])
 	assert.Equal(t, "content1", original.Packages[0].Pipelines["p1.yaml"])
 }
+
+func TestMemoryBuildStore_ListActiveBuilds(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryBuildStore()
+
+	t.Run("empty store", func(t *testing.T) {
+		builds, err := store.ListActiveBuilds(ctx)
+		require.NoError(t, err)
+		assert.Empty(t, builds)
+	})
+
+	t.Run("returns only active builds", func(t *testing.T) {
+		// Create three builds
+		build1, _ := store.CreateBuild(ctx, []dag.Node{{Name: "a"}}, types.BuildSpec{})
+		build2, _ := store.CreateBuild(ctx, []dag.Node{{Name: "b"}}, types.BuildSpec{})
+		build3, _ := store.CreateBuild(ctx, []dag.Node{{Name: "c"}}, types.BuildSpec{})
+
+		// Complete build2 (success)
+		build2.Status = types.BuildStatusSuccess
+		now := time.Now()
+		build2.FinishedAt = &now
+		store.UpdateBuild(ctx, build2)
+
+		// Fail build3
+		build3.Status = types.BuildStatusFailed
+		build3.FinishedAt = &now
+		store.UpdateBuild(ctx, build3)
+
+		// Only build1 should be active
+		active, err := store.ListActiveBuilds(ctx)
+		require.NoError(t, err)
+		assert.Len(t, active, 1)
+		assert.Equal(t, build1.ID, active[0].ID)
+	})
+
+	t.Run("running builds are active", func(t *testing.T) {
+		store := NewMemoryBuildStore()
+		build, _ := store.CreateBuild(ctx, []dag.Node{{Name: "a"}}, types.BuildSpec{})
+
+		build.Status = types.BuildStatusRunning
+		now := time.Now()
+		build.StartedAt = &now
+		store.UpdateBuild(ctx, build)
+
+		active, err := store.ListActiveBuilds(ctx)
+		require.NoError(t, err)
+		assert.Len(t, active, 1)
+		assert.Equal(t, types.BuildStatusRunning, active[0].Status)
+	})
+
+	t.Run("partial builds are not active", func(t *testing.T) {
+		store := NewMemoryBuildStore()
+		build, _ := store.CreateBuild(ctx, []dag.Node{{Name: "a"}}, types.BuildSpec{})
+
+		build.Status = types.BuildStatusPartial
+		now := time.Now()
+		build.FinishedAt = &now
+		store.UpdateBuild(ctx, build)
+
+		active, err := store.ListActiveBuilds(ctx)
+		require.NoError(t, err)
+		assert.Empty(t, active)
+	})
+}
+
+func TestMemoryBuildStore_Stats(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryBuildStore()
+
+	t.Run("empty store", func(t *testing.T) {
+		total, active, completed := store.Stats()
+		assert.Equal(t, 0, total)
+		assert.Equal(t, 0, active)
+		assert.Equal(t, 0, completed)
+	})
+
+	t.Run("mixed builds", func(t *testing.T) {
+		// Create builds with different statuses
+		_, _ = store.CreateBuild(ctx, []dag.Node{{Name: "a"}}, types.BuildSpec{}) // stays pending (active)
+		build2, _ := store.CreateBuild(ctx, []dag.Node{{Name: "b"}}, types.BuildSpec{})
+		build3, _ := store.CreateBuild(ctx, []dag.Node{{Name: "c"}}, types.BuildSpec{})
+
+		// build2 becomes success (completed)
+		build2.Status = types.BuildStatusSuccess
+		store.UpdateBuild(ctx, build2)
+
+		// build3 becomes failed (completed)
+		build3.Status = types.BuildStatusFailed
+		store.UpdateBuild(ctx, build3)
+
+		total, active, completed := store.Stats()
+		assert.Equal(t, 3, total)
+		assert.Equal(t, 1, active)
+		assert.Equal(t, 2, completed)
+	})
+}
+
+func TestMemoryBuildStore_Close(t *testing.T) {
+	t.Run("stops eviction loop", func(t *testing.T) {
+		store := NewMemoryBuildStore(WithEvictionInterval(100 * time.Millisecond))
+
+		// Close should stop the eviction loop
+		store.Close()
+
+		// Closing again should not panic (doneCh is already closed)
+		// This is a smoke test - the Close() method should be idempotent-ish
+	})
+
+	t.Run("no eviction loop", func(t *testing.T) {
+		store := NewMemoryBuildStore(WithEvictionInterval(0))
+
+		// Close should work even without eviction loop
+		store.Close()
+	})
+}
+
+func TestMemoryBuildStore_Eviction(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("evicts by TTL", func(t *testing.T) {
+		store := NewMemoryBuildStore(
+			WithBuildTTL(50*time.Millisecond),
+			WithEvictionInterval(0), // Disable background eviction
+		)
+
+		// Create and complete a build
+		build, _ := store.CreateBuild(ctx, []dag.Node{{Name: "a"}}, types.BuildSpec{})
+		build.Status = types.BuildStatusSuccess
+		now := time.Now()
+		build.FinishedAt = &now
+		store.UpdateBuild(ctx, build)
+
+		// Build should exist initially
+		_, err := store.GetBuild(ctx, build.ID)
+		require.NoError(t, err)
+
+		// Wait for TTL to expire
+		time.Sleep(100 * time.Millisecond)
+
+		// Manually trigger eviction
+		store.evictOldBuilds()
+
+		// Build should be evicted
+		_, err = store.GetBuild(ctx, build.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build not found")
+	})
+
+	t.Run("evicts by count", func(t *testing.T) {
+		store := NewMemoryBuildStore(
+			WithMaxCompletedBuilds(2),
+			WithBuildTTL(0), // Disable TTL eviction
+			WithEvictionInterval(0),
+		)
+
+		// Create and complete 4 builds
+		var buildIDs []string
+		for i := 0; i < 4; i++ {
+			build, _ := store.CreateBuild(ctx, []dag.Node{{Name: "a"}}, types.BuildSpec{})
+			build.Status = types.BuildStatusSuccess
+			now := time.Now()
+			build.FinishedAt = &now
+			store.UpdateBuild(ctx, build)
+			buildIDs = append(buildIDs, build.ID)
+			time.Sleep(10 * time.Millisecond) // Ensure different finish times
+		}
+
+		// Manually trigger eviction
+		store.evictOldBuilds()
+
+		// Only the 2 most recent should remain
+		// Oldest 2 should be evicted
+		_, err := store.GetBuild(ctx, buildIDs[0])
+		assert.Error(t, err, "oldest build should be evicted")
+
+		_, err = store.GetBuild(ctx, buildIDs[1])
+		assert.Error(t, err, "second oldest build should be evicted")
+
+		_, err = store.GetBuild(ctx, buildIDs[2])
+		assert.NoError(t, err, "third build should remain")
+
+		_, err = store.GetBuild(ctx, buildIDs[3])
+		assert.NoError(t, err, "newest build should remain")
+	})
+
+	t.Run("does not evict active builds", func(t *testing.T) {
+		store := NewMemoryBuildStore(
+			WithBuildTTL(1*time.Millisecond),
+			WithEvictionInterval(0),
+		)
+
+		// Create a build but don't complete it
+		build, _ := store.CreateBuild(ctx, []dag.Node{{Name: "a"}}, types.BuildSpec{})
+
+		time.Sleep(50 * time.Millisecond)
+		store.evictOldBuilds()
+
+		// Active build should still exist
+		_, err := store.GetBuild(ctx, build.ID)
+		require.NoError(t, err)
+	})
+}
+
+func TestMemoryBuildStore_Options(t *testing.T) {
+	t.Run("WithMaxCompletedBuilds", func(t *testing.T) {
+		store := NewMemoryBuildStore(WithMaxCompletedBuilds(5))
+		assert.Equal(t, 5, store.config.MaxCompletedBuilds)
+	})
+
+	t.Run("WithBuildTTL", func(t *testing.T) {
+		store := NewMemoryBuildStore(WithBuildTTL(time.Hour))
+		assert.Equal(t, time.Hour, store.config.BuildTTL)
+	})
+
+	t.Run("WithEvictionInterval", func(t *testing.T) {
+		store := NewMemoryBuildStore(WithEvictionInterval(time.Minute))
+		defer store.Close()
+		assert.Equal(t, time.Minute, store.config.EvictionInterval)
+	})
+}
+
+func TestIsTerminalStatus(t *testing.T) {
+	tests := []struct {
+		status   types.BuildStatus
+		terminal bool
+	}{
+		{types.BuildStatusPending, false},
+		{types.BuildStatusRunning, false},
+		{types.BuildStatusSuccess, true},
+		{types.BuildStatusFailed, true},
+		{types.BuildStatusPartial, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.status), func(t *testing.T) {
+			assert.Equal(t, tt.terminal, IsTerminalStatus(tt.status))
+		})
+	}
+}

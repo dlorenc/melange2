@@ -111,6 +111,13 @@ spec:
               name: melange-config
               key: apko-service-addr
               optional: true
+        # PostgreSQL connection string for persistent build history
+        - name: POSTGRES_DSN
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: dsn
+              optional: true
         ports:
         - containerPort: 8080
           name: http

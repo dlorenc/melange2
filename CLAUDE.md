@@ -82,7 +82,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 │   ├── api/               # HTTP API handlers
 │   ├── scheduler/         # Job scheduling and execution
 │   ├── storage/           # Storage backends (local, GCS)
-│   ├── store/             # Job store (memory, future: postgres)
+│   ├── store/             # Job store (memory or PostgreSQL)
 │   └── types/             # Service types
 ├── deploy/
 │   ├── kind/              # Local Kind cluster deployment
@@ -187,9 +187,30 @@ spec:
 export KO_DOCKER_REPO=us-central1-docker.pkg.dev/dlorenc-chainguard/clusterlange
 ko apply -f deploy/gke/namespace.yaml
 ko apply -f deploy/gke/buildkit.yaml
+ko apply -f deploy/gke/postgres.yaml
 ko apply -f deploy/gke/configmap.yaml
 ko apply -f deploy/gke/melange-server.yaml
 ```
+
+**PostgreSQL Secret Setup (one-time, manual):**
+
+The PostgreSQL credentials secret must be created manually before deploying:
+
+```bash
+# Generate a secure password
+PG_PASSWORD=$(openssl rand -base64 32)
+
+# Create the secret
+kubectl create secret generic postgres-credentials -n melange \
+  --from-literal=username=melange \
+  --from-literal=password="$PG_PASSWORD" \
+  --from-literal=dsn="postgres://melange:${PG_PASSWORD}@postgres.melange.svc.cluster.local:5432/melange?sslmode=disable"
+
+# Verify the secret was created
+kubectl get secret postgres-credentials -n melange
+```
+
+Once created, the CI workflow will automatically deploy PostgreSQL and the melange-server will use it for persistent build history.
 
 ### Add E2E Test
 1. Create fixture: `pkg/buildkit/testdata/e2e/XX-name.yaml`

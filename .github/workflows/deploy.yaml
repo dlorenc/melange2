@@ -91,6 +91,16 @@ jobs:
           kubectl apply -f deploy/gke/registry.yaml
           kubectl apply -f deploy/gke/buildkit.yaml
 
+      - name: Deploy PostgreSQL
+        run: |
+          # PostgreSQL for persistent build history
+          # Note: postgres-credentials secret must be created manually first:
+          #   kubectl create secret generic postgres-credentials -n melange \
+          #     --from-literal=username=melange \
+          #     --from-literal=password=$(openssl rand -base64 32) \
+          #     --from-literal=dsn='postgres://melange:PASSWORD@postgres.melange.svc.cluster.local:5432/melange?sslmode=disable'
+          kubectl apply -f deploy/gke/postgres.yaml
+
       - name: Deploy ConfigMap
         run: |
           kubectl apply -f deploy/gke/configmap.yaml
@@ -114,6 +124,7 @@ jobs:
       - name: Wait for rollout
         run: |
           kubectl rollout status deployment/registry -n melange --timeout=180s
+          kubectl rollout status statefulset/postgres -n melange --timeout=180s
           kubectl rollout status statefulset/buildkit -n melange --timeout=600s
           kubectl rollout status deployment/apko-server -n melange --timeout=180s
           kubectl rollout status deployment/melange-server -n melange --timeout=180s

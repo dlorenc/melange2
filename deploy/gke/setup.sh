@@ -62,7 +62,8 @@ if ! gcloud container clusters describe "${CLUSTER_NAME}" --zone="${ZONE}" &>/de
         --enable-autoscaling \
         --min-nodes=1 \
         --max-nodes=3 \
-        --no-enable-autoupgrade
+        --no-enable-autoupgrade \
+        --enable-managed-prometheus
     echo "    Created cluster: ${CLUSTER_NAME}"
 else
     echo "    Cluster already exists: ${CLUSTER_NAME}"
@@ -160,6 +161,10 @@ cat "${SCRIPT_DIR}/melange-server.yaml" | \
     KO_DOCKER_REPO="${AR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}" \
     ko apply -f -
 
+# Apply PodMonitoring for GCP Managed Prometheus
+echo "==> Applying monitoring resources..."
+kubectl apply -f "${SCRIPT_DIR}/monitoring.yaml"
+
 echo "==> Waiting for deployments..."
 kubectl rollout status statefulset/buildkit -n melange --timeout=600s
 kubectl rollout status deployment/melange-server -n melange --timeout=180s
@@ -177,3 +182,8 @@ echo "To submit a build:"
 echo "  curl -X POST http://localhost:8080/api/v1/builds -H 'Content-Type: application/json' -d @example-job.json"
 echo ""
 echo "Build artifacts will be stored in: gs://${GCS_BUCKET}"
+echo ""
+echo "To view metrics in GCP Cloud Monitoring:"
+echo "  https://console.cloud.google.com/monitoring/metrics-explorer?project=${PROJECT_ID}"
+echo ""
+echo "Query example: melange_builds_total, melange_active_builds, apko_builds_total"
