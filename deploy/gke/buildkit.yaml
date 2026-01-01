@@ -135,3 +135,16 @@ spec:
       - name: buildkit-config
         configMap:
           name: buildkit-config
+---
+# Pod Disruption Budget for buildkit
+# Ensures minimum availability during voluntary disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: buildkit-pdb
+  namespace: melange
+spec:
+  minAvailable: 10
+  selector:
+    matchLabels:
+      app: buildkit

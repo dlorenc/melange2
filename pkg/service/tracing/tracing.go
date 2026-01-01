@@ -23,11 +23,14 @@ import (
 	"github.com/chainguard-dev/clog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -48,6 +51,14 @@ type Config struct {
 	ServiceVersion string
 	// Enabled controls whether tracing is enabled.
 	Enabled bool
+	// OTLPEndpoint is the OTLP collector endpoint (e.g., "tempo:4317").
+	// If empty, uses stdout exporter instead.
+	OTLPEndpoint string
+	// OTLPInsecure allows insecure OTLP connections (no TLS).
+	OTLPInsecure bool
+	// SampleRate is the trace sampling rate (0.0-1.0).
+	// Defaults to 1.0 (sample all) if not set.
+	SampleRate float64
 }
 
 // Setup initializes the OpenTelemetry tracer provider.
@@ -60,13 +71,34 @@ func Setup(ctx context.Context, cfg Config) (func(context.Context) error, error)
 
 	log := clog.FromContext(ctx)
 
-	// Create stdout exporter for now (can be replaced with OTLP exporter)
-	exporter, err := stdouttrace.New(
-		stdouttrace.WithPrettyPrint(),
-		stdouttrace.WithWriter(os.Stderr),
-	)
-	if err != nil {
-		return nil, err
+	var exporter sdktrace.SpanExporter
+	var err error
+
+	// Create exporter based on configuration
+	if cfg.OTLPEndpoint != "" {
+		// Use OTLP exporter for production
+		opts := []otlptracegrpc.Option{
+			otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint),
+		}
+		if cfg.OTLPInsecure {
+			opts = append(opts, otlptracegrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+			opts = append(opts, otlptracegrpc.WithInsecure())
+		}
+		exporter, err = otlptracegrpc.New(ctx, opts...)
+		if err != nil {
+			return nil, err
+		}
+		log.Infof("tracing enabled with OTLP exporter: %s (insecure=%v)", cfg.OTLPEndpoint, cfg.OTLPInsecure)
+	} else {
+		// Use stdout exporter for development/debugging
+		exporter, err = stdouttrace.New(
+			stdouttrace.WithPrettyPrint(),
+			stdouttrace.WithWriter(os.Stderr),
+		)
+		if err != nil {
+			return nil, err
+		}
+		log.Info("tracing enabled with stdout exporter")
 	}
 
 	// Create resource with service info (don't merge with Default to avoid schema conflicts)
@@ -80,17 +112,24 @@ func Setup(ctx context.Context, cfg Config) (func(context.Context) error, error)
 		return nil, err
 	}
 
+	// Configure sampler
+	var sampler sdktrace.Sampler
+	if cfg.SampleRate > 0 && cfg.SampleRate < 1 {
+		sampler = sdktrace.TraceIDRatioBased(cfg.SampleRate)
+		log.Infof("trace sampling rate: %.2f", cfg.SampleRate)
+	} else {
+		sampler = sdktrace.AlwaysSample()
+	}
+
 	// Create tracer provider
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSampler(sampler),
 	)
 
 	// Set as global tracer provider
 	otel.SetTracerProvider(tp)
-
-	log.Info("tracing enabled")
 
 	return tp.Shutdown, nil
 }

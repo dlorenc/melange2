@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/chainguard-dev/clog"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
@@ -56,6 +57,42 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/v1/backends", s.handleBackends)
 	s.mux.HandleFunc("/api/v1/backends/status", s.handleBackendsStatus)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
+}
+
+// BuildMetricsResponse is the response body for the build metrics endpoint.
+type BuildMetricsResponse struct {
+	BuildID       string                 `json:"build_id"`
+	TotalDuration string                 `json:"total_duration"`
+	Packages      []PackageMetricsSummary `json:"packages"`
+	Summary       MetricsSummary         `json:"summary"`
+}
+
+// PackageMetricsSummary contains metrics for a single package.
+type PackageMetricsSummary struct {
+	Name              string `json:"name"`
+	Status            string `json:"status"`
+	TotalDuration     string `json:"total_duration,omitempty"`
+	SetupDuration     string `json:"setup_duration,omitempty"`
+	BackendWait       string `json:"backend_wait,omitempty"`
+	InitDuration      string `json:"init_duration,omitempty"`
+	BuildKitDuration  string `json:"buildkit_duration,omitempty"`
+	StorageSyncDuration string `json:"storage_sync_duration,omitempty"`
+	ApkoDuration      string `json:"apko_duration,omitempty"`
+	ApkoCacheHit      bool   `json:"apko_cache_hit,omitempty"`
+	ApkoLayerCount    int    `json:"apko_layer_count,omitempty"`
+}
+
+// MetricsSummary contains aggregate metrics for a build.
+type MetricsSummary struct {
+	AvgTotal      string `json:"avg_total"`
+	AvgBuildKit   string `json:"avg_buildkit"`
+	AvgApko       string `json:"avg_apko"`
+	P50Total      string `json:"p50_total"`
+	P95Total      string `json:"p95_total"`
+	P99Total      string `json:"p99_total"`
+	TotalPackages int    `json:"total_packages"`
+	Completed     int    `json:"completed"`
+	Failed        int    `json:"failed"`
 }
 
 // ServeHTTP implements http.Handler.
@@ -203,7 +240,7 @@ func (s *Server) handleBuilds(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleBuild handles GET /api/v1/builds/:id.
+// handleBuild handles GET /api/v1/builds/:id and GET /api/v1/builds/:id/metrics.
 func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -217,6 +254,13 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this is a metrics request
+	if strings.HasSuffix(path, "/metrics") {
+		buildID := strings.TrimSuffix(path, "/metrics")
+		s.handleBuildMetrics(w, r, buildID)
+		return
+	}
+
 	build, err := s.buildStore.GetBuild(r.Context(), path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -225,6 +269,134 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(build)
+}
+
+// handleBuildMetrics returns detailed metrics for a build.
+// GET /api/v1/builds/:id/metrics
+func (s *Server) handleBuildMetrics(w http.ResponseWriter, r *http.Request, buildID string) {
+	build, err := s.buildStore.GetBuild(r.Context(), buildID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Collect metrics from all packages
+	var packages []PackageMetricsSummary
+	var totalDurations []int64
+	var buildkitDurations []int64
+	var apkoDurations []int64
+	completed := 0
+	failed := 0
+
+	for _, pkg := range build.Packages {
+		summary := PackageMetricsSummary{
+			Name:   pkg.Name,
+			Status: string(pkg.Status),
+		}
+
+		if pkg.Status == types.PackageStatusSuccess {
+			completed++
+		} else if pkg.Status == types.PackageStatusFailed {
+			failed++
+		}
+
+		if pkg.Metrics != nil {
+			summary.TotalDuration = formatDuration(pkg.Metrics.TotalDurationMs)
+			summary.SetupDuration = formatDuration(pkg.Metrics.SetupDurationMs)
+			summary.BackendWait = formatDuration(pkg.Metrics.BackendWaitMs)
+			summary.InitDuration = formatDuration(pkg.Metrics.InitDurationMs)
+			summary.BuildKitDuration = formatDuration(pkg.Metrics.BuildKitDurationMs)
+			summary.StorageSyncDuration = formatDuration(pkg.Metrics.StorageSyncMs)
+			summary.ApkoDuration = formatDuration(pkg.Metrics.ApkoDurationMs)
+			summary.ApkoCacheHit = pkg.Metrics.ApkoCacheHit
+			summary.ApkoLayerCount = pkg.Metrics.ApkoLayerCount
+
+			totalDurations = append(totalDurations, pkg.Metrics.TotalDurationMs)
+			buildkitDurations = append(buildkitDurations, pkg.Metrics.BuildKitDurationMs)
+			if pkg.Metrics.ApkoDurationMs > 0 {
+				apkoDurations = append(apkoDurations, pkg.Metrics.ApkoDurationMs)
+			}
+		} else if pkg.StartedAt != nil && pkg.FinishedAt != nil {
+			// Calculate from timestamps if metrics not available
+			duration := pkg.FinishedAt.Sub(*pkg.StartedAt)
+			summary.TotalDuration = duration.String()
+			totalDurations = append(totalDurations, duration.Milliseconds())
+		}
+
+		packages = append(packages, summary)
+	}
+
+	// Calculate summary statistics
+	var totalDuration string
+	if build.StartedAt != nil && build.FinishedAt != nil {
+		totalDuration = build.FinishedAt.Sub(*build.StartedAt).String()
+	} else if build.StartedAt != nil {
+		totalDuration = "in progress"
+	}
+
+	response := BuildMetricsResponse{
+		BuildID:       build.ID,
+		TotalDuration: totalDuration,
+		Packages:      packages,
+		Summary: MetricsSummary{
+			AvgTotal:      formatDuration(average(totalDurations)),
+			AvgBuildKit:   formatDuration(average(buildkitDurations)),
+			AvgApko:       formatDuration(average(apkoDurations)),
+			P50Total:      formatDuration(percentile(totalDurations, 50)),
+			P95Total:      formatDuration(percentile(totalDurations, 95)),
+			P99Total:      formatDuration(percentile(totalDurations, 99)),
+			TotalPackages: len(build.Packages),
+			Completed:     completed,
+			Failed:        failed,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+// formatDuration formats milliseconds as a human-readable duration string.
+func formatDuration(ms int64) string {
+	if ms == 0 {
+		return ""
+	}
+	d := time.Duration(ms) * time.Millisecond
+	return d.String()
+}
+
+// average calculates the average of a slice of int64.
+func average(values []int64) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	var sum int64
+	for _, v := range values {
+		sum += v
+	}
+	return sum / int64(len(values))
+}
+
+// percentile calculates the p-th percentile of a slice of int64.
+func percentile(values []int64, p int) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	// Make a copy and sort
+	sorted := make([]int64, len(values))
+	copy(sorted, values)
+	for i := range sorted {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j] < sorted[i] {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	// Calculate index
+	idx := (p * len(sorted)) / 100
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }
 
 // createBuild creates a new build.
