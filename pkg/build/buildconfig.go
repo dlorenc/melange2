@@ -141,6 +141,11 @@ type BuildConfig struct {
 	// ApkoRegistryInsecure allows insecure connection to ApkoRegistry.
 	ApkoRegistryInsecure bool
 
+	// ApkoServiceAddr is the gRPC address of the apko service.
+	// When set, apko layer generation is delegated to this remote service.
+	// Example: "apko-server:9090"
+	ApkoServiceAddr string
+
 	// LintRequire are linter checks that must pass.
 	LintRequire []string
 
@@ -256,6 +261,7 @@ type RemoteBuildParams struct {
 	CacheMode     string
 	ApkoRegistry  string
 	ApkoRegistryInsecure bool
+	ApkoServiceAddr string
 }
 
 // NewBuildConfigForRemote creates a BuildConfig for remote/service builds.
@@ -289,6 +295,7 @@ func NewBuildConfigForRemote(params RemoteBuildParams) *BuildConfig {
 	cfg.CacheMode = params.CacheMode
 	cfg.ApkoRegistry = params.ApkoRegistry
 	cfg.ApkoRegistryInsecure = params.ApkoRegistryInsecure
+	cfg.ApkoServiceAddr = params.ApkoServiceAddr
 
 	// Default repos and keys for Wolfi
 	cfg.ExtraRepos = []string{"https://packages.wolfi.dev/os"}

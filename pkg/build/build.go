@@ -102,6 +102,7 @@ type Build struct {
 	CacheMode             string // Cache export mode: "min" or "max" (default: "max")
 	ApkoRegistry          string // Registry URL for caching apko base images (e.g., "registry:5000/apko-cache")
 	ApkoRegistryInsecure  bool   // Allow insecure (HTTP) connection to ApkoRegistry
+	ApkoServiceAddr       string // gRPC address of the apko service (e.g., "apko-server:9090")
 	LintRequire, LintWarn []string
 	Auth                  map[string]options.Auth
 	IgnoreSignatures      bool
@@ -187,6 +188,7 @@ func NewFromConfig(ctx context.Context, cfg *BuildConfig) (*Build, error) {
 		CacheMode:                  cfg.CacheMode,
 		ApkoRegistry:               cfg.ApkoRegistry,
 		ApkoRegistryInsecure:       cfg.ApkoRegistryInsecure,
+		ApkoServiceAddr:            cfg.ApkoServiceAddr,
 		LintRequire:                cfg.LintRequire,
 		LintWarn:                   cfg.LintWarn,
 		Auth:                       cfg.Auth,

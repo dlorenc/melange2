@@ -92,6 +92,14 @@ ko-apply:  ## Build the image and apply the manifests
 generate:
 	go generate ./...
 
+.PHONY: proto
+proto: ## Generate protobuf code for apko service
+	@echo "==> Generating protobuf code..."
+	protoc --go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		pkg/service/apko/apko.proto
+	@echo "==> Protobuf generation complete."
+
 ##########
 # Build
 ##########

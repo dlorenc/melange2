@@ -1,0 +1,137 @@
+---
+# Copyright 2024 Chainguard, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# Apko Server Deployment
+# Provides isolated apko layer generation as a gRPC service.
+# Enables fault isolation, retries, and independent scaling.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apko-server
+  namespace: melange
+  labels:
+    app: apko-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: apko-server
+  template:
+    metadata:
+      labels:
+        app: apko-server
+    spec:
+      serviceAccountName: melange-server
+      containers:
+        - name: apko-server
+          image: ko://github.com/dlorenc/melange2/cmd/apko-server
+          ports:
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+          args:
+            - --listen-addr=:9090
+            - --metrics-addr=:9091
+            - --registry=$(APKO_REGISTRY)
+            - --registry-insecure=$(APKO_REGISTRY_INSECURE)
+            - --max-concurrent=$(MAX_CONCURRENT)
+            - --apk-cache-dir=/var/cache/apk
+          env:
+            - name: APKO_REGISTRY
+              valueFrom:
+                configMapKeyRef:
+                  name: melange-config
+                  key: apko-registry
+                  optional: true
+            - name: APKO_REGISTRY_INSECURE
+              valueFrom:
+                configMapKeyRef:
+                  name: melange-config
+                  key: apko-registry-insecure
+                  optional: true
+            - name: MAX_CONCURRENT
+              valueFrom:
+                configMapKeyRef:
+                  name: melange-config
+                  key: apko-max-concurrent
+                  optional: true
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: apk-cache
+              mountPath: /var/cache/apk
+      volumes:
+        - name: apk-cache
+          emptyDir:
+            sizeLimit: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apko-server
+  namespace: melange
+  labels:
+    app: apko-server
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+      protocol: TCP
+    - name: metrics
+      port: 9091
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app: apko-server
+---
+# Horizontal Pod Autoscaler for apko-server
+# Scales based on CPU utilization
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: apko-server
+  namespace: melange
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: apko-server
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80

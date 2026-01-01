@@ -72,6 +72,12 @@ type Config struct {
 	// ApkCacheTTL is how long to keep APK cache files before eviction.
 	// Only used when ApkCacheDir is set. Defaults to 1 hour.
 	ApkCacheTTL time.Duration
+	// ApkoServiceAddr is the gRPC address of the apko service.
+	// When set, apko layer generation is delegated to this remote service
+	// instead of running locally. This provides fault isolation and
+	// independent scaling.
+	// Example: "apko-server:9090"
+	ApkoServiceAddr string
 }
 
 // Scheduler processes builds.
@@ -493,6 +499,7 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		CacheMode:            s.config.CacheMode,
 		ApkoRegistry:         s.config.ApkoRegistry,
 		ApkoRegistryInsecure: s.config.ApkoRegistryInsecure,
+		ApkoServiceAddr:      s.config.ApkoServiceAddr,
 	})
 	buildCfg.Arch = targetArch
 

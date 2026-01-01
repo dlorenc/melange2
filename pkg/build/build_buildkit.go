@@ -31,8 +31,10 @@ import (
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"chainguard.dev/apko/pkg/tarfs"
 	"github.com/chainguard-dev/clog"
+	"github.com/google/uuid"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"go.opentelemetry.io/otel"
+	"gopkg.in/yaml.v3"
 	"sigs.k8s.io/release-utils/version"
 
 	"github.com/dlorenc/melange2/pkg/build/sbom"
@@ -40,6 +42,7 @@ import (
 	"github.com/dlorenc/melange2/pkg/buildkit"
 	"github.com/dlorenc/melange2/pkg/config"
 	"github.com/dlorenc/melange2/pkg/output"
+	apkoservice "github.com/dlorenc/melange2/pkg/service/apko"
 )
 
 // buildPackageBuildKit implements package building using BuildKit.
@@ -269,10 +272,97 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 // - Compiler layers (gcc, binutils) - change occasionally
 // - Package-specific dependencies - change frequently
 //
+// When ApkoServiceAddr is set, layer generation is delegated to the remote
+// apko service for fault isolation and independent scaling.
+//
 // The returned cleanup function should be called after the layers have been loaded.
 func (b *Build) buildGuestLayers(ctx context.Context) ([]v1.Layer, *apko_build.ReleaseData, func(), error) {
+	// If apko service is configured, delegate to the remote service
+	if b.ApkoServiceAddr != "" {
+		return b.buildGuestLayersRemote(ctx)
+	}
+	return b.buildGuestLayersLocal(ctx)
+}
+
+// buildGuestLayersRemote builds layers using the remote apko service.
+func (b *Build) buildGuestLayersRemote(ctx context.Context) ([]v1.Layer, *apko_build.ReleaseData, func(), error) {
 	log := clog.FromContext(ctx)
-	ctx, span := otel.Tracer("melange").Start(ctx, "buildGuestLayers")
+	ctx, span := otel.Tracer("melange").Start(ctx, "buildGuestLayersRemote")
+	defer span.End()
+
+	// Serialize image configuration to YAML
+	imgConfig := b.Configuration.Environment
+	configYAML, err := yaml.Marshal(imgConfig)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("serializing image config: %w", err)
+	}
+
+	// Create apko client
+	client, err := apkoservice.NewClient(ctx, apkoservice.DefaultClientConfig(b.ApkoServiceAddr))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("creating apko client: %w", err)
+	}
+	defer client.Close()
+
+	// Build request
+	maxLayers := int32(b.MaxLayers)
+	if maxLayers == 0 {
+		maxLayers = 50
+	}
+
+	req := &apkoservice.BuildLayersRequest{
+		ImageConfigYaml:  string(configYAML),
+		Arch:             b.Arch.ToAPK(),
+		ExtraRepos:       b.ExtraRepos,
+		ExtraKeys:        b.ExtraKeys,
+		ExtraPackages:    b.ExtraPackages,
+		MaxLayers:        maxLayers,
+		RequestId:        uuid.New().String(),
+		IgnoreSignatures: b.IgnoreSignatures,
+	}
+
+	log.Infof("calling apko service at %s", b.ApkoServiceAddr)
+
+	// Call the service
+	resp, err := client.BuildLayers(ctx, req)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("apko service BuildLayers: %w", err)
+	}
+
+	log.Infof("apko service returned: image_ref=%s layers=%d cache_hit=%v duration_ms=%d",
+		resp.ImageRef, resp.LayerCount, resp.CacheHit, resp.DurationMs)
+
+	// Parse the locked config from response
+	if resp.LockedConfigYaml != "" {
+		var lockedConfig apko_types.ImageConfiguration
+		if err := yaml.Unmarshal([]byte(resp.LockedConfigYaml), &lockedConfig); err != nil {
+			log.Warnf("failed to parse locked config from service: %v", err)
+		} else {
+			b.Configuration.Environment = lockedConfig
+		}
+	}
+
+	// For remote builds, we don't get actual layers - we get an image reference.
+	// The caller (buildPackageBuildKit) will use this reference via ApkoRegistry.
+	// We need to store the image reference and return nil layers to signal this.
+	//
+	// Store the image reference for the BuildKit builder to use
+	b.ApkoRegistry = resp.ImageRef
+
+	// Return empty layers - the BuildKit builder will use llb.Image() with ApkoRegistry
+	releaseData := &apko_build.ReleaseData{
+		ID:        "unknown",
+		Name:      "melange-generated package",
+		VersionID: "unknown",
+	}
+
+	return nil, releaseData, func() {}, nil
+}
+
+// buildGuestLayersLocal builds layers locally using the apko library.
+func (b *Build) buildGuestLayersLocal(ctx context.Context) ([]v1.Layer, *apko_build.ReleaseData, func(), error) {
+	log := clog.FromContext(ctx)
+	ctx, span := otel.Tracer("melange").Start(ctx, "buildGuestLayersLocal")
 	defer span.End()
 
 	tmp, err := os.MkdirTemp(os.TempDir(), "apko-temp-*")

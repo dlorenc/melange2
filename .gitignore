@@ -41,4 +41,4 @@ os/
 x86_64/**
 aarch64/**
 melange2
-apko/
+/apko/

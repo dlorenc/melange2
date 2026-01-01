@@ -34,6 +34,12 @@ data:
   apko-registry: "registry:5000/apko-cache"
   apko-registry-insecure: "true"
 
+  # Apko service configuration
+  # When set, apko layer generation is delegated to the apko-server service.
+  # This provides fault isolation and independent scaling.
+  apko-service-addr: "apko-server:9090"
+  apko-max-concurrent: "16"
+
   # Scaling configuration for large builds
   # Max concurrent GCS uploads (default: 200, was 50)
   max-concurrent-uploads: "200"

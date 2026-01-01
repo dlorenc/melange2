@@ -44,14 +44,15 @@ import (
 )
 
 var (
-	listenAddr     = flag.String("listen-addr", ":8080", "HTTP listen address")
-	buildkitAddr   = flag.String("buildkit-addr", "", "BuildKit daemon address (for single-backend mode, mutually exclusive with --backends-config)")
-	backendsConfig = flag.String("backends-config", "", "Path to backends config file (YAML) for multi-backend mode")
-	defaultArch    = flag.String("default-arch", "x86_64", "Default architecture for single-backend mode")
-	outputDir      = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
-	gcsBucket      = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
-	enableTracing  = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
-	maxParallel    = flag.Int("max-parallel", 0, "Maximum number of concurrent package builds (0 = use pool capacity)")
+	listenAddr      = flag.String("listen-addr", ":8080", "HTTP listen address")
+	buildkitAddr    = flag.String("buildkit-addr", "", "BuildKit daemon address (for single-backend mode, mutually exclusive with --backends-config)")
+	backendsConfig  = flag.String("backends-config", "", "Path to backends config file (YAML) for multi-backend mode")
+	defaultArch     = flag.String("default-arch", "x86_64", "Default architecture for single-backend mode")
+	outputDir       = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
+	gcsBucket       = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
+	enableTracing   = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
+	maxParallel     = flag.Int("max-parallel", 0, "Maximum number of concurrent package builds (0 = use pool capacity)")
+	apkoServiceAddr = flag.String("apko-service-addr", "", "gRPC address of apko service for remote layer generation (e.g., apko-server:9090)")
 )
 
 func main() {
@@ -223,6 +224,16 @@ func run(ctx context.Context) error {
 		}
 	}
 
+	// Get apko service configuration from flag or environment
+	// When set, apko layer generation is delegated to the remote apko service
+	apkoService := *apkoServiceAddr
+	if apkoService == "" {
+		apkoService = os.Getenv("APKO_SERVICE_ADDR")
+	}
+	if apkoService != "" {
+		log.Infof("using apko service: %s", apkoService)
+	}
+
 	// Create scheduler
 	sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
 		OutputDir:            *outputDir,
@@ -234,6 +245,7 @@ func run(ctx context.Context) error {
 		ApkoRegistryInsecure: apkoRegistryInsecure,
 		ApkCacheDir:          apkCacheDir,
 		ApkCacheTTL:          apkCacheTTL,
+		ApkoServiceAddr:      apkoService,
 	})
 
 	// Create output directory (for local storage)
