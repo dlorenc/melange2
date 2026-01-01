@@ -37,6 +37,7 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/service/api"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
+	"github.com/dlorenc/melange2/pkg/service/metrics"
 	"github.com/dlorenc/melange2/pkg/service/scheduler"
 	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
@@ -53,6 +54,11 @@ var (
 	enableTracing   = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
 	maxParallel     = flag.Int("max-parallel", 0, "Maximum number of concurrent package builds (0 = use pool capacity)")
 	apkoServiceAddr = flag.String("apko-service-addr", "", "gRPC address of apko service for remote layer generation (e.g., apko-server:9090)")
+	// Observability flags
+	otlpEndpoint    = flag.String("otlp-endpoint", "", "OTLP collector endpoint for traces (e.g., tempo:4317)")
+	otlpInsecure    = flag.Bool("otlp-insecure", true, "Use insecure OTLP connection (no TLS)")
+	traceSampleRate = flag.Float64("trace-sample-rate", 1.0, "Trace sampling rate (0.0-1.0)")
+	enableMetrics   = flag.Bool("enable-metrics", true, "Enable Prometheus metrics endpoint")
 )
 
 func main() {
@@ -81,6 +87,9 @@ func run(ctx context.Context) error {
 		ServiceName:    "melange-server",
 		ServiceVersion: "0.1.0",
 		Enabled:        *enableTracing,
+		OTLPEndpoint:   *otlpEndpoint,
+		OTLPInsecure:   *otlpInsecure,
+		SampleRate:     *traceSampleRate,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up tracing: %w", err)
@@ -90,6 +99,13 @@ func run(ctx context.Context) error {
 			log.Errorf("error shutting down tracing: %v", err)
 		}
 	}()
+
+	// Initialize metrics
+	var melangeMetrics *metrics.MelangeMetrics
+	if *enableMetrics {
+		melangeMetrics = metrics.NewMelangeMetrics()
+		log.Info("Prometheus metrics enabled")
+	}
 
 	// Configure apko pools for server mode (bounded memory, optimized for concurrent builds)
 	apkobuild.ConfigurePoolsForService()
@@ -156,9 +172,13 @@ func run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.Handle("/debug/pprof/", http.DefaultServeMux) // pprof registers to DefaultServeMux
 	mux.HandleFunc("/debug/apko/stats", handleApkoStats)
+	// Add /metrics endpoint for Prometheus
+	if melangeMetrics != nil {
+		mux.Handle("/metrics", melangeMetrics.Handler())
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Route non-pprof requests to API server
-		if !strings.HasPrefix(r.URL.Path, "/debug/pprof/") && !strings.HasPrefix(r.URL.Path, "/debug/apko/") {
+		if !strings.HasPrefix(r.URL.Path, "/debug/pprof/") && !strings.HasPrefix(r.URL.Path, "/debug/apko/") && r.URL.Path != "/metrics" {
 			apiServer.ServeHTTP(w, r)
 			return
 		}

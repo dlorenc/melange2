@@ -109,7 +109,7 @@ spec:
     app: apko-server
 ---
 # Horizontal Pod Autoscaler for apko-server
-# Scales based on CPU utilization
+# Scales based on CPU and memory utilization
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -135,3 +135,29 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 10
+          periodSeconds: 60
+---
+# Pod Disruption Budget for apko-server
+# Ensures minimum availability during voluntary disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: apko-server-pdb
+  namespace: melange
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: apko-server

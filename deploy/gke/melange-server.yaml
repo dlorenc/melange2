@@ -171,3 +171,16 @@ metadata:
   annotations:
     # Workload Identity annotation
     iam.gke.io/gcp-service-account: melange-server@dlorenc-chainguard.iam.gserviceaccount.com
+---
+# Pod Disruption Budget for melange-server
+# Ensures the server stays available during voluntary disruptions
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: melange-server-pdb
+  namespace: melange
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: melange-server

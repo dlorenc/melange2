@@ -54,6 +54,17 @@ data:
   # Set to 30m for aggressive cleanup during bulk builds
   apk-cache-ttl: "30m"
 
+  # Observability configuration
+  # OTLP endpoint for trace export (e.g., "tempo:4317")
+  # Leave empty to use stdout exporter
+  otlp-endpoint: ""
+  # Allow insecure OTLP connections (no TLS)
+  otlp-insecure: "true"
+  # Trace sampling rate (0.0-1.0, default 0.1 for production)
+  trace-sample-rate: "0.1"
+  # Enable Prometheus metrics endpoint
+  enable-metrics: "true"
+
   # BuildKit backends configuration
   # 15 BuildKit workers using StatefulSet DNS names
   # Each worker can handle 16 concurrent jobs (matching 16-core machines)

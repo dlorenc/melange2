@@ -117,6 +117,31 @@ type PackageJob struct {
 	// SourceFiles is a map of relative file paths to their content.
 	// These files will be written to the source directory before building.
 	SourceFiles map[string]string `json:"source_files,omitempty"`
+	// Metrics holds detailed timing information for the build phases.
+	Metrics *PackageBuildMetrics `json:"metrics,omitempty"`
+}
+
+// PackageBuildMetrics holds detailed timing information for package builds.
+// This enables fine-grained performance analysis and bottleneck identification.
+type PackageBuildMetrics struct {
+	// High-level stage durations (in milliseconds)
+	TotalDurationMs   int64 `json:"total_duration_ms"`
+	SetupDurationMs   int64 `json:"setup_duration_ms"`
+	BackendWaitMs     int64 `json:"backend_wait_ms"`
+	InitDurationMs    int64 `json:"init_duration_ms"`
+	BuildKitDurationMs int64 `json:"buildkit_duration_ms"`
+	StorageSyncMs     int64 `json:"storage_sync_ms"`
+
+	// Apko-related metrics (when using apko service)
+	ApkoDurationMs      int64 `json:"apko_duration_ms,omitempty"`
+	ApkoAPKDownloadMs   int64 `json:"apko_apk_download_ms,omitempty"`
+	ApkoLayerAssemblyMs int64 `json:"apko_layer_assembly_ms,omitempty"`
+	ApkoImagePushMs     int64 `json:"apko_image_push_ms,omitempty"`
+	ApkoCacheHit        bool  `json:"apko_cache_hit,omitempty"`
+	ApkoLayerCount      int   `json:"apko_layer_count,omitempty"`
+
+	// BuildKit-related metrics
+	BuildKitCacheHit bool `json:"buildkit_cache_hit,omitempty"`
 }
 
 // Build represents a multi-package build with dependency ordering.

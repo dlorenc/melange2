@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/dlorenc/melange2/pkg/service/apko"
+	"github.com/dlorenc/melange2/pkg/service/metrics"
 	"github.com/dlorenc/melange2/pkg/service/tracing"
 )
 
@@ -52,6 +53,11 @@ var (
 	maxConcurrent    = flag.Int("max-concurrent", 16, "Maximum concurrent builds")
 	apkCacheDir      = flag.String("apk-cache-dir", "/var/cache/apk", "APK package cache directory")
 	enableTracing    = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
+	// Observability flags
+	otlpEndpoint    = flag.String("otlp-endpoint", "", "OTLP collector endpoint for traces (e.g., tempo:4317)")
+	otlpInsecure    = flag.Bool("otlp-insecure", true, "Use insecure OTLP connection (no TLS)")
+	traceSampleRate = flag.Float64("trace-sample-rate", 1.0, "Trace sampling rate (0.0-1.0)")
+	enableMetrics   = flag.Bool("enable-metrics", true, "Enable Prometheus metrics endpoint")
 )
 
 func main() {
@@ -80,6 +86,9 @@ func run(ctx context.Context) error {
 		ServiceName:    "apko-server",
 		ServiceVersion: "0.1.0",
 		Enabled:        *enableTracing,
+		OTLPEndpoint:   *otlpEndpoint,
+		OTLPInsecure:   *otlpInsecure,
+		SampleRate:     *traceSampleRate,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up tracing: %w", err)
@@ -89,6 +98,13 @@ func run(ctx context.Context) error {
 			log.Errorf("error shutting down tracing: %v", err)
 		}
 	}()
+
+	// Initialize metrics
+	var apkoMetrics *metrics.ApkoMetrics
+	if *enableMetrics {
+		apkoMetrics = metrics.NewApkoMetrics()
+		log.Info("Prometheus metrics enabled")
+	}
 
 	// Configure apko pools for server mode (bounded memory, optimized for concurrent builds)
 	apko_build.ConfigurePoolsForService()
@@ -141,6 +157,10 @@ func run(ctx context.Context) error {
 		_ = json.NewEncoder(w).Encode(stats)
 	})
 	mux.HandleFunc("/debug/apko/stats", handleApkoStats)
+	// Add /metrics endpoint for Prometheus
+	if apkoMetrics != nil {
+		mux.Handle("/metrics", apkoMetrics.Handler())
+	}
 
 	httpServer := &http.Server{
 		Addr:              *metricsAddr,
