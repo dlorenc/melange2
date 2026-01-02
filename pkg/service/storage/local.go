@@ -37,6 +37,11 @@ func NewLocalStorage(baseDir string) (*LocalStorage, error) {
 	return &LocalStorage{baseDir: baseDir}, nil
 }
 
+// Type returns the storage backend type.
+func (s *LocalStorage) Type() string {
+	return "local"
+}
+
 // WriteLog writes a build log to local storage.
 func (s *LocalStorage) WriteLog(ctx context.Context, jobID, pkgName string, r io.Reader) (string, error) {
 	logDir := filepath.Join(s.baseDir, jobID, "logs")

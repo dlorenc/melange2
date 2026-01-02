@@ -284,7 +284,11 @@ func run(ctx context.Context) error {
 		log.Infof("using apko service: %s", apkoService)
 	}
 
-	// Create scheduler
+	// Create scheduler with optional metrics
+	var schedOpts []scheduler.SchedulerOption
+	if melangeMetrics != nil {
+		schedOpts = append(schedOpts, scheduler.WithMetrics(melangeMetrics))
+	}
 	sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
 		OutputDir:            *outputDir,
 		PollInterval:         pollInterval,
@@ -296,7 +300,7 @@ func run(ctx context.Context) error {
 		ApkCacheDir:          apkCacheDir,
 		ApkCacheTTL:          apkCacheTTL,
 		ApkoServiceAddr:      apkoService,
-	})
+	}, schedOpts...)
 
 	// Create output directory (for local storage)
 	if *gcsBucket == "" {

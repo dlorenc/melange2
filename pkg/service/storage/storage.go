@@ -29,6 +29,9 @@ type Artifact struct {
 
 // Storage defines the interface for artifact and log storage.
 type Storage interface {
+	// Type returns the storage backend type (e.g., "local", "gcs").
+	Type() string
+
 	// WriteLog writes a build log and returns its URL.
 	WriteLog(ctx context.Context, jobID, pkgName string, r io.Reader) (url string, err error)
 

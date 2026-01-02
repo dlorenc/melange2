@@ -113,6 +113,11 @@ func (s *GCSStorage) Close() error {
 	return s.client.Close()
 }
 
+// Type returns the storage backend type.
+func (s *GCSStorage) Type() string {
+	return "gcs"
+}
+
 // isRetryableError checks if an error is transient and should be retried.
 func isRetryableError(err error) bool {
 	if err == nil {

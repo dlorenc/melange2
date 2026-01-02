@@ -35,6 +35,7 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/build"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
+	"github.com/dlorenc/melange2/pkg/service/metrics"
 	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
 	"github.com/dlorenc/melange2/pkg/service/tracing"
@@ -87,6 +88,7 @@ type Scheduler struct {
 	storage    storage.Storage
 	pool       *buildkit.Pool
 	config     Config
+	metrics    *metrics.MelangeMetrics
 
 	// sem is a semaphore for limiting concurrent builds
 	sem chan struct{}
@@ -96,8 +98,18 @@ type Scheduler struct {
 	activeBuilds map[string]bool
 }
 
+// SchedulerOption configures a Scheduler.
+type SchedulerOption func(*Scheduler)
+
+// WithMetrics sets the Prometheus metrics for the scheduler.
+func WithMetrics(m *metrics.MelangeMetrics) SchedulerOption {
+	return func(s *Scheduler) {
+		s.metrics = m
+	}
+}
+
 // New creates a new scheduler.
-func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buildkit.Pool, config Config) *Scheduler {
+func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buildkit.Pool, config Config, opts ...SchedulerOption) *Scheduler {
 	if config.PollInterval == 0 {
 		config.PollInterval = time.Second
 	}
@@ -112,7 +124,7 @@ func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buil
 			config.MaxParallel = runtime.NumCPU()
 		}
 	}
-	return &Scheduler{
+	s := &Scheduler{
 		buildStore:   buildStore,
 		storage:      storageBackend,
 		pool:         pool,
@@ -120,6 +132,10 @@ func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buil
 		sem:          make(chan struct{}, config.MaxParallel),
 		activeBuilds: make(map[string]bool),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Run starts the scheduler loop. It blocks until the context is cancelled.
@@ -154,6 +170,33 @@ func (s *Scheduler) processBuilds(ctx context.Context) error {
 	builds, err := s.buildStore.ListActiveBuilds(ctx)
 	if err != nil {
 		return fmt.Errorf("listing active builds: %w", err)
+	}
+
+	// Update metrics
+	if s.metrics != nil {
+		// Count pending builds for queue depth
+		pendingCount := 0
+		for _, b := range builds {
+			if b.Status == types.BuildStatusPending {
+				pendingCount++
+			}
+		}
+		s.metrics.UpdateQueueDepth(pendingCount)
+
+		// Update backend metrics using Status() which includes runtime state
+		backendStatuses := s.pool.Status()
+		total := len(backendStatuses)
+		available := 0
+		activeJobs := make(map[string]int)
+		archByAddr := make(map[string]string)
+		for _, bs := range backendStatuses {
+			archByAddr[bs.Addr] = bs.Arch
+			activeJobs[bs.Addr] = bs.ActiveJobs
+			if !bs.CircuitOpen {
+				available++
+			}
+		}
+		s.metrics.UpdateBackendMetrics(total, available, activeJobs, archByAddr)
 	}
 
 	for _, build := range builds {
@@ -215,6 +258,10 @@ func (s *Scheduler) processBuild(ctx context.Context, build *types.Build) {
 			log.Errorf("failed to update build %s to running: %v", build.ID, err)
 			tracing.RecordError(ctx, err)
 			return
+		}
+		// Record build started
+		if s.metrics != nil {
+			s.metrics.RecordBuildStarted()
 		}
 	}
 
@@ -317,6 +364,15 @@ func (s *Scheduler) executePackageBuild(ctx context.Context, buildID string, pkg
 	} else {
 		pkg.Status = types.PackageStatusSuccess
 		log.Infof("package %s completed successfully in %s", pkg.Name, duration)
+	}
+
+	// Record package completion metrics
+	if s.metrics != nil {
+		arch := build.Spec.Arch
+		if arch == "" {
+			arch = "unknown"
+		}
+		s.metrics.RecordPackageCompleted(string(pkg.Status), arch, duration.Seconds())
 	}
 
 	span.SetAttributes(
@@ -429,6 +485,9 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	span.AddEvent("setup_complete", trace.WithAttributes(
 		attribute.String("duration", setupDuration.String()),
 	))
+	if s.metrics != nil {
+		s.metrics.RecordPhaseDuration("setup", setupDuration.Seconds())
+	}
 
 	// Create a multi-writer logger
 	multiWriter := io.MultiWriter(os.Stderr, logFile)
@@ -467,6 +526,9 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		attribute.String("backend_addr", backend.Addr),
 		attribute.String("duration", backendDuration.String()),
 	))
+	if s.metrics != nil {
+		s.metrics.RecordPhaseDuration("backend_selection", backendDuration.Seconds())
+	}
 
 	// Track build success for circuit breaker
 	var buildSuccess bool
@@ -522,6 +584,9 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	span.AddEvent("build_initialized", trace.WithAttributes(
 		attribute.String("duration", initDuration.String()),
 	))
+	if s.metrics != nil {
+		s.metrics.RecordPhaseDuration("init", initDuration.Seconds())
+	}
 
 	// Phase 4: BuildKit execution
 	buildkitTimer := tracing.NewTimer(ctx, "phase_buildkit_execution")
@@ -546,6 +611,9 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	span.AddEvent("buildkit_complete", trace.WithAttributes(
 		attribute.String("duration", buildkitDuration.String()),
 	))
+	if s.metrics != nil {
+		s.metrics.RecordPhaseDuration("buildkit", buildkitDuration.Seconds())
+	}
 	log.Infof("BuildKit execution completed in %s for package %s", buildkitDuration, pkg.Name)
 
 	// Phase 5: Storage sync
@@ -561,6 +629,10 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	span.AddEvent("storage_sync_complete", trace.WithAttributes(
 		attribute.String("duration", syncDuration.String()),
 	))
+	if s.metrics != nil {
+		s.metrics.RecordPhaseDuration("storage_sync", syncDuration.Seconds())
+		s.metrics.RecordStorageSync(s.storage.Type(), syncDuration.Seconds())
+	}
 	log.Infof("storage sync completed in %s for package %s", syncDuration, pkg.Name)
 
 	// Log phase breakdown
@@ -673,6 +745,7 @@ func (s *Scheduler) updateBuildStatus(ctx context.Context, buildID string) {
 
 	// Update if changed
 	if build.Status != newStatus {
+		oldStatus := build.Status
 		build.Status = newStatus
 		if newStatus != types.BuildStatusRunning {
 			now := time.Now()
@@ -683,6 +756,19 @@ func (s *Scheduler) updateBuildStatus(ctx context.Context, buildID string) {
 		}
 		log.Infof("build %s status: %s (%d success, %d failed, %d skipped)",
 			buildID, newStatus, success, failed, skipped)
+
+		// Record build completion metrics when transitioning to terminal state
+		if s.metrics != nil && oldStatus == types.BuildStatusRunning && newStatus != types.BuildStatusRunning {
+			var durationSeconds float64
+			if build.StartedAt != nil && build.FinishedAt != nil {
+				durationSeconds = build.FinishedAt.Sub(*build.StartedAt).Seconds()
+			}
+			mode := string(build.Spec.Mode)
+			if mode == "" {
+				mode = string(types.BuildModeFlat)
+			}
+			s.metrics.RecordBuildCompleted(string(newStatus), mode, durationSeconds)
+		}
 	}
 }
 
