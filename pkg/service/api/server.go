@@ -531,6 +531,7 @@ func (s *Server) createBuild(w http.ResponseWriter, r *http.Request) {
 		WithTest:        req.WithTest,
 		Debug:           req.Debug,
 		Mode:            mode,
+		Env:             req.Env,
 	}
 
 	// Create build in store

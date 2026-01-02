@@ -80,6 +80,11 @@ type Config struct {
 	// independent scaling.
 	// Example: "apko-server:9090"
 	ApkoServiceAddr string
+	// SecretEnv contains server-side environment variables to inject into all builds.
+	// These are typically loaded from Kubernetes secrets and take precedence over
+	// client-provided environment variables.
+	// Example: {"GITHUB_TOKEN": "ghp_xxx"}
+	SecretEnv map[string]string
 }
 
 // Scheduler processes builds.
@@ -564,6 +569,16 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		return fmt.Errorf("creating cache dir: %w", err)
 	}
 
+	// Merge environment variables: start with client-provided env, then overlay server secrets.
+	// Server-side secrets take precedence over client env to prevent override attacks.
+	extraEnv := make(map[string]string)
+	for k, v := range spec.Env {
+		extraEnv[k] = v
+	}
+	for k, v := range s.config.SecretEnv {
+		extraEnv[k] = v
+	}
+
 	// Build configuration using the unified BuildConfig
 	buildCfg := build.NewBuildConfigForRemote(build.RemoteBuildParams{
 		ConfigPath:           configPath,
@@ -580,6 +595,7 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		ApkoRegistry:         s.config.ApkoRegistry,
 		ApkoRegistryInsecure: s.config.ApkoRegistryInsecure,
 		ApkoServiceAddr:      s.config.ApkoServiceAddr,
+		ExtraEnv:             extraEnv,
 	})
 	buildCfg.Arch = targetArch
 

@@ -476,6 +476,44 @@ The `melange remote` subcommand allows submitting builds to a remote melange-ser
 
 # Submit with backend selector (for pools with labels)
 ./melange2 remote submit pkg.yaml --server http://localhost:8080 --backend-selector tier=high-memory
+
+# Submit with non-sensitive environment variables
+# WARNING: Do NOT use --env for secrets - values are logged in API requests
+./melange2 remote submit pkg.yaml --server http://localhost:8080 --env BUILD_TYPE=release
+```
+
+### Server-Side Secrets (for GITHUB_TOKEN, etc.)
+
+For secrets like `GITHUB_TOKEN`, configure server-side injection instead of using `--env`.
+Server-side secrets are loaded from Kubernetes secrets and are NOT logged in API requests.
+
+**Setup (one-time):**
+```bash
+# Create a secret with your tokens
+kubectl create secret generic build-secrets -n melange \
+  --from-literal=GITHUB_TOKEN="$(gh auth token)"
+
+# Or for multiple tokens
+kubectl create secret generic build-secrets -n melange \
+  --from-literal=GITHUB_TOKEN="$(gh auth token)" \
+  --from-literal=NPM_TOKEN="your-npm-token"
+```
+
+**How it works:**
+- The server reads `SECRET_ENV_*` environment variables at startup
+- These are injected into all builds as environment variables (prefix stripped)
+- Example: `SECRET_ENV_GITHUB_TOKEN=xxx` → builds get `GITHUB_TOKEN=xxx`
+- Server secrets take precedence over client `--env` flags (security measure)
+
+**Deployment configuration** (already in `deploy/gke/melange-server.yaml`):
+```yaml
+env:
+- name: SECRET_ENV_GITHUB_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: build-secrets
+      key: GITHUB_TOKEN
+      optional: true
 ```
 
 ### Check Job Status

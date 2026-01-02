@@ -104,6 +104,17 @@ spec:
               name: postgres-credentials
               key: dsn
               optional: true
+        # Server-side secrets injected into all builds (from K8s secret)
+        # These take precedence over client --env flags and are NOT logged in requests.
+        # To use: create a secret with your tokens, then reference them here.
+        # Example: kubectl create secret generic build-secrets -n melange \
+        #   --from-literal=GITHUB_TOKEN="$(gh auth token)"
+        - name: SECRET_ENV_GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: build-secrets
+              key: GITHUB_TOKEN
+              optional: true
         ports:
         - containerPort: 8080
           name: http
