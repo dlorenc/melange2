@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -126,7 +127,11 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	log := clog.FromContext(ctx)
 	log.Info("scheduler started")
 
-	ticker := time.NewTicker(s.config.PollInterval)
+	// Add jitter to prevent thundering herd when multiple schedulers poll simultaneously.
+	// Jitter is up to 20% of the poll interval.
+	// #nosec G404 -- math/rand is sufficient for jitter, cryptographic randomness not required
+	jitter := time.Duration(rand.Int63n(int64(s.config.PollInterval / 5)))
+	ticker := time.NewTicker(s.config.PollInterval + jitter)
 	defer ticker.Stop()
 
 	for {

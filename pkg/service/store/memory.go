@@ -409,6 +409,26 @@ func (s *MemoryBuildStore) copyBuild(build *types.Build) *types.Build {
 				pkgCopy.Pipelines[k] = v
 			}
 		}
+		if pkg.SourceFiles != nil {
+			pkgCopy.SourceFiles = make(map[string]string)
+			for k, v := range pkg.SourceFiles {
+				pkgCopy.SourceFiles[k] = v
+			}
+		}
+		if pkg.Backend != nil {
+			backendCopy := *pkg.Backend
+			if pkg.Backend.Labels != nil {
+				backendCopy.Labels = make(map[string]string)
+				for k, v := range pkg.Backend.Labels {
+					backendCopy.Labels[k] = v
+				}
+			}
+			pkgCopy.Backend = &backendCopy
+		}
+		if pkg.Metrics != nil {
+			metricsCopy := *pkg.Metrics
+			pkgCopy.Metrics = &metricsCopy
+		}
 		copy.Packages[i] = pkgCopy
 	}
 	return &copy
