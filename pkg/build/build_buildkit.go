@@ -194,10 +194,15 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 	log.Info("running build with BuildKit")
 	buildkitStart := time.Now()
 	if err := builder.BuildWithLayers(ctx, layers, cfg); err != nil {
+		// Capture step timing even on failure for diagnostics
+		b.BuildKitSummary = builder.GetLastSummary()
 		return fmt.Errorf("buildkit build failed: %w", err)
 	}
 	buildkitDuration := time.Since(buildkitStart)
 	log.Infof("buildkit_solve took %s", buildkitDuration)
+
+	// Capture BuildKit step timing for metrics
+	b.BuildKitSummary = builder.GetLastSummary()
 
 	// Load the workspace output into memory for further processing
 	log.Infof("loading workspace from: %s", b.WorkspaceDir)

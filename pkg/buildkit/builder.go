@@ -42,6 +42,10 @@ type Builder struct {
 	ProgressMode ProgressMode
 	// ShowLogs enables display of stdout/stderr from build steps.
 	ShowLogs bool
+
+	// lastSummary stores the build summary from the most recent build.
+	// Access via GetLastSummary() after BuildWithLayers completes.
+	lastSummary *Summary
 }
 
 // NewBuilder creates a new BuildKit builder.
@@ -92,6 +96,12 @@ func (b *Builder) WithDefaultCacheMounts() *Builder {
 // Close closes the BuildKit connection.
 func (b *Builder) Close() error {
 	return b.client.Close()
+}
+
+// GetLastSummary returns the build summary from the most recent build.
+// Returns nil if no build has been executed yet.
+func (b *Builder) GetLastSummary() *Summary {
+	return b.lastSummary
 }
 
 // CacheConfig specifies remote cache configuration for BuildKit.
@@ -370,10 +380,17 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 	})
 
 	if err := eg.Wait(); err != nil {
+		// Capture summary even on failure for diagnostics
+		summary := progress.GetSummary()
+		b.lastSummary = &summary
 		return fmt.Errorf("solving build: %w", err)
 	}
 	solveDuration := time.Since(solveStart)
 	log.Infof("graph_solve took %s", solveDuration)
+
+	// Capture build summary with step timing
+	summary := progress.GetSummary()
+	b.lastSummary = &summary
 
 	log.Info("build completed successfully")
 	return nil

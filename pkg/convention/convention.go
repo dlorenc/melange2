@@ -222,6 +222,20 @@ func LoadFilesFromDir(dir string) (map[string]string, error) {
 			return nil
 		}
 
+		// Follow symlinks to check if target is a directory
+		// filepath.WalkDir doesn't follow symlinks, so d.IsDir() returns false for symlinks
+		if d.Type()&os.ModeSymlink != 0 {
+			target, err := os.Stat(path)
+			if err != nil {
+				// Skip broken symlinks
+				return nil
+			}
+			if target.IsDir() {
+				// Skip symlinks to directories
+				return nil
+			}
+		}
+
 		info, err := d.Info()
 		if err != nil {
 			return err

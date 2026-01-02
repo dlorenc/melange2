@@ -368,9 +368,22 @@ func (s *Scheduler) executePackageBuild(ctx context.Context, buildID string, pkg
 
 	// Record package completion metrics
 	if s.metrics != nil {
-		arch := build.Spec.Arch
+		// Use the architecture from the backend that was assigned, or determine from spec
+		arch := ""
+		if pkg.Backend != nil {
+			arch = pkg.Backend.Arch
+		}
 		if arch == "" {
-			arch = "unknown"
+			arch = build.Spec.Arch
+		}
+		if arch == "" {
+			// Fallback to runtime arch
+			arch = runtime.GOARCH
+			if arch == "arm64" {
+				arch = "aarch64"
+			} else if arch == "amd64" {
+				arch = "x86_64"
+			}
 		}
 		s.metrics.RecordPackageCompleted(string(pkg.Status), arch, duration.Seconds())
 	}
@@ -615,6 +628,28 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		s.metrics.RecordPhaseDuration("buildkit", buildkitDuration.Seconds())
 	}
 	log.Infof("BuildKit execution completed in %s for package %s", buildkitDuration, pkg.Name)
+
+	// Capture BuildKit step timing for the package metrics
+	if bc.BuildKitSummary != nil {
+		summary := bc.BuildKitSummary
+		if pkg.Metrics == nil {
+			pkg.Metrics = &types.PackageBuildMetrics{}
+		}
+		pkg.Metrics.BuildKitStepsTotal = summary.Total
+		pkg.Metrics.BuildKitCached = summary.Cached
+		pkg.Metrics.BuildKitCacheHit = summary.Cached > 0 && summary.Cached == summary.Total
+
+		// Convert step summaries to our type
+		for _, step := range summary.Steps {
+			pkg.Metrics.Steps = append(pkg.Metrics.Steps, types.StepTiming{
+				Name:       step.Name,
+				DurationMs: step.Duration.Milliseconds(),
+				Cached:     step.Cached,
+				Error:      step.Error,
+			})
+		}
+		log.Infof("captured %d BuildKit steps for package %s", len(pkg.Metrics.Steps), pkg.Name)
+	}
 
 	// Phase 5: Storage sync
 	syncTimer := tracing.NewTimer(ctx, "phase_storage_sync")
