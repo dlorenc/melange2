@@ -900,7 +900,7 @@ func (s *Scheduler) cleanupCacheDir(cacheDir string, ttl time.Duration) (int, in
 // cleanupEmptyDirs removes empty directories from the cache.
 func (s *Scheduler) cleanupEmptyDirs(cacheDir string) {
 	// Walk in reverse order (depth-first) to clean up empty nested dirs
-	var dirs []string
+	dirs := make([]string, 0)
 	_ = filepath.WalkDir(cacheDir, func(path string, d os.DirEntry, err error) error {
 		if err == nil && d.IsDir() && path != cacheDir {
 			dirs = append(dirs, path)
