@@ -62,7 +62,7 @@ func StartRegistry(t *testing.T, ctx context.Context) *RegistryContainer {
 	// Create a temp directory for the config file
 	configDir := t.TempDir()
 	configPath := filepath.Join(configDir, "config.json")
-	err := os.WriteFile(configPath, []byte(zotConfig), 0644)
+	err := os.WriteFile(configPath, []byte(zotConfig), 0600)
 	require.NoError(t, err, "should write zot config")
 
 	req := testcontainers.ContainerRequest{
@@ -74,7 +74,7 @@ func StartRegistry(t *testing.T, ctx context.Context) *RegistryContainer {
 			{
 				HostFilePath:      configPath,
 				ContainerFilePath: "/etc/zot/config.json",
-				FileMode:          0644,
+				FileMode:          0600,
 			},
 		},
 	}
