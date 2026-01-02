@@ -1,0 +1,62 @@
+# Git checkout test - validates git-checkout pipeline and subsequent git operations
+#
+# This test reproduces the "dubious ownership" error seen in GKE builds after
+# switching to run as root (PR #152). The issue is:
+# 1. git-checkout clones as root, creating files owned by root
+# 2. Subsequent steps run git commands which fail with "dubious ownership"
+#    because git detects the repo is owned by a different user
+#
+# This test should FAIL until the safe.directory fix is properly implemented.
+package:
+  name: git-checkout-test
+  version: 1.0.0
+
+pipeline:
+  # Step 0: Install git (not in base image)
+  - name: Install git
+    runs: apk add --no-cache git
+
+  # Step 1: Clone a small, public repository using the builtin git-checkout
+  - uses: git-checkout
+    with:
+      repository: https://github.com/wolfi-dev/advisories
+      branch: main
+      destination: advisories
+
+  # Step 1.5: Simulate GKE environment by changing file ownership
+  # In GKE, files from llb.Git() may be owned by a different UID than the build user
+  - name: Simulate ownership mismatch (like GKE)
+    runs: |
+      echo "=== Simulating GKE ownership mismatch ==="
+      echo "Current user: $(whoami) (UID $(id -u))"
+
+      # Create a non-root user to simulate GKE's file ownership
+      adduser -D -u 1000 testuser 2>/dev/null || true
+
+      # Change ownership of git repo to different user (simulates llb.Git behavior in GKE)
+      chown -R 1000:1000 /home/build/advisories
+
+      echo "=== After ownership change ==="
+      ls -la /home/build/advisories/.git/ | head -5
+
+  # Step 2: Run git commands in the cloned directory (as root)
+  # This should trigger "dubious ownership" errors because:
+  # - Files are owned by UID 1000 (testuser)
+  # - Commands run as root (UID 0)
+  # - Git will complain about ownership mismatch
+  - name: Run git commands in cloned repo
+    working-directory: /home/build/advisories
+    runs: |
+      echo "=== Testing git commands as root on non-root-owned repo ==="
+      echo "Current user: $(whoami) (UID $(id -u))"
+
+      # This should fail with "dubious ownership" without safe.directory
+      git status
+      git log --oneline -3
+
+      COMMIT=$(git rev-parse HEAD)
+      echo "HEAD commit: $COMMIT"
+
+      # Save output to prove we got here
+      mkdir -p "${{targets.destdir}}/usr/share/git-checkout-test"
+      echo "commit=$COMMIT" > "${{targets.destdir}}/usr/share/git-checkout-test/git-info.txt"

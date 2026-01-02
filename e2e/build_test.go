@@ -383,3 +383,17 @@ echo "TEST_VAR=$TEST_VAR" > /home/build/melange-out/integration-test/usr/share/e
 	harness.FileContains(t, outDir, "integration-test/usr/share/result.txt", "integration test output")
 	harness.FileContains(t, outDir, "integration-test/usr/share/env.txt", "TEST_VAR=test-value")
 }
+
+// TestBuild_GitCheckout tests the git-checkout builtin pipeline followed by git commands.
+// This test reproduces the "dubious ownership" error seen in GKE builds after
+// switching to run as root (PR #152).
+func TestBuild_GitCheckout(t *testing.T) {
+	c := newBuildTestContext(t)
+	cfg := c.loadConfig("git-checkout.yaml")
+
+	outDir := c.buildConfig(cfg)
+
+	// If we get here without error, the git commands succeeded
+	harness.FileExists(t, outDir, "git-checkout-test/usr/share/git-checkout-test/git-info.txt")
+	harness.FileContains(t, outDir, "git-checkout-test/usr/share/git-checkout-test/git-info.txt", "commit=")
+}
