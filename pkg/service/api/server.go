@@ -17,6 +17,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/chainguard-dev/clog"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/dag"
+	svcerrors "github.com/dlorenc/melange2/pkg/service/errors"
 	"github.com/dlorenc/melange2/pkg/service/git"
 	"github.com/dlorenc/melange2/pkg/service/store"
 	"github.com/dlorenc/melange2/pkg/service/tracing"
@@ -165,8 +167,8 @@ func (s *Server) addBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.pool.Add(backend); err != nil {
-		// Check if it's a validation error vs duplicate
-		if strings.Contains(err.Error(), "already exists") {
+		// Check if it's a duplicate error vs validation error
+		if errors.Is(err, svcerrors.ErrBackendAlreadyExists) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -198,7 +200,7 @@ func (s *Server) removeBackend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.pool.Remove(req.Addr); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, svcerrors.ErrBackendNotFound) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
@@ -264,7 +266,11 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 
 	build, err := s.buildStore.GetBuild(r.Context(), path)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		if errors.Is(err, svcerrors.ErrBuildNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -277,7 +283,11 @@ func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBuildMetrics(w http.ResponseWriter, r *http.Request, buildID string) {
 	build, err := s.buildStore.GetBuild(r.Context(), buildID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		if errors.Is(err, svcerrors.ErrBuildNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

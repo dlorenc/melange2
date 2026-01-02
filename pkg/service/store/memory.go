@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/dlorenc/melange2/pkg/service/dag"
+	svcerrors "github.com/dlorenc/melange2/pkg/service/errors"
 	"github.com/dlorenc/melange2/pkg/service/types"
 	"github.com/google/uuid"
 )
@@ -246,7 +247,7 @@ func (s *MemoryBuildStore) GetBuild(ctx context.Context, id string) (*types.Buil
 
 	build, ok := s.builds[id]
 	if !ok {
-		return nil, fmt.Errorf("build not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, id)
 	}
 
 	// Return a deep copy
@@ -259,7 +260,7 @@ func (s *MemoryBuildStore) UpdateBuild(ctx context.Context, build *types.Build) 
 	defer s.mu.Unlock()
 
 	if _, ok := s.builds[build.ID]; !ok {
-		return fmt.Errorf("build not found: %s", build.ID)
+		return fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, build.ID)
 	}
 
 	s.builds[build.ID] = s.copyBuild(build)
@@ -320,7 +321,7 @@ func (s *MemoryBuildStore) ClaimReadyPackage(ctx context.Context, buildID string
 
 	build, ok := s.builds[buildID]
 	if !ok {
-		return nil, fmt.Errorf("build not found: %s", buildID)
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, buildID)
 	}
 
 	// Build a set of package names in this build
@@ -377,7 +378,7 @@ func (s *MemoryBuildStore) UpdatePackageJob(ctx context.Context, buildID string,
 
 	build, ok := s.builds[buildID]
 	if !ok {
-		return fmt.Errorf("build not found: %s", buildID)
+		return fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, buildID)
 	}
 
 	// Find and update the package
@@ -388,7 +389,7 @@ func (s *MemoryBuildStore) UpdatePackageJob(ctx context.Context, buildID string,
 		}
 	}
 
-	return fmt.Errorf("package not found: %s", pkg.Name)
+	return fmt.Errorf("%w: %s", svcerrors.ErrPackageNotFound, pkg.Name)
 }
 
 // copyBuild creates a deep copy of a build.

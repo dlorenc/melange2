@@ -17,7 +17,6 @@ package buildkit
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -25,6 +24,7 @@ import (
 	"time"
 
 	"github.com/chainguard-dev/clog"
+	svcerrors "github.com/dlorenc/melange2/pkg/service/errors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,11 +35,11 @@ const (
 	DefaultRecoveryTimeout  = 30 * time.Second
 )
 
-// Errors returned by pool operations.
+// Re-export errors for backward compatibility.
 var (
-	ErrNoAvailableBackend = errors.New("no available backend: all backends are at capacity or circuit-open")
-	ErrBackendAtCapacity  = errors.New("backend is at capacity")
-	ErrBackendNotFound    = errors.New("backend not found")
+	ErrNoAvailableBackend = svcerrors.ErrNoAvailableBackend
+	ErrBackendAtCapacity  = svcerrors.ErrBackendAtCapacity
+	ErrBackendNotFound    = svcerrors.ErrBackendNotFound
 )
 
 // Backend represents a BuildKit backend instance.
@@ -123,7 +123,7 @@ func NewPool(backends []Backend) (*Pool, error) {
 // NewPoolWithConfig creates a new BuildKit pool from a configuration.
 func NewPoolWithConfig(config PoolConfig) (*Pool, error) {
 	if len(config.Backends) == 0 {
-		return nil, errors.New("at least one backend is required")
+		return nil, fmt.Errorf("at least one backend is required")
 	}
 
 	// Validate backends
@@ -509,10 +509,10 @@ func (p *Pool) Status() []BackendStatus {
 // Returns an error if the backend is invalid or already exists.
 func (p *Pool) Add(backend Backend) error {
 	if backend.Addr == "" {
-		return errors.New("addr is required")
+		return fmt.Errorf("addr is required")
 	}
 	if backend.Arch == "" {
-		return errors.New("arch is required")
+		return fmt.Errorf("arch is required")
 	}
 
 	p.mu.Lock()
@@ -521,7 +521,7 @@ func (p *Pool) Add(backend Backend) error {
 	// Check for duplicates
 	for _, b := range p.backends {
 		if b.Addr == backend.Addr {
-			return fmt.Errorf("backend with addr %s already exists", backend.Addr)
+			return fmt.Errorf("%w: %s", svcerrors.ErrBackendAlreadyExists, backend.Addr)
 		}
 	}
 
@@ -561,7 +561,7 @@ func (p *Pool) Remove(addr string) error {
 	defer p.mu.Unlock()
 
 	if len(p.backends) == 1 {
-		return errors.New("cannot remove the last backend")
+		return fmt.Errorf("cannot remove the last backend")
 	}
 
 	// Find and remove the backend
@@ -573,5 +573,5 @@ func (p *Pool) Remove(addr string) error {
 		}
 	}
 
-	return fmt.Errorf("backend with addr %s not found", addr)
+	return fmt.Errorf("%w: %s", svcerrors.ErrBackendNotFound, addr)
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dlorenc/melange2/pkg/service/dag"
+	svcerrors "github.com/dlorenc/melange2/pkg/service/errors"
 	"github.com/dlorenc/melange2/pkg/service/types"
 	"github.com/google/uuid"
 )
@@ -226,7 +227,7 @@ func (s *PostgresBuildStore) GetBuild(ctx context.Context, id string) (*types.Bu
 		&build.StartedAt, &build.FinishedAt, &specJSON,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("build not found: %s", id)
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("querying build: %w", err)
@@ -276,7 +277,7 @@ func (s *PostgresBuildStore) UpdateBuild(ctx context.Context, build *types.Build
 		return fmt.Errorf("updating build: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("build not found: %s", build.ID)
+		return fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, build.ID)
 	}
 	return nil
 }
@@ -559,7 +560,7 @@ func (s *PostgresBuildStore) UpdatePackageJob(ctx context.Context, buildID strin
 		return fmt.Errorf("updating package job: %w", err)
 	}
 	if result.RowsAffected() == 0 {
-		return fmt.Errorf("package not found: %s", pkg.Name)
+		return fmt.Errorf("%w: %s", svcerrors.ErrPackageNotFound, pkg.Name)
 	}
 	return nil
 }
