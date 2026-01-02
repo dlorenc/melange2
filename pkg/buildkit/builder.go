@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
@@ -337,7 +338,7 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		return progress.Write(egCtx, statusCh)
 	})
 
-	// Solve goroutine
+	// Solve goroutine with retry logic for cache export failures
 	eg.Go(func() error {
 		solveOpt := client.SolveOpt{
 			LocalDirs: localDirs,
@@ -346,6 +347,9 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 				OutputDir: melangeOutDir,
 			}},
 		}
+
+		// Track if cache export is enabled for retry logic
+		cacheExportEnabled := false
 
 		// Add cache import/export if configured
 		if cfg.CacheConfig != nil && cfg.CacheConfig.Registry != "" {
@@ -373,9 +377,32 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 					"mode": mode,
 				},
 			}}
+			cacheExportEnabled = true
 		}
 
 		_, err := b.client.Client().Solve(ctx, def, solveOpt, statusCh)
+
+		// If cache export failed, retry without cache export
+		// This allows the build to succeed even if the cache registry is unavailable
+		if err != nil && cacheExportEnabled && isCacheExportError(err) {
+			log.Warnf("cache export failed, retrying without cache export: %v", err)
+
+			// Create new status channel for retry
+			retryCh := make(chan *client.SolveStatus)
+			go func() {
+				// Drain the retry channel (we don't track progress on retry)
+				for range retryCh {
+				}
+			}()
+
+			// Disable cache export and retry
+			solveOpt.CacheExports = nil
+			_, err = b.client.Client().Solve(ctx, def, solveOpt, retryCh)
+			if err == nil {
+				log.Info("build succeeded on retry without cache export")
+			}
+		}
+
 		return err
 	})
 
@@ -637,4 +664,32 @@ func (b *Builder) runTestPipelinesWithProvider(ctx context.Context, provider Tes
 func (b *Builder) TestWithImage(ctx context.Context, imageRef string, cfg *TestConfig) error {
 	provider := NewImageTestStateProvider(imageRef)
 	return b.testWithProvider(ctx, provider, cfg)
+}
+
+// isCacheExportError detects if an error is related to cache export.
+// This includes registry connection issues (connection reset, broken pipe, EOF)
+// that occur during the "exporting cache" phase.
+func isCacheExportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+
+	// Check for registry connection errors
+	cacheErrorPatterns := []string{
+		"exporting cache",
+		"failed to copy",
+		"connection reset by peer",
+		"broken pipe",
+		"connection refused",
+		"i/o timeout",
+	}
+
+	for _, pattern := range cacheErrorPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
