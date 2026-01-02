@@ -125,12 +125,12 @@ type PackageJob struct {
 // This enables fine-grained performance analysis and bottleneck identification.
 type PackageBuildMetrics struct {
 	// High-level stage durations (in milliseconds)
-	TotalDurationMs   int64 `json:"total_duration_ms"`
-	SetupDurationMs   int64 `json:"setup_duration_ms"`
-	BackendWaitMs     int64 `json:"backend_wait_ms"`
-	InitDurationMs    int64 `json:"init_duration_ms"`
+	TotalDurationMs    int64 `json:"total_duration_ms"`
+	SetupDurationMs    int64 `json:"setup_duration_ms"`
+	BackendWaitMs      int64 `json:"backend_wait_ms"`
+	InitDurationMs     int64 `json:"init_duration_ms"`
 	BuildKitDurationMs int64 `json:"buildkit_duration_ms"`
-	StorageSyncMs     int64 `json:"storage_sync_ms"`
+	StorageSyncMs      int64 `json:"storage_sync_ms"`
 
 	// Apko-related metrics (when using apko service)
 	ApkoDurationMs      int64 `json:"apko_duration_ms,omitempty"`
@@ -141,7 +141,21 @@ type PackageBuildMetrics struct {
 	ApkoLayerCount      int   `json:"apko_layer_count,omitempty"`
 
 	// BuildKit-related metrics
-	BuildKitCacheHit bool `json:"buildkit_cache_hit,omitempty"`
+	BuildKitCacheHit   bool `json:"buildkit_cache_hit,omitempty"`
+	BuildKitStepsTotal int  `json:"buildkit_steps_total,omitempty"`
+	BuildKitCached     int  `json:"buildkit_cached,omitempty"`
+
+	// Steps contains detailed timing for each BuildKit vertex/step.
+	// Steps are sorted by duration (longest first) for easy bottleneck identification.
+	Steps []StepTiming `json:"steps,omitempty"`
+}
+
+// StepTiming contains timing information for a single BuildKit step.
+type StepTiming struct {
+	Name       string `json:"name"`
+	DurationMs int64  `json:"duration_ms"`
+	Cached     bool   `json:"cached,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Build represents a multi-package build with dependency ordering.

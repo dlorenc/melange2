@@ -41,6 +41,7 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/build/sbom"
 	"github.com/dlorenc/melange2/pkg/build/sbom/spdx"
+	"github.com/dlorenc/melange2/pkg/buildkit"
 	"github.com/dlorenc/melange2/pkg/config"
 )
 
@@ -146,6 +147,10 @@ type Build struct {
 	// LogWriter is an optional writer for capturing build log output.
 	// If set, build logs will be written here in addition to stderr.
 	LogWriter io.Writer
+
+	// BuildKitSummary stores detailed step timing from the BuildKit solve.
+	// Populated after BuildPackage completes.
+	BuildKitSummary *buildkit.Summary
 }
 
 // NewFromConfig creates a new Build from a BuildConfig.

@@ -53,13 +53,19 @@ spec:
         env:
         - name: REGISTRY_STORAGE_DELETE_ENABLED
           value: "true"
+        # Increase HTTP timeouts to handle large layer uploads under load
+        - name: REGISTRY_HTTP_TIMEOUT
+          value: "300s"
+        # Increase max concurrent uploads to improve throughput
+        - name: REGISTRY_STORAGE_FILESYSTEM_MAXTHREADS
+          value: "200"
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
+            memory: "1Gi"
+            cpu: "1"
           limits:
-            memory: "2Gi"
-            cpu: "2"
+            memory: "4Gi"
+            cpu: "4"
         livenessProbe:
           httpGet:
             path: /v2/
