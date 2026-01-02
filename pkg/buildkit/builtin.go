@@ -128,11 +128,17 @@ func buildGitCheckout(base llb.State, p *config.Pipeline) (llb.State, error) {
 	// This ensures existing files in the destination (like user-provided source files)
 	// are preserved, not deleted or overwritten (unless they conflict with git files).
 	// Running as root (matching QEMU runner behavior), so no chown needed.
+	//
+	// IMPORTANT: We also configure git safe.directory for the destination path.
+	// Git refuses to run in directories owned by different users (dubious ownership).
+	// Since BuildKit may run steps as different users, we need to mark the directory
+	// as safe for git operations. This matches the shell pipeline behavior.
 	state := base.Run(
 		llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
 mkdir -p %s
+git config --global --add safe.directory %s
 cd /mnt/gitclone && tar -c . | tar -C %s -x --no-same-owner
-`, destPath, destPath)}),
+`, destPath, destPath, destPath)}),
 		llb.AddMount("/mnt/gitclone", gitState, llb.Readonly),
 		llb.WithCustomNamef("[git-checkout] clone and copy to %s", destPath),
 	).Root()
@@ -141,15 +147,17 @@ cd /mnt/gitclone && tar -c . | tar -C %s -x --no-same-owner
 	// These require shell commands since BuildKit's Git doesn't support them directly
 	if expectedCommit != "" && branch != "" {
 		// If we have a branch and expected-commit, we may need to reset to the commit
+		// Note: We add safe.directory again here because this step runs as a different user
 		state = state.Run(
 			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
+git config --global --add safe.directory %s
 cd %s
 current=$(git rev-parse HEAD)
 if [ "$current" != "%s" ]; then
     echo "[git-checkout] resetting to expected commit %s"
     git reset --hard %s
 fi
-`, destPath, expectedCommit, expectedCommit, expectedCommit)}),
+`, destPath, destPath, expectedCommit, expectedCommit, expectedCommit)}),
 			llb.Dir(destPath),
 			llb.User(BuildUserName),
 			llb.WithCustomNamef("[git-checkout] verify commit %s", expectedCommit[:12]),
@@ -160,8 +168,10 @@ fi
 	cherryPicks := with["cherry-picks"]
 	if cherryPicks != "" {
 		// Cherry-picks require running git commands, so we use a shell
+		// Note: We add safe.directory here because this step runs as a different user
 		state = state.Run(
 			llb.Args([]string{"/bin/sh", "-c", fmt.Sprintf(`
+git config --global --add safe.directory %s
 cd %s
 git config user.name "Melange Build"
 git config user.email "melange-build@cgr.dev"
@@ -175,7 +185,7 @@ echo '%s' | while IFS= read -r line; do
     echo "[git-checkout] cherry-picking $hash"
     git cherry-pick -x "$hash" || exit 1
 done
-`, destPath, cherryPicks)}),
+`, destPath, destPath, cherryPicks)}),
 			llb.Dir(destPath),
 			llb.User(BuildUserName),
 			llb.WithCustomName("[git-checkout] apply cherry-picks"),
