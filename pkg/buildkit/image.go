@@ -72,26 +72,9 @@ type LoadResult struct {
 // - Call result.Cleanup() when done
 func (l *ImageLoader) LoadLayer(ctx context.Context, layer v1.Layer, name string) (*LoadResult, error) {
 	// Create extraction directory
-	var extractDir string
-	var cleanup func() error
-
-	if l.extractDir != "" {
-		extractDir = filepath.Join(l.extractDir, name)
-		if err := os.MkdirAll(extractDir, 0755); err != nil {
-			return nil, fmt.Errorf("creating extract dir: %w", err)
-		}
-		cleanup = func() error {
-			return os.RemoveAll(extractDir)
-		}
-	} else {
-		var err error
-		extractDir, err = os.MkdirTemp("", "melange-apko-"+name+"-*")
-		if err != nil {
-			return nil, fmt.Errorf("creating temp dir: %w", err)
-		}
-		cleanup = func() error {
-			return os.RemoveAll(extractDir)
-		}
+	extractDir, cleanup, err := l.createExtractDir(name)
+	if err != nil {
+		return nil, err
 	}
 
 	// Extract the layer
@@ -224,6 +207,30 @@ func isValidPath(destDir, target, name string) bool {
 	return true
 }
 
+// extractionDir creates an extraction directory and returns it along with a cleanup function.
+// If baseDir is non-empty, the directory is created under baseDir.
+// If baseDir is empty, a temp directory is created.
+func (l *ImageLoader) createExtractDir(name string) (extractDir string, cleanup func() error, err error) {
+	if l.extractDir != "" {
+		extractDir = filepath.Join(l.extractDir, name)
+		if err := os.MkdirAll(extractDir, 0755); err != nil {
+			return "", nil, fmt.Errorf("creating extract dir: %w", err)
+		}
+		cleanup = func() error {
+			return os.RemoveAll(extractDir)
+		}
+	} else {
+		extractDir, err = os.MkdirTemp("", "melange-apko-"+name+"-*")
+		if err != nil {
+			return "", nil, fmt.Errorf("creating temp dir: %w", err)
+		}
+		cleanup = func() error {
+			return os.RemoveAll(extractDir)
+		}
+	}
+	return extractDir, cleanup, nil
+}
+
 // MultiLayerResult contains the result of loading multiple layers.
 type MultiLayerResult struct {
 	// State is the combined LLB state representing all loaded layers.
@@ -277,48 +284,28 @@ func (l *ImageLoader) LoadLayers(ctx context.Context, layers []v1.Layer, baseNam
 	localDirs := make(map[string]string, len(layers))
 	cleanupFuncs := make([]func() error, 0, len(layers))
 
+	// Helper to clean up all extracted layers
+	cleanupAll := func() {
+		for _, cf := range cleanupFuncs {
+			_ = cf()
+		}
+	}
+
 	// Extract each layer
 	for i, layer := range layers {
 		layerName := fmt.Sprintf("%s-layer-%d", baseName, i)
 
-		// Create extraction directory
-		var extractDir string
-		var cleanup func() error
-
-		if l.extractDir != "" {
-			extractDir = filepath.Join(l.extractDir, layerName)
-			if err := os.MkdirAll(extractDir, 0755); err != nil {
-				// Clean up any previously extracted layers
-				for _, cf := range cleanupFuncs {
-					_ = cf()
-				}
-				return nil, fmt.Errorf("creating extract dir for layer %d: %w", i, err)
-			}
-			cleanup = func() error {
-				return os.RemoveAll(extractDir)
-			}
-		} else {
-			var err error
-			extractDir, err = os.MkdirTemp("", fmt.Sprintf("melange-apko-%s-*", layerName))
-			if err != nil {
-				// Clean up any previously extracted layers
-				for _, cf := range cleanupFuncs {
-					_ = cf()
-				}
-				return nil, fmt.Errorf("creating temp dir for layer %d: %w", i, err)
-			}
-			cleanup = func() error {
-				return os.RemoveAll(extractDir)
-			}
+		// Create extraction directory using helper
+		extractDir, cleanup, err := l.createExtractDir(layerName)
+		if err != nil {
+			cleanupAll()
+			return nil, fmt.Errorf("layer %d: %w", i, err)
 		}
 		cleanupFuncs = append(cleanupFuncs, cleanup)
 
 		// Extract the layer
 		if err := extractLayer(layer, extractDir); err != nil {
-			// Clean up all extracted layers on error
-			for _, cf := range cleanupFuncs {
-				_ = cf()
-			}
+			cleanupAll()
 			return nil, fmt.Errorf("extracting layer %d: %w", i, err)
 		}
 
