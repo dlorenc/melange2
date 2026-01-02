@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Priority class ensures registry isn't evicted under resource pressure.
+# The registry is a critical shared service for all BuildKit workers.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: registry-critical
+value: 1000000  # High priority, below system-critical
+globalDefault: false
+description: "Priority class for the in-cluster registry service"
+---
 # PersistentVolumeClaim for registry storage (200Gi SSD)
 # Using PVC instead of emptyDir to avoid node ephemeral storage pressure
 apiVersion: v1
@@ -27,8 +37,34 @@ spec:
     requests:
       storage: 200Gi
 ---
-# In-cluster container registry for BuildKit cache storage.
-# This provides fast, local cache storage for BuildKit's cache-to/cache-from.
+# Zot configuration with built-in garbage collection
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zot-config
+  namespace: melange
+data:
+  config.json: |
+    {
+      "distSpecVersion": "1.1.0",
+      "storage": {
+        "rootDirectory": "/var/lib/registry",
+        "gc": true,
+        "gcDelay": "2h",
+        "gcInterval": "1h"
+      },
+      "http": {
+        "address": "0.0.0.0",
+        "port": "5000",
+        "compat": ["docker2s2"]
+      },
+      "log": {
+        "level": "info"
+      }
+    }
+---
+# Zot registry deployment
+# Zot is a lightweight OCI-native registry with built-in garbage collection.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,38 +85,48 @@ spec:
       # Schedule on services-pool (e2-highmem-8: 8 vCPU, 64Gi)
       nodeSelector:
         workload: services
+      # High priority to avoid eviction under resource pressure
+      priorityClassName: registry-critical
+      # Graceful termination: 60s to finish in-flight uploads
+      terminationGracePeriodSeconds: 60
       containers:
-      - name: registry
-        image: registry:2
+      - name: zot
+        image: ghcr.io/project-zot/zot-linux-amd64:latest
+        args:
+        - serve
+        - /etc/zot/config.json
         ports:
         - containerPort: 5000
           name: registry
         volumeMounts:
         - name: registry-data
           mountPath: /var/lib/registry
-        env:
-        - name: REGISTRY_STORAGE_DELETE_ENABLED
-          value: "true"
-        # Increase HTTP timeouts to handle large layer uploads under load
-        - name: REGISTRY_HTTP_TIMEOUT
-          value: "300s"
-        # Increase max concurrent uploads to improve throughput
-        - name: REGISTRY_STORAGE_FILESYSTEM_MAXTHREADS
-          value: "200"
+        - name: zot-config
+          mountPath: /etc/zot
+          readOnly: true
         resources:
           requests:
-            memory: "2Gi"
-            cpu: "500m"
+            memory: "512Mi"
+            cpu: "250m"
           limits:
-            memory: "8Gi"
-            cpu: "4000m"
+            memory: "4Gi"
+            cpu: "2000m"
+        # Startup probe: allow up to 5 minutes for registry to initialize
+        startupProbe:
+          httpGet:
+            path: /v2/
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 1
+          timeoutSeconds: 5
+          failureThreshold: 300
         livenessProbe:
           httpGet:
             path: /v2/
             port: 5000
           initialDelaySeconds: 10
           periodSeconds: 30
-          timeoutSeconds: 30
+          timeoutSeconds: 10
           failureThreshold: 5
         readinessProbe:
           httpGet:
@@ -88,12 +134,20 @@ spec:
             port: 5000
           initialDelaySeconds: 5
           periodSeconds: 10
-          timeoutSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 3
+        # Graceful shutdown
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
       volumes:
       - name: registry-data
         persistentVolumeClaim:
           claimName: registry-data
+      - name: zot-config
+        configMap:
+          name: zot-config
 ---
 apiVersion: v1
 kind: Service
@@ -107,3 +161,15 @@ spec:
   - port: 5000
     targetPort: 5000
     name: registry
+---
+# Pod Disruption Budget: prevent voluntary eviction of the registry
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: registry-pdb
+  namespace: melange
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: registry

@@ -272,12 +272,20 @@ type CircuitState struct {
 }
 
 // GetCircuitState returns the current circuit breaker state.
+// The Open field reflects the effective state - it will be false if the
+// recovery period has passed, even if the circuit was previously opened.
 func (c *Client) GetCircuitState() CircuitState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
+	// Use the same logic as isCircuitOpen() for consistency
+	effectiveOpen := c.circuitOpen
+	if c.circuitOpen && time.Since(c.circuitOpenedAt) > c.config.CircuitBreakerRecovery {
+		effectiveOpen = false // Recovery period has passed
+	}
+
 	return CircuitState{
-		Open:            c.circuitOpen,
+		Open:            effectiveOpen,
 		Failures:        c.failures,
 		LastFailure:     c.lastFailure,
 		OpenedAt:        c.circuitOpenedAt,
