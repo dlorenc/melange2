@@ -335,6 +335,9 @@ func (b *Build) buildGuestLayersRemote(ctx context.Context) ([]v1.Layer, *apko_b
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("apko service BuildLayers: %w", err)
 	}
+	if resp == nil {
+		return nil, nil, nil, fmt.Errorf("apko service returned nil response")
+	}
 
 	log.Infof("apko service returned: image_ref=%s layers=%d cache_hit=%v duration_ms=%d",
 		resp.ImageRef, resp.LayerCount, resp.CacheHit, resp.DurationMs)
