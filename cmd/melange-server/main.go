@@ -455,7 +455,7 @@ func loadSecretEnv() map[string]string {
 			continue
 		}
 		key := strings.TrimPrefix(parts[0], prefix)
-		value := parts[1]
+		value := strings.TrimSpace(parts[1])
 		if key != "" && value != "" {
 			result[key] = value
 		}
