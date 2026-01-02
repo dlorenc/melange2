@@ -230,7 +230,14 @@ func (b *PipelineBuilder) buildScript(runs, workdir string) string {
 		debugOpt = 'x'
 	}
 
+	// We add git safe.directory configuration to prevent "dubious ownership" errors.
+	// Git refuses to run in directories owned by different users, which can happen
+	// in BuildKit when steps run as different users. By marking common directories
+	// as safe, we allow git commands (and tools like Go that use git for VCS info)
+	// to work correctly. We use '*' to allow all directories since builds may
+	// create git repos in various locations.
 	return fmt.Sprintf(`set -e%c
+git config --global --add safe.directory '*' 2>/dev/null || true
 [ -d '%s' ] || mkdir -p '%s'
 cd '%s'
 %s
