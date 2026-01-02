@@ -18,6 +18,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -381,16 +382,12 @@ func percentile(values []int64, p int) int64 {
 	if len(values) == 0 {
 		return 0
 	}
-	// Make a copy and sort
+	// Make a copy and sort using O(n log n) algorithm
 	sorted := make([]int64, len(values))
 	copy(sorted, values)
-	for i := range sorted {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j] < sorted[i] {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] < sorted[j]
+	})
 	// Calculate index
 	idx := (p * len(sorted)) / 100
 	if idx >= len(sorted) {
