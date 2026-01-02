@@ -131,7 +131,7 @@ spec:
       volumes:
       - name: buildkit-data
         emptyDir:
-          sizeLimit: 50Gi  # Prevent filling node disk; pod evicted if exceeded
+          sizeLimit: 200Gi  # Prevent filling node disk; pod evicted if exceeded
       - name: buildkit-config
         configMap:
           name: buildkit-config

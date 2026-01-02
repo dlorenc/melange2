@@ -86,10 +86,15 @@ spec:
           volumeMounts:
             - name: apk-cache
               mountPath: /var/cache/apk
+            - name: tmp-storage
+              mountPath: /tmp
       volumes:
         - name: apk-cache
           emptyDir:
-            sizeLimit: 50Gi
+            sizeLimit: 20Gi
+        - name: tmp-storage
+          emptyDir:
+            sizeLimit: 20Gi
 ---
 apiVersion: v1
 kind: Service
