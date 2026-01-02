@@ -582,8 +582,9 @@ func (b *Builder) runTestPipelinesWithProvider(ctx context.Context, provider Tes
 	}
 	pipelineBuilder.CacheMounts = b.pipeline.CacheMounts
 
-	// Run test pipelines
-	state, err = pipelineBuilder.BuildPipelines(state, pipelines)
+	// Run test pipelines (merged into single LLB Run for process state persistence)
+	// This maintains background processes between steps while isolating env vars
+	state, err = pipelineBuilder.BuildTestPipelines(state, pipelines)
 	if err != nil {
 		return fmt.Errorf("building test pipelines: %w", err)
 	}

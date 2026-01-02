@@ -179,3 +179,18 @@ func TestTestPipeline_NoTests(t *testing.T) {
 	// It's ok if the directory doesn't exist - no tests means nothing to export
 	require.True(t, err == nil || os.IsNotExist(err))
 }
+
+func TestTestPipeline_ProcessStatePersistence(t *testing.T) {
+	// This test verifies that process state (background processes, files) is
+	// maintained between test steps, matching the old QEMU runner behavior.
+	// Environment variables should NOT leak between steps.
+	c := newTestPipelineContext(t)
+	cfg := c.loadTestConfig("process-state.yaml")
+
+	outDir, err := c.runTests(cfg)
+	require.NoError(t, err, "test should succeed - process state should persist between steps while env vars are isolated")
+
+	// Verify test results were exported
+	harness.FileExists(t, outDir, "test-results/process-state-test/status.txt")
+	harness.FileContains(t, outDir, "test-results/process-state-test/status.txt", "PASSED")
+}

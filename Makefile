@@ -363,7 +363,7 @@ gke-port-forward: gke-credentials ## Start port forwarding to melange-server (ru
 	@echo "==> Starting port forward to melange-server on port $(GKE_PORT)..."
 	@pkill -f "kubectl port-forward.*melange-server" 2>/dev/null || true
 	@sleep 1
-	@kubectl port-forward -n melange svc/melange-server $(GKE_PORT):8080 &
+	@kubectl port-forward -n melange svc/melange-server $(GKE_PORT):8080 >/dev/null 2>&1 &
 	@sleep 2
 	@echo "==> Port forwarding active. Server available at http://localhost:$(GKE_PORT)"
 	@echo "==> Test with: curl http://localhost:$(GKE_PORT)/healthz"

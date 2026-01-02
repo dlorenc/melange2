@@ -1,0 +1,148 @@
+# Process state persistence test fixture
+# Tests that process state (background jobs, files) is maintained between test steps
+# while environment variables are isolated (don't leak between steps).
+# This matches the behavior of the old QEMU runner.
+package:
+  name: process-state-test
+  version: 1.0.0
+
+pipeline:
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/process-state-test"
+      echo "main-marker" > "${{targets.destdir}}/usr/share/process-state-test/marker.txt"
+
+test:
+  pipeline:
+    # Step 1: Start a background process and create files
+    - runs: |
+        echo "Step 1: Starting background process and creating marker files"
+
+        # Create a marker file to prove filesystem state persists
+        echo "step1-was-here" > /tmp/step1-marker.txt
+
+        # Start a background process that will be accessible in later steps
+        # This writes to a file periodically to prove it's still running
+        (
+          while true; do
+            echo "$(date +%s)" >> /tmp/background-log.txt
+            sleep 1
+          done
+        ) &
+        BACKGROUND_PID=$!
+        echo "$BACKGROUND_PID" > /tmp/background.pid
+
+        # Wait a moment for the background process to write something
+        sleep 2
+
+        # Set an environment variable (should NOT leak to next step)
+        export STEP1_SECRET="should-not-leak"
+
+        # Verify background process is running
+        if ! kill -0 "$BACKGROUND_PID" 2>/dev/null; then
+          echo "FAIL: Background process not running in step 1"
+          exit 1
+        fi
+
+        echo "Step 1 complete: background PID $BACKGROUND_PID"
+
+    # Step 2: Verify file state persists and background process still runs
+    - runs: |
+        echo "Step 2: Verifying file state and background process"
+
+        # Check that step 1's marker file exists
+        if [ ! -f /tmp/step1-marker.txt ]; then
+          echo "FAIL: Step 1 marker file missing"
+          exit 1
+        fi
+        if [ "$(cat /tmp/step1-marker.txt)" != "step1-was-here" ]; then
+          echo "FAIL: Step 1 marker file has wrong content"
+          exit 1
+        fi
+        echo "OK: Step 1 marker file exists"
+
+        # Verify step 1's environment variable did NOT leak
+        if [ -n "$STEP1_SECRET" ]; then
+          echo "FAIL: STEP1_SECRET leaked from step 1: $STEP1_SECRET"
+          exit 1
+        fi
+        echo "OK: Environment variables properly isolated"
+
+        # Check that background process is still running
+        if [ ! -f /tmp/background.pid ]; then
+          echo "FAIL: Background PID file missing"
+          exit 1
+        fi
+        BACKGROUND_PID=$(cat /tmp/background.pid)
+        if ! kill -0 "$BACKGROUND_PID" 2>/dev/null; then
+          echo "FAIL: Background process $BACKGROUND_PID no longer running in step 2"
+          exit 1
+        fi
+        echo "OK: Background process $BACKGROUND_PID still running"
+
+        # Verify background process has been writing to its log
+        if [ ! -f /tmp/background-log.txt ]; then
+          echo "FAIL: Background log file missing"
+          exit 1
+        fi
+        LOG_LINES=$(wc -l < /tmp/background-log.txt)
+        if [ "$LOG_LINES" -lt 1 ]; then
+          echo "FAIL: Background process hasn't written any log entries"
+          exit 1
+        fi
+        echo "OK: Background process has written $LOG_LINES log entries"
+
+        # Create step 2 marker
+        echo "step2-was-here" > /tmp/step2-marker.txt
+
+        # Set another environment variable (should NOT leak to next step)
+        export STEP2_SECRET="also-should-not-leak"
+
+        echo "Step 2 complete"
+
+    # Step 3: Final verification
+    - runs: |
+        echo "Step 3: Final verification"
+
+        # Verify step 1 and 2 marker files exist
+        if [ ! -f /tmp/step1-marker.txt ]; then
+          echo "FAIL: Step 1 marker file missing in step 3"
+          exit 1
+        fi
+        if [ ! -f /tmp/step2-marker.txt ]; then
+          echo "FAIL: Step 2 marker file missing in step 3"
+          exit 1
+        fi
+        echo "OK: All marker files present"
+
+        # Verify NO environment variables leaked
+        if [ -n "$STEP1_SECRET" ]; then
+          echo "FAIL: STEP1_SECRET leaked to step 3"
+          exit 1
+        fi
+        if [ -n "$STEP2_SECRET" ]; then
+          echo "FAIL: STEP2_SECRET leaked to step 3"
+          exit 1
+        fi
+        echo "OK: Environment variables properly isolated"
+
+        # Check background process is still running
+        BACKGROUND_PID=$(cat /tmp/background.pid)
+        if ! kill -0 "$BACKGROUND_PID" 2>/dev/null; then
+          echo "FAIL: Background process $BACKGROUND_PID not running in step 3"
+          exit 1
+        fi
+        echo "OK: Background process $BACKGROUND_PID still running in step 3"
+
+        # Count how many log entries the background process has written
+        LOG_LINES=$(wc -l < /tmp/background-log.txt)
+        echo "Background process has written $LOG_LINES log entries total"
+        if [ "$LOG_LINES" -lt 3 ]; then
+          echo "FAIL: Expected at least 3 log entries by now"
+          exit 1
+        fi
+        echo "OK: Background process has been running across all steps"
+
+        # Kill the background process for cleanup
+        kill "$BACKGROUND_PID" 2>/dev/null || true
+
+        echo "ALL TESTS PASSED: Process state persists between steps, env vars isolated"

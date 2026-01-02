@@ -17,6 +17,7 @@ package buildkit
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/moby/buildkit/client/llb"
 
@@ -315,4 +316,175 @@ func CopyCacheToWorkspace(base llb.State, localName string) llb.State {
 		}),
 		llb.WithCustomName("copy cache to workspace"),
 	)
+}
+
+// BuildTestPipelines builds all test pipelines as a single LLB Run operation.
+// This maintains process state (background processes, files, etc.) between steps
+// while isolating environment variables by wrapping each step in a subshell.
+//
+// This matches the behavior of the old QEMU runner where all test steps ran
+// in a single container with persistent process state.
+func (b *PipelineBuilder) BuildTestPipelines(base llb.State, pipelines []config.Pipeline) (llb.State, error) {
+	if len(pipelines) == 0 {
+		return base, nil
+	}
+
+	// Collect all the scripts from all pipelines
+	var scripts []string
+	for i, p := range pipelines {
+		script, err := b.buildTestPipelineScript(&p, i)
+		if err != nil {
+			return llb.State{}, fmt.Errorf("pipeline %d: %w", i, err)
+		}
+		if script != "" {
+			scripts = append(scripts, script)
+		}
+	}
+
+	if len(scripts) == 0 {
+		return base, nil
+	}
+
+	// Build the combined script with all steps
+	combinedScript := b.buildCombinedTestScript(scripts)
+
+	// Build environment from base env
+	env := make(map[string]string, len(b.BaseEnv))
+	for k, v := range b.BaseEnv {
+		env[k] = v
+	}
+
+	// Build run options
+	opts := []llb.RunOption{
+		llb.Args([]string{"/bin/sh", "-c", combinedScript}),
+		llb.Dir(DefaultWorkDir),
+		llb.User(BuildUserName),
+	}
+
+	// Add sorted environment variables for determinism
+	opts = append(opts, SortedEnvOpts(env)...)
+
+	// Add cache mounts
+	opts = append(opts, CacheMountOptions(b.CacheMounts)...)
+
+	// Add custom name
+	opts = append(opts, llb.WithCustomName("run test pipelines"))
+
+	return base.Run(opts...).Root(), nil
+}
+
+// buildTestPipelineScript builds the script for a single test pipeline step.
+// Returns empty string if the pipeline should be skipped.
+func (b *PipelineBuilder) buildTestPipelineScript(p *config.Pipeline, index int) (string, error) {
+	// Check if this pipeline should run
+	if p.If != "" {
+		shouldRun, err := cond.Evaluate(p.If)
+		if err != nil {
+			return "", fmt.Errorf("evaluating if condition %q: %w", p.If, err)
+		}
+		if !shouldRun {
+			return "", nil
+		}
+	}
+
+	// Skip if nothing to run
+	if p.Runs == "" && len(p.Pipeline) == 0 {
+		return "", nil
+	}
+
+	// Determine working directory
+	workdir := DefaultWorkDir
+	if p.WorkDir != "" {
+		if filepath.IsAbs(p.WorkDir) {
+			workdir = p.WorkDir
+		} else {
+			workdir = filepath.Join(DefaultWorkDir, p.WorkDir)
+		}
+	}
+
+	// Build environment exports for this step
+	var envExports string
+	if len(p.Environment) > 0 {
+		for k, v := range p.Environment {
+			// Escape single quotes in value
+			escapedV := strings.ReplaceAll(v, "'", "'\"'\"'")
+			envExports += fmt.Sprintf("export %s='%s'\n", k, escapedV)
+		}
+	}
+
+	// Build nested pipeline scripts recursively
+	var nestedScripts string
+	if len(p.Pipeline) > 0 {
+		for i := range p.Pipeline {
+			nested, err := b.buildTestPipelineScript(&p.Pipeline[i], i)
+			if err != nil {
+				return "", fmt.Errorf("nested pipeline %d: %w", i, err)
+			}
+			if nested != "" {
+				nestedScripts += nested + "\n"
+			}
+		}
+	}
+
+	// Build the script for this step
+	var script string
+	if p.Runs != "" {
+		script = p.Runs
+	}
+
+	// Combine environment, main script, and nested scripts
+	var fullScript string
+	if envExports != "" {
+		fullScript = envExports
+	}
+	if script != "" {
+		fullScript += script + "\n"
+	}
+	if nestedScripts != "" {
+		fullScript += nestedScripts
+	}
+
+	if fullScript == "" {
+		return "", nil
+	}
+
+	debugOpt := ' '
+	if b.Debug {
+		debugOpt = 'x'
+	}
+
+	// Get step name for logging
+	stepName := pipelineName(p)
+	if stepName == "" {
+		stepName = fmt.Sprintf("step %d", index)
+	}
+
+	// Wrap in a subshell to isolate environment variables
+	// The subshell runs in a new shell process, so env vars don't leak
+	// but the process state (background jobs, files, etc.) is maintained
+	return fmt.Sprintf(`
+# Test step: %s
+(
+  set -e%c
+  [ -d '%s' ] || mkdir -p '%s'
+  cd '%s'
+%s
+)
+`, stepName, debugOpt, workdir, workdir, workdir, fullScript), nil
+}
+
+// buildCombinedTestScript combines multiple test step scripts into one.
+func (b *PipelineBuilder) buildCombinedTestScript(scripts []string) string {
+	// Each script is already wrapped in a subshell, so we just need to
+	// combine them and ensure we exit on first failure
+	var combined strings.Builder
+	combined.WriteString("set -e\n")
+
+	for _, script := range scripts {
+		combined.WriteString(script)
+		combined.WriteString("\n")
+	}
+
+	combined.WriteString("exit 0\n")
+	return combined.String()
 }
