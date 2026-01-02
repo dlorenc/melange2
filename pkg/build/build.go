@@ -151,6 +151,10 @@ type Build struct {
 	// BuildKitSummary stores detailed step timing from the BuildKit solve.
 	// Populated after BuildPackage completes.
 	BuildKitSummary *buildkit.Summary
+
+	// ExtraEnv contains additional environment variables to inject into all pipeline steps.
+	// This is useful for passing credentials like GITHUB_TOKEN for private repo access.
+	ExtraEnv map[string]string
 }
 
 // NewFromConfig creates a new Build from a BuildConfig.
@@ -203,6 +207,7 @@ func NewFromConfig(ctx context.Context, cfg *BuildConfig) (*Build, error) {
 		ExportOnFailure:            cfg.ExportOnFailure,
 		ExportRef:                  cfg.ExportRef,
 		GenerateProvenance:         cfg.GenerateProvenance,
+		ExtraEnv:                   cfg.ExtraEnv,
 		Start:                      time.Now(),
 		SBOMGenerator:              &spdx.Generator{},
 	}

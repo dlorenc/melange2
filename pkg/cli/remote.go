@@ -55,6 +55,7 @@ func remoteSubmitCmd() *cobra.Command {
 	var wait bool
 	var backendSelector []string
 	var mode string
+	var envVars []string
 	// Git source options
 	var gitRepo string
 	var gitRef string
@@ -99,7 +100,14 @@ Convention-based defaults (automatically included if present):
   melange remote submit mypackage.yaml --arch aarch64
 
   # Submit with backend selector
-  melange remote submit mypackage.yaml --backend-selector tier=high-memory`,
+  melange remote submit mypackage.yaml --backend-selector tier=high-memory
+
+  # Submit with environment variables (non-sensitive only)
+  melange remote submit mypackage.yaml --env BUILD_TYPE=release
+
+WARNING: Do not use --env for secrets (tokens, passwords). Values are logged in
+API requests. For secrets like GITHUB_TOKEN, configure server-side injection
+via --secret-env on the melange-server.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Convention: auto-load pipelines from ./pipelines/ if it exists
@@ -110,6 +118,9 @@ Convention-based defaults (automatically included if present):
 
 			// Parse backend selector
 			selector := parseSelector(backendSelector)
+
+			// Parse environment variables
+			env := parseSelector(envVars)
 
 			// Parse build mode
 			var buildMode types.BuildMode
@@ -132,6 +143,7 @@ Convention-based defaults (automatically included if present):
 				WithTest:        withTest,
 				Debug:           debug,
 				Mode:            buildMode,
+				Env:             env,
 			}
 
 			// Determine mode: git source, multi-config, or single config
@@ -220,6 +232,7 @@ Convention-based defaults (automatically included if present):
 	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug logging")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for build to complete")
 	cmd.Flags().StringSliceVar(&backendSelector, "backend-selector", nil, "backend label selector (key=value)")
+	cmd.Flags().StringSliceVar(&envVars, "env", nil, "environment variable in KEY=VALUE format (NOT for secrets - use server-side --secret-env)")
 	cmd.Flags().StringVar(&mode, "mode", "flat", "build scheduling mode: 'flat' (parallel, no deps) or 'dag' (dependency order)")
 	// Git source options
 	cmd.Flags().StringVar(&gitRepo, "git-repo", "", "git repository URL for package configs")

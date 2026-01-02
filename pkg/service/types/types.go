@@ -55,6 +55,10 @@ type CreateBuildRequest struct {
 	// "flat" (default) builds all packages in parallel without dependency ordering.
 	// "dag" builds packages in dependency order.
 	Mode BuildMode `json:"mode,omitempty"`
+
+	// Env specifies additional environment variables to inject into all pipeline steps.
+	// This is useful for passing credentials like GITHUB_TOKEN for private repo access.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // CreateBuildResponse is the response body for creating a build.
@@ -200,6 +204,10 @@ type BuildSpec struct {
 	// "flat" (default) builds all packages in parallel without dependency ordering.
 	// "dag" builds packages in dependency order.
 	Mode BuildMode `json:"mode,omitempty"`
+
+	// Env specifies additional environment variables to inject into all pipeline steps.
+	// This is useful for passing credentials like GITHUB_TOKEN for private repo access.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // GitSource specifies a git repository source for package configs.

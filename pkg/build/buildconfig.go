@@ -172,6 +172,10 @@ type BuildConfig struct {
 
 	// GenerateProvenance indicates whether to generate SLSA provenance.
 	GenerateProvenance bool
+
+	// ExtraEnv contains additional environment variables to inject into all pipeline steps.
+	// This is useful for passing credentials like GITHUB_TOKEN for private repo access.
+	ExtraEnv map[string]string
 }
 
 // NewBuildConfig creates a new BuildConfig with sensible defaults.
@@ -262,6 +266,8 @@ type RemoteBuildParams struct {
 	ApkoRegistry  string
 	ApkoRegistryInsecure bool
 	ApkoServiceAddr string
+	// ExtraEnv contains additional environment variables to inject into all pipeline steps.
+	ExtraEnv map[string]string
 }
 
 // NewBuildConfigForRemote creates a BuildConfig for remote/service builds.
@@ -304,6 +310,9 @@ func NewBuildConfigForRemote(params RemoteBuildParams) *BuildConfig {
 	// Enable default linting for remote builds
 	cfg.LintRequire = linter.DefaultRequiredLinters()
 	cfg.LintWarn = linter.DefaultWarnLinters()
+
+	// Extra environment variables for pipeline steps
+	cfg.ExtraEnv = params.ExtraEnv
 
 	return cfg
 }

@@ -156,6 +156,8 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 		"SOURCE_DATE_EPOCH": fmt.Sprintf("%d", sourceEpoch),
 	}
 	maps.Copy(baseEnv, b.Configuration.Environment.Environment)
+	// Merge in extra environment variables (e.g., GITHUB_TOKEN for private repos)
+	maps.Copy(baseEnv, b.ExtraEnv)
 
 	// Run the build
 	cfg := &buildkit.BuildConfig{

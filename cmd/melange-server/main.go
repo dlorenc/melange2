@@ -284,6 +284,19 @@ func run(ctx context.Context) error {
 		log.Infof("using apko service: %s", apkoService)
 	}
 
+	// Load server-side secret environment variables from SECRET_ENV_* environment variables.
+	// These can be populated from Kubernetes secrets and are injected into all builds.
+	// Example: SECRET_ENV_GITHUB_TOKEN=ghp_xxx becomes GITHUB_TOKEN=ghp_xxx in builds.
+	secretEnv := loadSecretEnv()
+	if len(secretEnv) > 0 {
+		// Log keys only, not values
+		keys := make([]string, 0, len(secretEnv))
+		for k := range secretEnv {
+			keys = append(keys, k)
+		}
+		log.Infof("loaded %d server-side secret env vars: %v", len(secretEnv), keys)
+	}
+
 	// Create scheduler with optional metrics
 	var schedOpts []scheduler.SchedulerOption
 	if melangeMetrics != nil {
@@ -300,6 +313,7 @@ func run(ctx context.Context) error {
 		ApkCacheDir:          apkCacheDir,
 		ApkCacheTTL:          apkCacheTTL,
 		ApkoServiceAddr:      apkoService,
+		SecretEnv:            secretEnv,
 	}, schedOpts...)
 
 	// Create output directory (for local storage)
@@ -417,4 +431,35 @@ func handleApkoStats(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(stats)
+}
+
+// loadSecretEnv loads environment variables prefixed with SECRET_ENV_ and returns them
+// as a map with the prefix stripped. These can be populated from Kubernetes secrets
+// and are injected into all builds.
+//
+// Example:
+//
+//	SECRET_ENV_GITHUB_TOKEN=ghp_xxx -> {"GITHUB_TOKEN": "ghp_xxx"}
+//	SECRET_ENV_NPM_TOKEN=npm_xxx   -> {"NPM_TOKEN": "npm_xxx"}
+func loadSecretEnv() map[string]string {
+	const prefix = "SECRET_ENV_"
+	result := make(map[string]string)
+
+	for _, env := range os.Environ() {
+		if !strings.HasPrefix(env, prefix) {
+			continue
+		}
+		// Split on first = only (values may contain =)
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimPrefix(parts[0], prefix)
+		value := parts[1]
+		if key != "" && value != "" {
+			result[key] = value
+		}
+	}
+
+	return result
 }
