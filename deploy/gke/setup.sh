@@ -69,6 +69,35 @@ else
     echo "    Cluster already exists: ${CLUSTER_NAME}"
 fi
 
+# Create or update services node pool for melange-server, apko-server, registry, postgres
+# Uses high-memory machines (e2-highmem-8: 8 vCPU, 64GB) for memory-bound services
+# Autoscales 1-3 nodes to handle apko-server HPA (2-10 replicas at 4Gi each)
+SERVICES_POOL="services-pool"
+SERVICES_MAX_NODES="${SERVICES_MAX_NODES:-3}"
+echo "==> Setting up services node pool with autoscaling (max ${SERVICES_MAX_NODES} nodes)..."
+if ! gcloud container node-pools describe "${SERVICES_POOL}" --cluster="${CLUSTER_NAME}" --zone="${ZONE}" &>/dev/null; then
+    gcloud container node-pools create "${SERVICES_POOL}" \
+        --cluster="${CLUSTER_NAME}" \
+        --zone="${ZONE}" \
+        --machine-type=e2-highmem-8 \
+        --num-nodes=1 \
+        --enable-autoscaling \
+        --min-nodes=1 \
+        --max-nodes="${SERVICES_MAX_NODES}" \
+        --node-labels=workload=services
+    echo "    Created node pool: ${SERVICES_POOL}"
+else
+    echo "    Node pool already exists: ${SERVICES_POOL}"
+    # Update autoscaling settings if pool exists
+    gcloud container clusters update "${CLUSTER_NAME}" \
+        --zone="${ZONE}" \
+        --node-pool="${SERVICES_POOL}" \
+        --enable-autoscaling \
+        --min-nodes=1 \
+        --max-nodes="${SERVICES_MAX_NODES}" || true
+    echo "    Updated autoscaling for: ${SERVICES_POOL}"
+fi
+
 # Create or update BuildKit node pool with autoscaling
 # Uses larger machines (n2-standard-16) for BuildKit workloads
 # 15 nodes needed for full Wolfi build (240 concurrent builds)

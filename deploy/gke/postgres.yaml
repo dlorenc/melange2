@@ -29,6 +29,9 @@ spec:
       labels:
         app: postgres
     spec:
+      # Schedule on services-pool (e2-highmem-8: 8 vCPU, 64Gi)
+      nodeSelector:
+        workload: services
       containers:
       - name: postgres
         image: postgres:16-alpine

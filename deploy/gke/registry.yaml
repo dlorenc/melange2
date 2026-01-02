@@ -30,17 +30,9 @@ spec:
       labels:
         app: registry
     spec:
-      # Prefer scheduling on default pool nodes, avoid buildkit pool nodes that have high disk usage
-      affinity:
-        nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            preference:
-              matchExpressions:
-              - key: cloud.google.com/gke-nodepool
-                operator: In
-                values:
-                - default-pool
+      # Schedule on services-pool (e2-highmem-8: 8 vCPU, 64Gi)
+      nodeSelector:
+        workload: services
       containers:
       - name: registry
         image: registry:2
@@ -61,11 +53,11 @@ spec:
           value: "200"
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "1"
-          limits:
             memory: "4Gi"
-            cpu: "4"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
         livenessProbe:
           httpGet:
             path: /v2/

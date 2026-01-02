@@ -28,23 +28,9 @@ spec:
         app: melange-server
     spec:
       serviceAccountName: melange-server
-      # Schedule on buildkit-pool nodes which have 60Gi RAM (default-pool only has 13Gi)
+      # Schedule on services-pool (e2-highmem-8: 8 vCPU, 64Gi)
       nodeSelector:
-        cloud.google.com/gke-nodepool: buildkit-pool
-      # Tolerate the buildkit taint on the pool
-      tolerations:
-      - key: "workload"
-        operator: "Equal"
-        value: "buildkit"
-        effect: "NoSchedule"
-      # Keep server on its own node, away from BuildKit pods that fill disk
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app: buildkit
-            topologyKey: kubernetes.io/hostname
+        workload: services
       containers:
       - name: melange-server
         # ko:// reference - ko apply will build and push this image
@@ -123,11 +109,11 @@ spec:
           name: http
         resources:
           requests:
-            memory: "8Gi"
+            memory: "4Gi"
             cpu: "1000m"
           limits:
-            memory: "32Gi"
-            cpu: "4000m"
+            memory: "8Gi"
+            cpu: "2000m"
         livenessProbe:
           httpGet:
             path: /healthz
