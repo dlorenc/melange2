@@ -22,7 +22,7 @@ value: 1000000  # High priority, below system-critical
 globalDefault: false
 description: "Priority class for the in-cluster registry service"
 ---
-# PersistentVolumeClaim for registry storage (200Gi SSD)
+# PersistentVolumeClaim for registry storage (500Gi SSD)
 # Using PVC instead of emptyDir to avoid node ephemeral storage pressure
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -35,9 +35,12 @@ spec:
   storageClassName: premium-rwo  # GKE SSD storage class
   resources:
     requests:
-      storage: 200Gi
+      storage: 500Gi
 ---
-# Zot configuration with built-in garbage collection
+# Zot configuration with aggressive garbage collection
+# GC tuned for high-throughput build cache usage:
+# - gcDelay: 15m - blobs eligible for GC 15 minutes after last modification
+# - gcInterval: 15m - GC runs every 15 minutes
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -50,8 +53,8 @@ data:
       "storage": {
         "rootDirectory": "/var/lib/registry",
         "gc": true,
-        "gcDelay": "2h",
-        "gcInterval": "1h"
+        "gcDelay": "15m",
+        "gcInterval": "15m"
       },
       "http": {
         "address": "0.0.0.0",
