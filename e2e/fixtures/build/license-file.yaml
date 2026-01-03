@@ -1,0 +1,27 @@
+# Test for license file export - validates that license files referenced in
+# copyright config are exported from BuildKit and available for SBOM generation
+package:
+  name: license-test
+  version: 1.0.0
+  copyright:
+    - license: MIT
+      license-path: LICENSE
+
+pipeline:
+  # Simulate git-checkout by creating a LICENSE file in the workspace
+  - runs: |
+      cat > /home/build/LICENSE << 'EOF'
+      MIT License
+
+      Copyright (c) 2024 Test
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy
+      of this software and associated documentation files (the "Software"), to deal
+      in the Software without restriction, including without limitation the rights
+      to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+      copies of the Software.
+      EOF
+  # Create some package output
+  - runs: |
+      mkdir -p "${{targets.destdir}}/usr/share/doc/license-test"
+      echo "This package is MIT licensed" > "${{targets.destdir}}/usr/share/doc/license-test/README"

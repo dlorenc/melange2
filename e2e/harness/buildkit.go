@@ -39,8 +39,11 @@ func StartBuildKit(t *testing.T, ctx context.Context) *BuildKitContainer {
 		Image:        "moby/buildkit:latest",
 		ExposedPorts: []string{"1234/tcp"},
 		Privileged:   true,
-		Cmd:          []string{"--addr", "tcp://0.0.0.0:1234"},
-		WaitingFor:   wait.ForLog("running server").WithStartupTimeout(60 * time.Second),
+		Cmd: []string{
+			"--addr", "tcp://0.0.0.0:1234",
+			"--allow-insecure-entitlement", "security.insecure", // Required for root capabilities in builds
+		},
+		WaitingFor: wait.ForLog("running server").WithStartupTimeout(60 * time.Second),
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

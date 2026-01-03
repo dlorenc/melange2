@@ -190,6 +190,11 @@ type BuildConfig struct {
 	// ImgConfig is the apko image configuration used to generate the layers.
 	// This is used for cache key generation when ApkoRegistryConfig is set.
 	ImgConfig *apko_types.ImageConfiguration
+
+	// LicenseFiles are additional files to export from the workspace.
+	// These are typically license files referenced in package.copyright[].license-path.
+	// Paths are relative to the workspace directory (e.g., "COPYING", "LICENSE").
+	LicenseFiles []string
 }
 
 // Build executes a build using BuildKit.
@@ -298,7 +303,7 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 		state = result.State
 	}
 
-	// Export the workspace
+	// Export the workspace (melange-out directory)
 	log.Info("exporting workspace")
 	exportState := ExportWorkspace(state)
 
@@ -423,6 +428,41 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 	// Capture build summary with step timing
 	summary := progress.GetSummary()
 	b.lastSummary = &summary
+
+	// Export license files to workspace root (separate from melange-out)
+	// This is needed for SBOM generation which reads license files from the workspace
+	if len(cfg.LicenseFiles) > 0 {
+		log.Info("exporting license files")
+		licenseState := ExportLicenseFiles(state, cfg.LicenseFiles)
+		licenseDef, err := licenseState.Marshal(ctx, platform)
+		if err != nil {
+			return fmt.Errorf("marshaling license files LLB: %w", err)
+		}
+
+		// Export license files to workspace root (not melange-out)
+		licenseStatusCh := make(chan *client.SolveStatus)
+		go func() {
+			// Drain the status channel (we don't track progress for license export)
+			for range licenseStatusCh {
+			}
+		}()
+
+		_, err = b.client.Client().Solve(ctx, licenseDef, client.SolveOpt{
+			LocalDirs: localDirs,
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterLocal,
+				OutputDir: cfg.WorkspaceDir,
+			}},
+			// Need insecure entitlement because license files copy from the build state
+			// which was built with security.insecure
+			AllowedEntitlements: []string{
+				entitlements.EntitlementSecurityInsecure.String(),
+			},
+		}, licenseStatusCh)
+		if err != nil {
+			return fmt.Errorf("exporting license files: %w", err)
+		}
+	}
 
 	log.Info("build completed successfully")
 	return nil
@@ -765,7 +805,7 @@ func (b *Builder) BuildWithImage(ctx context.Context, imageRef string, cfg *Buil
 		state = result.State
 	}
 
-	// Export the workspace
+	// Export the workspace (melange-out directory)
 	log.Info("exporting workspace")
 	exportState := ExportWorkspace(state)
 
@@ -862,6 +902,41 @@ func (b *Builder) BuildWithImage(ctx context.Context, imageRef string, cfg *Buil
 	// Capture build summary with step timing
 	summary := progress.GetSummary()
 	b.lastSummary = &summary
+
+	// Export license files to workspace root (separate from melange-out)
+	// This is needed for SBOM generation which reads license files from the workspace
+	if len(cfg.LicenseFiles) > 0 {
+		log.Info("exporting license files")
+		licenseState := ExportLicenseFiles(state, cfg.LicenseFiles)
+		licenseDef, err := licenseState.Marshal(ctx, platform)
+		if err != nil {
+			return fmt.Errorf("marshaling license files LLB: %w", err)
+		}
+
+		// Export license files to workspace root (not melange-out)
+		licenseStatusCh := make(chan *client.SolveStatus)
+		go func() {
+			// Drain the status channel (we don't track progress for license export)
+			for range licenseStatusCh {
+			}
+		}()
+
+		_, err = b.client.Client().Solve(ctx, licenseDef, client.SolveOpt{
+			LocalDirs: localDirs,
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterLocal,
+				OutputDir: cfg.WorkspaceDir,
+			}},
+			// Need insecure entitlement because license files copy from the build state
+			// which was built with security.insecure
+			AllowedEntitlements: []string{
+				entitlements.EntitlementSecurityInsecure.String(),
+			},
+		}, licenseStatusCh)
+		if err != nil {
+			return fmt.Errorf("exporting license files: %w", err)
+		}
+	}
 
 	log.Info("build completed successfully")
 	return nil
