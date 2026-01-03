@@ -40,6 +40,13 @@ data:
   apko-service-addr: "apko-server:9090"
   apko-max-concurrent: "16"
 
+  # BuildKit Manager service configuration (Phase 6)
+  # When set, the orchestrator uses gRPC to communicate with the BuildKit Manager
+  # service instead of directly managing BuildKit workers.
+  # Set to "melange-buildkit-manager:9090" to enable microservices mode.
+  # Leave empty to use embedded mode (orchestrator manages workers directly).
+  buildkit-manager-addr: ""
+
   # Scaling configuration for large builds
   # Max concurrent GCS uploads (default: 200, was 50)
   max-concurrent-uploads: "200"
