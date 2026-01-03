@@ -16,6 +16,7 @@ package buildkit
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -94,10 +95,10 @@ func (s *GRPCServer) RequestWorker(ctx context.Context, req *RequestWorkerReques
 	if err != nil {
 		span.RecordError(err)
 		// Map common errors to appropriate gRPC status codes
-		if err == context.DeadlineExceeded {
+		if errors.Is(err, context.DeadlineExceeded) {
 			return nil, status.Error(codes.DeadlineExceeded, "timed out waiting for worker")
 		}
-		if err == context.Canceled {
+		if errors.Is(err, context.Canceled) {
 			return nil, status.Error(codes.Canceled, "request canceled")
 		}
 		return nil, status.Errorf(codes.Unavailable, "failed to acquire worker: %v", err)
