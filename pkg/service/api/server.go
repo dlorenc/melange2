@@ -56,6 +56,7 @@ func NewServer(buildStore store.BuildStore, pool *buildkit.Pool) *Server {
 
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/v1/builds", s.handleBuilds)
+	s.mux.HandleFunc("/api/v1/builds/active", s.handleActiveBuilds)
 	s.mux.HandleFunc("/api/v1/builds/", s.handleBuild)
 	s.mux.HandleFunc("/api/v1/backends", s.handleBackends)
 	s.mux.HandleFunc("/api/v1/backends/status", s.handleBackendsStatus)
@@ -243,17 +244,28 @@ func (s *Server) handleBuilds(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleBuild handles GET /api/v1/builds/:id and GET /api/v1/builds/:id/metrics.
+// handleBuild handles routes under /api/v1/builds/:id
+// - GET /api/v1/builds/:id - get build details
+// - GET /api/v1/builds/:id/metrics - get build metrics
+// - POST /api/v1/builds/:id/packages/:name/claim - claim a package for execution
+// - PUT /api/v1/builds/:id/packages/:name - update package status
 func (s *Server) handleBuild(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract build ID from path
+	// Extract path after /api/v1/builds/
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/builds/")
 	if path == "" {
 		http.Error(w, "build ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Check for package-level routes: /api/v1/builds/:id/packages/:name[/claim]
+	if strings.Contains(path, "/packages/") {
+		s.handlePackageRoute(w, r, path)
+		return
+	}
+
+	// Only GET is allowed for build-level routes
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -615,4 +627,174 @@ func (s *Server) listBuilds(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(builds)
+}
+
+// handleActiveBuilds returns non-terminal builds (pending/running).
+// GET /api/v1/builds/active
+// This is optimized for frequent polling by the orchestrator.
+func (s *Server) handleActiveBuilds(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	builds, err := s.buildStore.ListActiveBuilds(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list active builds: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(builds)
+}
+
+// UpdatePackageRequest is the request body for updating a package job.
+type UpdatePackageRequest struct {
+	Status     types.PackageStatus `json:"status"`
+	Error      string              `json:"error,omitempty"`
+	LogPath    string              `json:"log_path,omitempty"`
+	OutputPath string              `json:"output_path,omitempty"`
+}
+
+// handlePackageRoute routes package-level requests.
+// - POST /api/v1/builds/:id/packages/:name/claim - claim a package
+// - PUT /api/v1/builds/:id/packages/:name - update package status
+// - GET /api/v1/builds/:id/packages/:name - get package details
+func (s *Server) handlePackageRoute(w http.ResponseWriter, r *http.Request, path string) {
+	// Parse path: {buildID}/packages/{packageName}[/claim]
+	parts := strings.Split(path, "/packages/")
+	if len(parts) != 2 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	buildID := parts[0]
+	packagePath := parts[1]
+
+	// Check for /claim suffix
+	if strings.HasSuffix(packagePath, "/claim") {
+		packageName := strings.TrimSuffix(packagePath, "/claim")
+		s.handleClaimPackage(w, r, buildID, packageName)
+		return
+	}
+
+	// Package name is the rest of the path
+	packageName := packagePath
+
+	switch r.Method {
+	case http.MethodGet:
+		s.handleGetPackage(w, r, buildID, packageName)
+	case http.MethodPut:
+		s.handleUpdatePackage(w, r, buildID, packageName)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleClaimPackage handles POST /api/v1/builds/:id/packages/:name/claim
+// Claims a specific package for execution.
+func (s *Server) handleClaimPackage(w http.ResponseWriter, r *http.Request, buildID, packageName string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	pkg, err := s.buildStore.ClaimPackage(r.Context(), buildID, packageName)
+	if err != nil {
+		if errors.Is(err, svcerrors.ErrBuildNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, svcerrors.ErrPackageNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, svcerrors.ErrPackageNotReady) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		if errors.Is(err, svcerrors.ErrPackageAlreadyClaimed) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, "failed to claim package: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(pkg)
+}
+
+// handleGetPackage handles GET /api/v1/builds/:id/packages/:name
+// Returns details for a specific package.
+func (s *Server) handleGetPackage(w http.ResponseWriter, r *http.Request, buildID, packageName string) {
+	pkg, err := s.buildStore.GetPackage(r.Context(), buildID, packageName)
+	if err != nil {
+		if errors.Is(err, svcerrors.ErrBuildNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, svcerrors.ErrPackageNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get package: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(pkg)
+}
+
+// handleUpdatePackage handles PUT /api/v1/builds/:id/packages/:name
+// Updates the status of a package job.
+func (s *Server) handleUpdatePackage(w http.ResponseWriter, r *http.Request, buildID, packageName string) {
+	var req UpdatePackageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Get the current package to update
+	pkg, err := s.buildStore.GetPackage(r.Context(), buildID, packageName)
+	if err != nil {
+		if errors.Is(err, svcerrors.ErrBuildNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, svcerrors.ErrPackageNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get package: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Update fields from request
+	if req.Status != "" {
+		pkg.Status = req.Status
+	}
+	if req.Error != "" {
+		pkg.Error = req.Error
+	}
+	if req.LogPath != "" {
+		pkg.LogPath = req.LogPath
+	}
+	if req.OutputPath != "" {
+		pkg.OutputPath = req.OutputPath
+	}
+
+	// Set finished time if status is terminal
+	if pkg.Status == types.PackageStatusSuccess || pkg.Status == types.PackageStatusFailed || pkg.Status == types.PackageStatusSkipped {
+		now := time.Now()
+		pkg.FinishedAt = &now
+	}
+
+	if err := s.buildStore.UpdatePackageJob(r.Context(), buildID, pkg); err != nil {
+		http.Error(w, "failed to update package: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(pkg)
 }

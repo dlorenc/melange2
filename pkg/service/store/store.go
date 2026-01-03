@@ -45,6 +45,16 @@ type BuildStore interface {
 	// Returns nil if no packages are ready.
 	ClaimReadyPackage(ctx context.Context, buildID string) (*types.PackageJob, error)
 
+	// ClaimPackage atomically claims a specific package by name.
+	// The package must be in pending status and have all dependencies satisfied.
+	// Returns ErrPackageNotFound if the package doesn't exist.
+	// Returns ErrPackageNotReady if the package is not ready to be claimed.
+	ClaimPackage(ctx context.Context, buildID string, packageName string) (*types.PackageJob, error)
+
+	// GetPackage retrieves a specific package by name from a build.
+	// Returns ErrPackageNotFound if the package doesn't exist.
+	GetPackage(ctx context.Context, buildID string, packageName string) (*types.PackageJob, error)
+
 	// UpdatePackageJob updates a package job within a build.
 	UpdatePackageJob(ctx context.Context, buildID string, pkg *types.PackageJob) error
 }

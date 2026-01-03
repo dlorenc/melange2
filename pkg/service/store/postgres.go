@@ -508,6 +508,156 @@ func (s *PostgresBuildStore) ClaimReadyPackage(ctx context.Context, buildID stri
 	return &pkg, nil
 }
 
+// ClaimPackage atomically claims a specific package by name.
+// The package must be in pending status and have all dependencies satisfied.
+// Uses transactions for atomic claiming.
+func (s *PostgresBuildStore) ClaimPackage(ctx context.Context, buildID string, packageName string) (*types.PackageJob, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Build a map of package statuses for dependency checking
+	statusRows, err := tx.Query(ctx, `
+		SELECT name, status FROM package_jobs WHERE build_id = $1
+	`, buildID)
+	if err != nil {
+		return nil, fmt.Errorf("querying package statuses: %w", err)
+	}
+
+	statusMap := make(map[string]types.PackageStatus)
+	inBuild := make(map[string]bool)
+	for statusRows.Next() {
+		var name string
+		var status types.PackageStatus
+		if err := statusRows.Scan(&name, &status); err != nil {
+			statusRows.Close()
+			return nil, fmt.Errorf("scanning status: %w", err)
+		}
+		statusMap[name] = status
+		inBuild[name] = true
+	}
+	statusRows.Close()
+	if err := statusRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating statuses: %w", err)
+	}
+
+	if len(statusMap) == 0 {
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, buildID)
+	}
+
+	// Get the specific package with FOR UPDATE to lock it
+	var pkgID int
+	var status types.PackageStatus
+	var dependencies []string
+
+	err = tx.QueryRow(ctx, `
+		SELECT id, status, dependencies
+		FROM package_jobs
+		WHERE build_id = $1 AND name = $2
+		FOR UPDATE
+	`, buildID, packageName).Scan(&pkgID, &status, &dependencies)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrPackageNotFound, packageName)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying package: %w", err)
+	}
+
+	// Check if the package can be claimed
+	if status != types.PackageStatusPending {
+		return nil, svcerrors.ErrPackageAlreadyClaimed
+	}
+
+	// Check if all in-graph dependencies have succeeded
+	for _, dep := range dependencies {
+		if !inBuild[dep] {
+			continue
+		}
+		if statusMap[dep] != types.PackageStatusSuccess {
+			return nil, svcerrors.ErrPackageNotReady
+		}
+	}
+
+	// Claim the package
+	now := time.Now()
+	_, err = tx.Exec(ctx, `
+		UPDATE package_jobs
+		SET status = 'running', started_at = $2
+		WHERE id = $1
+	`, pkgID, now)
+	if err != nil {
+		return nil, fmt.Errorf("claiming package: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("committing claim: %w", err)
+	}
+
+	// Fetch and return the full package
+	return s.GetPackage(ctx, buildID, packageName)
+}
+
+// GetPackage retrieves a specific package by name from a build.
+func (s *PostgresBuildStore) GetPackage(ctx context.Context, buildID string, packageName string) (*types.PackageJob, error) {
+	var pkg types.PackageJob
+	var backendJSON, pipelinesJSON, sourceFilesJSON, metricsJSON []byte
+	var errorStr, logPath, outputPath *string
+
+	err := s.pool.QueryRow(ctx, `
+		SELECT name, status, config_yaml, dependencies, started_at, finished_at,
+		       error, log_path, output_path, backend, pipelines, source_files, metrics
+		FROM package_jobs
+		WHERE build_id = $1 AND name = $2
+	`, buildID, packageName).Scan(
+		&pkg.Name, &pkg.Status, &pkg.ConfigYAML, &pkg.Dependencies,
+		&pkg.StartedAt, &pkg.FinishedAt, &errorStr, &logPath,
+		&outputPath, &backendJSON, &pipelinesJSON, &sourceFilesJSON, &metricsJSON,
+	)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrPackageNotFound, packageName)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying package: %w", err)
+	}
+
+	if errorStr != nil {
+		pkg.Error = *errorStr
+	}
+	if logPath != nil {
+		pkg.LogPath = *logPath
+	}
+	if outputPath != nil {
+		pkg.OutputPath = *outputPath
+	}
+
+	if len(backendJSON) > 0 && string(backendJSON) != "null" {
+		if err := json.Unmarshal(backendJSON, &pkg.Backend); err != nil {
+			return nil, fmt.Errorf("unmarshaling backend: %w", err)
+		}
+	}
+	if len(pipelinesJSON) > 0 {
+		if err := json.Unmarshal(pipelinesJSON, &pkg.Pipelines); err != nil {
+			return nil, fmt.Errorf("unmarshaling pipelines: %w", err)
+		}
+	}
+	if len(sourceFilesJSON) > 0 {
+		if err := json.Unmarshal(sourceFilesJSON, &pkg.SourceFiles); err != nil {
+			return nil, fmt.Errorf("unmarshaling source files: %w", err)
+		}
+	}
+	if len(metricsJSON) > 0 && string(metricsJSON) != "null" {
+		if err := json.Unmarshal(metricsJSON, &pkg.Metrics); err != nil {
+			return nil, fmt.Errorf("unmarshaling metrics: %w", err)
+		}
+	}
+
+	return &pkg, nil
+}
+
 // UpdatePackageJob updates a package job within a build.
 func (s *PostgresBuildStore) UpdatePackageJob(ctx context.Context, buildID string, pkg *types.PackageJob) error {
 	var backendJSON, metricsJSON, pipelinesJSON, sourceFilesJSON []byte

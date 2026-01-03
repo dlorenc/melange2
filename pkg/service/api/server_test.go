@@ -756,3 +756,326 @@ func TestPercentile(t *testing.T) {
 		})
 	}
 }
+
+// Phase 1 API tests for microservices architecture
+
+func TestListActiveBuilds(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	t.Run("empty when no builds", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/active", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var builds []interface{}
+		err := json.NewDecoder(w.Body).Decode(&builds)
+		require.NoError(t, err)
+		require.Empty(t, builds)
+	})
+
+	t.Run("returns active builds", func(t *testing.T) {
+		// Create a build
+		body := `{"configs": ["package:\n  name: active-pkg\n  version: 1.0.0\n"]}`
+		createReq := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+		createReq.Header.Set("Content-Type", "application/json")
+		createW := httptest.NewRecorder()
+		server.ServeHTTP(createW, createReq)
+		require.Equal(t, http.StatusCreated, createW.Code)
+
+		// List active builds
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/active", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var builds []map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&builds)
+		require.NoError(t, err)
+		require.Len(t, builds, 1)
+		require.Equal(t, "pending", builds[0]["status"])
+	})
+
+	t.Run("method not allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds/active", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}
+
+func TestClaimPackage(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	// Create a build with two packages
+	body := `{
+		"configs": [
+			"package:\n  name: pkg-a\n  version: 1.0.0\n",
+			"package:\n  name: pkg-b\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-a\n"
+		],
+		"mode": "dag"
+	}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	server.ServeHTTP(createW, createReq)
+	require.Equal(t, http.StatusCreated, createW.Code)
+
+	var createResp map[string]interface{}
+	json.NewDecoder(createW.Body).Decode(&createResp)
+	buildID := createResp["id"].(string)
+
+	t.Run("claim ready package", func(t *testing.T) {
+		// pkg-a should be claimable since it has no dependencies
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-a/claim", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var pkg map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&pkg)
+		require.NoError(t, err)
+		require.Equal(t, "pkg-a", pkg["name"])
+		require.Equal(t, "running", pkg["status"])
+		require.NotNil(t, pkg["started_at"])
+	})
+
+	t.Run("claim package with unsatisfied dependencies", func(t *testing.T) {
+		// pkg-b depends on pkg-a which is still running (not success)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-b/claim", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusConflict, w.Code)
+		require.Contains(t, w.Body.String(), "not ready")
+	})
+
+	t.Run("claim already claimed package", func(t *testing.T) {
+		// pkg-a was already claimed
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-a/claim", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusConflict, w.Code)
+		require.Contains(t, w.Body.String(), "already claimed")
+	})
+
+	t.Run("claim non-existent package", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/non-existent/claim", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+		require.Contains(t, w.Body.String(), "package not found")
+	})
+
+	t.Run("claim from non-existent build", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/builds/non-existent/packages/pkg-a/claim", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+		require.Contains(t, w.Body.String(), "build not found")
+	})
+
+	t.Run("method not allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/"+buildID+"/packages/pkg-a/claim", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}
+
+func TestUpdatePackage(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	// Create a build and claim a package
+	body := `{"configs": ["package:\n  name: test-pkg\n  version: 1.0.0\n"]}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	server.ServeHTTP(createW, createReq)
+	require.Equal(t, http.StatusCreated, createW.Code)
+
+	var createResp map[string]interface{}
+	json.NewDecoder(createW.Body).Decode(&createResp)
+	buildID := createResp["id"].(string)
+
+	// Claim the package
+	claimReq := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/test-pkg/claim", nil)
+	claimW := httptest.NewRecorder()
+	server.ServeHTTP(claimW, claimReq)
+	require.Equal(t, http.StatusOK, claimW.Code)
+
+	t.Run("update package to success", func(t *testing.T) {
+		updateBody := `{"status": "success", "output_path": "/output/test-pkg"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/builds/"+buildID+"/packages/test-pkg", bytes.NewBufferString(updateBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var pkg map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&pkg)
+		require.NoError(t, err)
+		require.Equal(t, "test-pkg", pkg["name"])
+		require.Equal(t, "success", pkg["status"])
+		require.Equal(t, "/output/test-pkg", pkg["output_path"])
+		require.NotNil(t, pkg["finished_at"])
+	})
+
+	t.Run("update non-existent package", func(t *testing.T) {
+		updateBody := `{"status": "success"}`
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/builds/"+buildID+"/packages/non-existent", bytes.NewBufferString(updateBody))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("update with invalid json", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/builds/"+buildID+"/packages/test-pkg", bytes.NewBufferString("{invalid}"))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusBadRequest, w.Code)
+		require.Contains(t, w.Body.String(), "invalid request body")
+	})
+}
+
+func TestGetPackage(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	// Create a build
+	body := `{"configs": ["package:\n  name: test-pkg\n  version: 1.0.0\n"]}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	server.ServeHTTP(createW, createReq)
+	require.Equal(t, http.StatusCreated, createW.Code)
+
+	var createResp map[string]interface{}
+	json.NewDecoder(createW.Body).Decode(&createResp)
+	buildID := createResp["id"].(string)
+
+	t.Run("get existing package", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/"+buildID+"/packages/test-pkg", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var pkg map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&pkg)
+		require.NoError(t, err)
+		require.Equal(t, "test-pkg", pkg["name"])
+		require.Equal(t, "pending", pkg["status"])
+	})
+
+	t.Run("get non-existent package", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/"+buildID+"/packages/non-existent", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+		require.Contains(t, w.Body.String(), "package not found")
+	})
+
+	t.Run("get package from non-existent build", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/builds/non-existent/packages/test-pkg", nil)
+		w := httptest.NewRecorder()
+		server.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusNotFound, w.Code)
+	})
+}
+
+func TestPackageClaimWithDependencies(t *testing.T) {
+	backends := []buildkit.Backend{
+		{Addr: "tcp://amd64-1:1234", Arch: "x86_64"},
+	}
+	server := newTestServer(t, backends)
+
+	// Create a build with dependencies: pkg-a -> pkg-b -> pkg-c
+	body := `{
+		"configs": [
+			"package:\n  name: pkg-a\n  version: 1.0.0\n",
+			"package:\n  name: pkg-b\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-a\n",
+			"package:\n  name: pkg-c\n  version: 1.0.0\nenvironment:\n  contents:\n    packages:\n      - pkg-b\n"
+		],
+		"mode": "dag"
+	}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/builds", bytes.NewBufferString(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createW := httptest.NewRecorder()
+	server.ServeHTTP(createW, createReq)
+	require.Equal(t, http.StatusCreated, createW.Code)
+
+	var createResp map[string]interface{}
+	json.NewDecoder(createW.Body).Decode(&createResp)
+	buildID := createResp["id"].(string)
+
+	// 1. Claim pkg-a (no dependencies)
+	claimA := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-a/claim", nil)
+	claimAW := httptest.NewRecorder()
+	server.ServeHTTP(claimAW, claimA)
+	require.Equal(t, http.StatusOK, claimAW.Code)
+
+	// 2. Try to claim pkg-b (should fail - pkg-a still running)
+	claimB := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-b/claim", nil)
+	claimBW := httptest.NewRecorder()
+	server.ServeHTTP(claimBW, claimB)
+	require.Equal(t, http.StatusConflict, claimBW.Code)
+
+	// 3. Mark pkg-a as success
+	updateA := httptest.NewRequest(http.MethodPut, "/api/v1/builds/"+buildID+"/packages/pkg-a",
+		bytes.NewBufferString(`{"status": "success"}`))
+	updateAW := httptest.NewRecorder()
+	server.ServeHTTP(updateAW, updateA)
+	require.Equal(t, http.StatusOK, updateAW.Code)
+
+	// 4. Now pkg-b should be claimable
+	claimB2 := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-b/claim", nil)
+	claimB2W := httptest.NewRecorder()
+	server.ServeHTTP(claimB2W, claimB2)
+	require.Equal(t, http.StatusOK, claimB2W.Code)
+
+	// 5. pkg-c still shouldn't be claimable (pkg-b running)
+	claimC := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-c/claim", nil)
+	claimCW := httptest.NewRecorder()
+	server.ServeHTTP(claimCW, claimC)
+	require.Equal(t, http.StatusConflict, claimCW.Code)
+
+	// 6. Mark pkg-b as success
+	updateB := httptest.NewRequest(http.MethodPut, "/api/v1/builds/"+buildID+"/packages/pkg-b",
+		bytes.NewBufferString(`{"status": "success"}`))
+	updateBW := httptest.NewRecorder()
+	server.ServeHTTP(updateBW, updateB)
+	require.Equal(t, http.StatusOK, updateBW.Code)
+
+	// 7. Now pkg-c should be claimable
+	claimC2 := httptest.NewRequest(http.MethodPost, "/api/v1/builds/"+buildID+"/packages/pkg-c/claim", nil)
+	claimC2W := httptest.NewRecorder()
+	server.ServeHTTP(claimC2W, claimC2)
+	require.Equal(t, http.StatusOK, claimC2W.Code)
+}

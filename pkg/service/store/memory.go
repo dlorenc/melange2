@@ -371,6 +371,86 @@ func (s *MemoryBuildStore) ClaimReadyPackage(ctx context.Context, buildID string
 	return nil, nil
 }
 
+// ClaimPackage atomically claims a specific package by name.
+// The package must be in pending status and have all dependencies satisfied.
+func (s *MemoryBuildStore) ClaimPackage(ctx context.Context, buildID string, packageName string) (*types.PackageJob, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	build, ok := s.builds[buildID]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, buildID)
+	}
+
+	// Build a set of package names in this build
+	inBuild := make(map[string]bool)
+	for _, pkg := range build.Packages {
+		inBuild[pkg.Name] = true
+	}
+
+	// Build a map of package name -> status for quick lookup
+	statusMap := make(map[string]types.PackageStatus)
+	for _, pkg := range build.Packages {
+		statusMap[pkg.Name] = pkg.Status
+	}
+
+	// Find the specific package
+	for i := range build.Packages {
+		pkg := &build.Packages[i]
+		if pkg.Name != packageName {
+			continue
+		}
+
+		// Check if the package can be claimed
+		if pkg.Status != types.PackageStatusPending {
+			return nil, svcerrors.ErrPackageAlreadyClaimed
+		}
+
+		// Check if all in-graph dependencies have succeeded
+		for _, dep := range pkg.Dependencies {
+			// Only check dependencies that are in this build
+			if !inBuild[dep] {
+				continue
+			}
+			if statusMap[dep] != types.PackageStatusSuccess {
+				return nil, svcerrors.ErrPackageNotReady
+			}
+		}
+
+		// Claim this package
+		now := time.Now()
+		pkg.Status = types.PackageStatusRunning
+		pkg.StartedAt = &now
+
+		// Return a copy
+		result := *pkg
+		return &result, nil
+	}
+
+	return nil, fmt.Errorf("%w: %s", svcerrors.ErrPackageNotFound, packageName)
+}
+
+// GetPackage retrieves a specific package by name from a build.
+func (s *MemoryBuildStore) GetPackage(ctx context.Context, buildID string, packageName string) (*types.PackageJob, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	build, ok := s.builds[buildID]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", svcerrors.ErrBuildNotFound, buildID)
+	}
+
+	for _, pkg := range build.Packages {
+		if pkg.Name == packageName {
+			// Return a copy
+			result := pkg
+			return &result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("%w: %s", svcerrors.ErrPackageNotFound, packageName)
+}
+
 // UpdatePackageJob updates a package job within a build.
 func (s *MemoryBuildStore) UpdatePackageJob(ctx context.Context, buildID string, pkg *types.PackageJob) error {
 	s.mu.Lock()
