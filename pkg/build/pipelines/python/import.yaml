@@ -17,13 +17,25 @@ inputs:
         import bark # this is like woof
 
       full-line and inline comments are supported via '#'
-    required: true
+    default: ""
+  import:
+    description: |
+      Backwards-compatible alias for 'imports'. If provided, will be converted
+      to an import statement (e.g., "foo" becomes "import foo").
+    default: ""
 
 pipeline:
   - runs: |
       set +x
       PYTHON="${{inputs.python}}"
       IMPORTS="${{inputs.imports}}"
+      IMPORT="${{inputs.import}}"
+
+      # Support backwards-compatible 'import' input (singular)
+      # Convert "foo" to "import foo" for simple module names
+      if [ -z "$IMPORTS" ] && [ -n "$IMPORT" ]; then
+        IMPORTS="import $IMPORT"
+      fi
 
       perform_import() {
         command="$1"

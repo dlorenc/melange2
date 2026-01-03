@@ -210,6 +210,13 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 		releaseData = rd
 		log.Infof("apko_layer_generation took %s (%d layers)", apkoDuration, len(layers))
 
+		// Update ApkoRegistryConfig with the actual image reference from apko service.
+		// buildGuestLayers may update b.ApkoRegistry with a content-addressed tag
+		// (e.g., from "registry:5000/apko-cache" to "registry:5000/apko-cache:abc123").
+		if cfg.ApkoRegistryConfig != nil && b.ApkoRegistry != "" {
+			cfg.ApkoRegistryConfig.Registry = b.ApkoRegistry
+		}
+
 		if err := builder.BuildWithLayers(ctx, layers, cfg); err != nil {
 			b.BuildKitSummary = builder.GetLastSummary()
 			return fmt.Errorf("buildkit build failed: %w", err)
