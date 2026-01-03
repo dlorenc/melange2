@@ -147,15 +147,15 @@ func (m *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestNew(t *testing.T) {
-	// Create a mock pool
-	pool, err := buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", "x86_64")
+	// Create a mock manager
+	manager, err := buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", "x86_64")
 	require.NoError(t, err)
 
 	// Create a mock client
 	apiClient := client.New("http://localhost:8080")
 
 	// Create orchestrator with various configs
-	orch := New(apiClient, nil, pool, Config{
+	orch := New(apiClient, nil, manager, Config{
 		PollInterval: 2 * time.Second,
 		MaxParallel:  4,
 	})
@@ -167,12 +167,12 @@ func TestNew(t *testing.T) {
 }
 
 func TestOrchestratorDefaults(t *testing.T) {
-	pool, err := buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", "x86_64")
+	manager, err := buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", "x86_64")
 	require.NoError(t, err)
 
 	apiClient := client.New("http://localhost:8080")
 
-	orch := New(apiClient, nil, pool, Config{})
+	orch := New(apiClient, nil, manager, Config{})
 
 	assert.Equal(t, time.Second, orch.config.PollInterval)
 	assert.Equal(t, "/var/lib/melange/output", orch.config.OutputDir)
@@ -196,12 +196,12 @@ func TestProcessBuildsListsActiveBuilds(t *testing.T) {
 	defer testServer.Close()
 
 	// Create orchestrator
-	pool, err := buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", "x86_64")
+	manager, err := buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", "x86_64")
 	require.NoError(t, err)
 
 	apiClient := client.New(testServer.URL)
 
-	orch := New(apiClient, nil, pool, Config{
+	orch := New(apiClient, nil, manager, Config{
 		PollInterval: 100 * time.Millisecond,
 		MaxParallel:  1,
 	})
@@ -235,12 +235,12 @@ func TestUpdateBuildStatus(t *testing.T) {
 	mock.addBuild(build)
 
 	// Create orchestrator
-	pool, err := buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", "x86_64")
+	manager, err := buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", "x86_64")
 	require.NoError(t, err)
 
 	apiClient := client.New(testServer.URL)
 
-	orch := New(apiClient, nil, pool, Config{})
+	orch := New(apiClient, nil, manager, Config{})
 
 	ctx := context.Background()
 
@@ -325,12 +325,12 @@ func TestCascadeFailure(t *testing.T) {
 	defer testServer.Close()
 
 	// Create orchestrator
-	pool, err := buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", "x86_64")
+	manager, err := buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", "x86_64")
 	require.NoError(t, err)
 
 	apiClient := client.New(testServer.URL)
 
-	orch := New(apiClient, nil, pool, Config{})
+	orch := New(apiClient, nil, manager, Config{})
 
 	ctx := context.Background()
 

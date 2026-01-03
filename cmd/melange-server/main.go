@@ -172,30 +172,30 @@ func run(ctx context.Context) error {
 		}
 	}
 
-	// Initialize BuildKit pool
-	var pool *buildkit.Pool
+	// Initialize BuildKit manager (Phase 5: Manager interface)
+	var manager *buildkit.StaticManager
 	switch {
 	case *backendsConfig != "":
 		// Multi-backend mode from config file
 		log.Infof("loading backends from config: %s", *backendsConfig)
-		pool, err = buildkit.NewPoolFromConfig(*backendsConfig)
+		manager, err = buildkit.NewStaticManagerFromConfigFile(*backendsConfig)
 		if err != nil {
-			return fmt.Errorf("creating buildkit pool from config: %w", err)
+			return fmt.Errorf("creating buildkit manager from config: %w", err)
 		}
-		log.Infof("loaded %d backends for architectures: %v", len(pool.List()), pool.Architectures())
+		log.Infof("loaded %d backends for architectures: %v", len(manager.List()), manager.Architectures())
 	case *buildkitAddr != "":
 		// Single-backend mode (backward compatibility)
 		log.Infof("using single buildkit backend: %s (arch: %s)", *buildkitAddr, *defaultArch)
-		pool, err = buildkit.NewPoolFromSingleAddr(*buildkitAddr, *defaultArch)
+		manager, err = buildkit.NewStaticManagerFromSingleAddr(*buildkitAddr, *defaultArch)
 		if err != nil {
-			return fmt.Errorf("creating buildkit pool: %w", err)
+			return fmt.Errorf("creating buildkit manager: %w", err)
 		}
 	default:
 		// Default to localhost for development
 		log.Infof("using default buildkit backend: tcp://localhost:1234 (arch: %s)", *defaultArch)
-		pool, err = buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", *defaultArch)
+		manager, err = buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", *defaultArch)
 		if err != nil {
-			return fmt.Errorf("creating buildkit pool: %w", err)
+			return fmt.Errorf("creating buildkit manager: %w", err)
 		}
 	}
 
@@ -203,7 +203,7 @@ func run(ctx context.Context) error {
 	apiServer := api.NewServer(buildStore)
 
 	// Create backend handler for monolith mode
-	backendHandler := newBackendHandler(pool)
+	backendHandler := newBackendHandler(manager)
 
 	// Create a mux that routes requests appropriately
 	mux := http.NewServeMux()
@@ -344,7 +344,7 @@ func run(ctx context.Context) error {
 		if melangeMetrics != nil {
 			orchOpts = append(orchOpts, orchestrator.WithMetrics(melangeMetrics))
 		}
-		orch := orchestrator.New(apiClient, storageBackend, pool, orchestrator.Config{
+		orch := orchestrator.New(apiClient, storageBackend, manager, orchestrator.Config{
 			APIServerURL:         apiURL,
 			OutputDir:            *outputDir,
 			PollInterval:         pollInterval,
@@ -375,7 +375,9 @@ func run(ctx context.Context) error {
 		if melangeMetrics != nil {
 			schedOpts = append(schedOpts, scheduler.WithMetrics(melangeMetrics))
 		}
-		sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
+		// Note: Scheduler uses Pool() for backward compatibility.
+		// The orchestrator mode uses the Manager interface directly.
+		sched := scheduler.New(buildStore, storageBackend, manager.Pool(), scheduler.Config{
 			OutputDir:            *outputDir,
 			PollInterval:         pollInterval,
 			MaxParallel:          *maxParallel,
@@ -524,11 +526,11 @@ func loadSecretEnv() map[string]string {
 // This is used by the monolith (melange-server) to provide backwards compatibility.
 // In Phase 4+ microservices deployment, backends are managed by the orchestrator.
 type backendHandler struct {
-	pool *buildkit.Pool
+	manager *buildkit.StaticManager
 }
 
-func newBackendHandler(pool *buildkit.Pool) *backendHandler {
-	return &backendHandler{pool: pool}
+func newBackendHandler(manager *buildkit.StaticManager) *backendHandler {
+	return &backendHandler{manager: manager}
 }
 
 // handleBackends handles backend management:
@@ -553,15 +555,15 @@ func (h *backendHandler) listBackends(w http.ResponseWriter, r *http.Request) {
 
 	var backends []buildkit.Backend
 	if arch != "" {
-		backends = h.pool.ListByArch(arch)
+		backends = h.manager.Pool().ListByArch(arch)
 	} else {
-		backends = h.pool.List()
+		backends = h.manager.List()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"backends":      backends,
-		"architectures": h.pool.Architectures(),
+		"architectures": h.manager.Architectures(),
 	})
 }
 
@@ -584,7 +586,7 @@ func (h *backendHandler) addBackend(w http.ResponseWriter, r *http.Request) {
 		Labels: req.Labels,
 	}
 
-	if err := h.pool.Add(backend); err != nil {
+	if err := h.manager.Add(backend); err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
@@ -614,7 +616,7 @@ func (h *backendHandler) removeBackend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.pool.Remove(req.Addr); err != nil {
+	if err := h.manager.Remove(req.Addr); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -632,10 +634,14 @@ func (h *backendHandler) handleBackendsStatus(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	status := h.pool.Status()
+	status := h.manager.Status()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"backends": status,
+		"type":              status.Type,
+		"total_workers":     status.TotalWorkers,
+		"available_workers": status.AvailableWorkers,
+		"active_jobs":       status.ActiveJobs,
+		"workers":           status.Workers,
 	})
 }
