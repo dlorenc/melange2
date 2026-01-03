@@ -314,6 +314,7 @@ echo "hello from pipeline" > /home/build/melange-out/test-pkg/output.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -370,6 +371,7 @@ echo "step1" >> /home/build/melange-out/test-pkg/log.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -424,6 +426,7 @@ echo "LOCAL_VAR=$LOCAL_VAR" >> /home/build/melange-out/test-pkg/env.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -483,6 +486,7 @@ echo "setup done" > /home/build/melange-out/test-pkg/status.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -560,6 +564,7 @@ cat /home/build/subdir/nested.txt >> /home/build/melange-out/test-pkg/from-sourc
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -716,6 +721,7 @@ cat /var/cache/melange/cached-artifact.txt > /home/build/melange-out/test-pkg/fr
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
