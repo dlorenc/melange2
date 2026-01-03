@@ -37,7 +37,9 @@ import (
 
 	"github.com/dlorenc/melange2/pkg/service/api"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
+	"github.com/dlorenc/melange2/pkg/service/client"
 	"github.com/dlorenc/melange2/pkg/service/metrics"
+	"github.com/dlorenc/melange2/pkg/service/orchestrator"
 	"github.com/dlorenc/melange2/pkg/service/scheduler"
 	"github.com/dlorenc/melange2/pkg/service/storage"
 	"github.com/dlorenc/melange2/pkg/service/store"
@@ -62,6 +64,8 @@ var (
 	// PostgreSQL flags
 	postgresDSN     = flag.String("postgres-dsn", "", "PostgreSQL connection string (if set, uses PostgreSQL instead of in-memory store)")
 	postgresMaxConn = flag.Int("postgres-max-conn", 25, "Maximum PostgreSQL connections")
+	// Orchestrator flags (Phase 3 microservices migration)
+	useOrchestrator = flag.Bool("use-orchestrator", false, "Use HTTP-based orchestrator instead of direct scheduler (experimental)")
 )
 
 func main() {
@@ -297,30 +301,17 @@ func run(ctx context.Context) error {
 		log.Infof("loaded %d server-side secret env vars: %v", len(secretEnv), keys)
 	}
 
-	// Create scheduler with optional metrics
-	var schedOpts []scheduler.SchedulerOption
-	if melangeMetrics != nil {
-		schedOpts = append(schedOpts, scheduler.WithMetrics(melangeMetrics))
-	}
-	sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
-		OutputDir:            *outputDir,
-		PollInterval:         pollInterval,
-		MaxParallel:          *maxParallel,
-		CacheRegistry:        cacheRegistry,
-		CacheMode:            cacheMode,
-		ApkoRegistry:         apkoRegistry,
-		ApkoRegistryInsecure: apkoRegistryInsecure,
-		ApkCacheDir:          apkCacheDir,
-		ApkCacheTTL:          apkCacheTTL,
-		ApkoServiceAddr:      apkoService,
-		SecretEnv:            secretEnv,
-	}, schedOpts...)
-
 	// Create output directory (for local storage)
 	if *gcsBucket == "" {
 		if err := os.MkdirAll(*outputDir, 0755); err != nil {
 			return fmt.Errorf("creating output directory: %w", err)
 		}
+	}
+
+	// Check if orchestrator mode is requested (via flag or env var)
+	useOrchestratorMode := *useOrchestrator
+	if !useOrchestratorMode {
+		useOrchestratorMode = os.Getenv("USE_ORCHESTRATOR") == "true"
 	}
 
 	// Run everything
@@ -335,19 +326,78 @@ func run(ctx context.Context) error {
 		return nil
 	})
 
-	// Run scheduler
-	eg.Go(func() error {
-		return sched.Run(ctx)
-	})
+	// Run scheduler or orchestrator based on feature flag
+	if useOrchestratorMode {
+		// Phase 3: Use HTTP-based orchestrator
+		// The orchestrator uses HTTP client to communicate with the API server
+		// while still using the BuildKit pool directly for backend selection.
+		apiURL := fmt.Sprintf("http://localhost%s", *listenAddr)
+		apiClient := client.New(apiURL)
+
+		var orchOpts []orchestrator.OrchestratorOption
+		if melangeMetrics != nil {
+			orchOpts = append(orchOpts, orchestrator.WithMetrics(melangeMetrics))
+		}
+		orch := orchestrator.New(apiClient, storageBackend, pool, orchestrator.Config{
+			APIServerURL:         apiURL,
+			OutputDir:            *outputDir,
+			PollInterval:         pollInterval,
+			MaxParallel:          *maxParallel,
+			CacheRegistry:        cacheRegistry,
+			CacheMode:            cacheMode,
+			ApkoRegistry:         apkoRegistry,
+			ApkoRegistryInsecure: apkoRegistryInsecure,
+			ApkCacheDir:          apkCacheDir,
+			ApkCacheTTL:          apkCacheTTL,
+			ApkoServiceAddr:      apkoService,
+			SecretEnv:            secretEnv,
+		}, orchOpts...)
+
+		log.Info("using HTTP-based orchestrator (experimental)")
+
+		eg.Go(func() error {
+			return orch.Run(ctx)
+		})
+
+		// Run APK disk cache cleanup (if configured)
+		eg.Go(func() error {
+			return orch.RunCacheCleanup(ctx)
+		})
+	} else {
+		// Default: Use direct scheduler
+		var schedOpts []scheduler.SchedulerOption
+		if melangeMetrics != nil {
+			schedOpts = append(schedOpts, scheduler.WithMetrics(melangeMetrics))
+		}
+		sched := scheduler.New(buildStore, storageBackend, pool, scheduler.Config{
+			OutputDir:            *outputDir,
+			PollInterval:         pollInterval,
+			MaxParallel:          *maxParallel,
+			CacheRegistry:        cacheRegistry,
+			CacheMode:            cacheMode,
+			ApkoRegistry:         apkoRegistry,
+			ApkoRegistryInsecure: apkoRegistryInsecure,
+			ApkCacheDir:          apkCacheDir,
+			ApkCacheTTL:          apkCacheTTL,
+			ApkoServiceAddr:      apkoService,
+			SecretEnv:            secretEnv,
+		}, schedOpts...)
+
+		log.Info("using direct scheduler")
+
+		eg.Go(func() error {
+			return sched.Run(ctx)
+		})
+
+		// Run APK disk cache cleanup (if configured)
+		eg.Go(func() error {
+			return sched.RunCacheCleanup(ctx)
+		})
+	}
 
 	// Run apko cache maintenance (evict stale entries, clear pools, log stats)
 	eg.Go(func() error {
 		return runApkoMaintenance(ctx, log)
-	})
-
-	// Run APK disk cache cleanup (if configured)
-	eg.Go(func() error {
-		return sched.RunCacheCleanup(ctx)
 	})
 
 	// Handle shutdown

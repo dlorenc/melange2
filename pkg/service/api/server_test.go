@@ -537,7 +537,8 @@ func TestGetBuild(t *testing.T) {
 	})
 
 	t.Run("method not allowed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/builds/"+buildID, nil)
+		// DELETE is not allowed for individual builds - use DELETE to test
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/builds/"+buildID, nil)
 		w := httptest.NewRecorder()
 		server.ServeHTTP(w, req)
 
