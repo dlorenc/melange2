@@ -198,6 +198,49 @@ func (c *Client) ListActiveBuilds(ctx context.Context) ([]*types.Build, error) {
 	return builds, nil
 }
 
+// UpdateBuildRequest is the request body for updating a build.
+type UpdateBuildRequest struct {
+	Status types.BuildStatus `json:"status"`
+}
+
+// UpdateBuild updates the status of a build.
+// Returns svcerrors.ErrBuildNotFound if the build doesn't exist.
+func (c *Client) UpdateBuild(ctx context.Context, buildID string, req *UpdateBuildRequest) (*types.Build, error) {
+	if buildID == "" {
+		return nil, errors.New("build ID is required")
+	}
+
+	var build types.Build
+	if err := c.doWithRetry(ctx, http.MethodPut, "/api/v1/builds/"+url.PathEscape(buildID), req, &build); err != nil {
+		return nil, fmt.Errorf("update build: %w", err)
+	}
+	return &build, nil
+}
+
+// ClaimReadyPackage atomically claims any ready package from a build.
+// Returns the claimed package job on success.
+// Returns nil if no packages are ready (204 No Content).
+// Returns svcerrors.ErrBuildNotFound if the build doesn't exist.
+func (c *Client) ClaimReadyPackage(ctx context.Context, buildID string) (*types.PackageJob, error) {
+	if buildID == "" {
+		return nil, errors.New("build ID is required")
+	}
+
+	path := fmt.Sprintf("/api/v1/builds/%s/packages/claim", url.PathEscape(buildID))
+
+	var pkg types.PackageJob
+	err := c.doWithRetry(ctx, http.MethodPost, path, nil, &pkg)
+	if err != nil {
+		return nil, fmt.Errorf("claim ready package: %w", err)
+	}
+
+	// 204 No Content means no packages are ready - pkg will be zero-valued
+	if pkg.Name == "" {
+		return nil, nil
+	}
+	return &pkg, nil
+}
+
 // ClaimPackage atomically claims a package for execution.
 // Returns the claimed package job on success.
 // Returns svcerrors.ErrBuildNotFound if the build doesn't exist.
@@ -374,6 +417,11 @@ func (c *Client) do(ctx context.Context, method, path string, body, result inter
 		return parseHTTPError(resp.StatusCode, respBody)
 	}
 
+	// Handle 204 No Content - not an error, just no body to parse
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
 	// Parse successful response
 	if result != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, result); err != nil {
@@ -407,10 +455,6 @@ func parseHTTPError(statusCode int, body []byte) error {
 			return svcerrors.ErrPackageAlreadyClaimed
 		}
 		return &HTTPError{StatusCode: statusCode, Message: message}
-
-	case http.StatusNoContent:
-		// Not an error, but we need to handle it
-		return nil
 
 	case http.StatusBadRequest:
 		return &HTTPError{StatusCode: statusCode, Message: message}

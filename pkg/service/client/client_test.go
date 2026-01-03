@@ -980,3 +980,140 @@ func TestCreateBuild(t *testing.T) {
 		assert.Equal(t, expectedResp.Packages, resp.Packages)
 	})
 }
+
+func TestUpdateBuild(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		now := time.Now()
+		expectedBuild := types.Build{
+			ID:        "bld-123",
+			Status:    types.BuildStatusRunning,
+			StartedAt: &now,
+		}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/v1/builds/bld-123", r.URL.Path)
+			assert.Equal(t, http.MethodPut, r.Method)
+			assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+
+			var req UpdateBuildRequest
+			err := json.NewDecoder(r.Body).Decode(&req)
+			require.NoError(t, err)
+			assert.Equal(t, types.BuildStatusRunning, req.Status)
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(expectedBuild)
+		}))
+		defer server.Close()
+
+		c := New(server.URL)
+		build, err := c.UpdateBuild(context.Background(), "bld-123", &UpdateBuildRequest{
+			Status: types.BuildStatusRunning,
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, types.BuildStatusRunning, build.Status)
+		assert.NotNil(t, build.StartedAt)
+	})
+
+	t.Run("build not found", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("build not found"))
+		}))
+		defer server.Close()
+
+		c := New(server.URL)
+		_, err := c.UpdateBuild(context.Background(), "nonexistent", &UpdateBuildRequest{
+			Status: types.BuildStatusRunning,
+		})
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, svcerrors.ErrBuildNotFound)
+	})
+
+	t.Run("empty build ID", func(t *testing.T) {
+		c := New("http://localhost:8080")
+		_, err := c.UpdateBuild(context.Background(), "", &UpdateBuildRequest{})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build ID is required")
+	})
+}
+
+func TestClaimReadyPackage(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		expectedPkg := types.PackageJob{
+			Name:   "test-pkg",
+			Status: types.PackageStatusRunning,
+		}
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/v1/builds/bld-123/packages/claim", r.URL.Path)
+			assert.Equal(t, http.MethodPost, r.Method)
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(expectedPkg)
+		}))
+		defer server.Close()
+
+		c := New(server.URL)
+		pkg, err := c.ClaimReadyPackage(context.Background(), "bld-123")
+
+		require.NoError(t, err)
+		require.NotNil(t, pkg)
+		assert.Equal(t, "test-pkg", pkg.Name)
+		assert.Equal(t, types.PackageStatusRunning, pkg.Status)
+	})
+
+	t.Run("no ready packages", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/v1/builds/bld-123/packages/claim", r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		defer server.Close()
+
+		c := New(server.URL)
+		pkg, err := c.ClaimReadyPackage(context.Background(), "bld-123")
+
+		require.NoError(t, err)
+		assert.Nil(t, pkg) // No package available
+	})
+
+	t.Run("build not found", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte("build not found"))
+		}))
+		defer server.Close()
+
+		c := New(server.URL)
+		_, err := c.ClaimReadyPackage(context.Background(), "nonexistent")
+
+		require.Error(t, err)
+		assert.ErrorIs(t, err, svcerrors.ErrBuildNotFound)
+	})
+
+	t.Run("empty build ID", func(t *testing.T) {
+		c := New("http://localhost:8080")
+		_, err := c.ClaimReadyPackage(context.Background(), "")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "build ID is required")
+	})
+
+	t.Run("url encodes special characters", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/v1/builds/bld%2F123/packages/claim", r.URL.RawPath)
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(types.PackageJob{Name: "test-pkg"})
+		}))
+		defer server.Close()
+
+		c := New(server.URL)
+		pkg, err := c.ClaimReadyPackage(context.Background(), "bld/123")
+
+		require.NoError(t, err)
+		assert.Equal(t, "test-pkg", pkg.Name)
+	})
+}
