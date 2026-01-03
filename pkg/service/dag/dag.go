@@ -114,7 +114,11 @@ func (g *Graph) TopologicalSort() ([]Node, error) {
 		name := queue[0]
 		queue = queue[1:]
 
-		result = append(result, *g.nodes[name])
+		node := g.nodes[name]
+		if node == nil {
+			continue
+		}
+		result = append(result, *node)
 
 		// For each node in the graph
 		for _, node := range g.nodes {

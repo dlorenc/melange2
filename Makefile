@@ -154,6 +154,19 @@ log-%:
 lint: checkfmt setup-golangci-lint ## Run linters and checks like golangci-lint
 	$(GOLANGCI_LINT_BIN) run --verbose --concurrency 4 --skip-dirs .modcache ./...
 
+NILAWAY_DIR = $(shell pwd)/bin
+NILAWAY_BIN = $(NILAWAY_DIR)/nilaway
+
+.PHONY: setup-nilaway
+setup-nilaway:
+	rm -f $(NILAWAY_BIN) || :
+	set -e ;\
+	GOBIN=$(NILAWAY_DIR) go install go.uber.org/nilaway/cmd/nilaway@latest
+
+.PHONY: nilaway
+nilaway: setup-nilaway ## Run nilaway nil-safety analysis
+	$(NILAWAY_BIN) -test=false ./...
+
 .PHONY: unit
 unit:
 	go test ./... -race

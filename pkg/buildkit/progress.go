@@ -232,6 +232,9 @@ func (p *ProgressWriter) printSummary(log *clog.Logger) {
 	var failedSteps []*vertexState
 	for _, d := range p.vertexOrder {
 		state := p.vertices[d]
+		if state == nil {
+			continue
+		}
 		if state.error != "" {
 			errors++
 			if len(state.logs) > 0 {
@@ -314,7 +317,7 @@ func (p *ProgressWriter) GetSummary() Summary {
 	// Sort by order of appearance
 	for _, d := range p.vertexOrder {
 		state := p.vertices[d]
-		if state.name == "" {
+		if state == nil || state.name == "" {
 			continue
 		}
 

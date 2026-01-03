@@ -56,6 +56,9 @@ func (c *Client) Health(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sending request: %w", err)
 	}
+	if resp == nil {
+		return fmt.Errorf("nil response from server")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -86,6 +89,9 @@ func (c *Client) ListBackends(ctx context.Context, arch string) (*BackendsRespon
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("nil response from server")
 	}
 	defer resp.Body.Close()
 
@@ -119,6 +125,9 @@ func (c *Client) AddBackend(ctx context.Context, backend buildkit.Backend) (*bui
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
+	if resp == nil {
+		return nil, fmt.Errorf("nil response from server")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
@@ -151,6 +160,9 @@ func (c *Client) RemoveBackend(ctx context.Context, addr string) error {
 	if err != nil {
 		return fmt.Errorf("sending request: %w", err)
 	}
+	if resp == nil {
+		return fmt.Errorf("nil response from server")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
@@ -178,6 +190,9 @@ func (c *Client) SubmitBuild(ctx context.Context, req types.CreateBuildRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
 	}
+	if resp == nil {
+		return nil, fmt.Errorf("nil response from server")
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated {
@@ -203,6 +218,9 @@ func (c *Client) GetBuild(ctx context.Context, buildID string) (*types.Build, er
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("nil response from server")
 	}
 	defer resp.Body.Close()
 
@@ -232,6 +250,9 @@ func (c *Client) ListBuilds(ctx context.Context) ([]types.Build, error) {
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("sending request: %w", err)
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("nil response from server")
 	}
 	defer resp.Body.Close()
 

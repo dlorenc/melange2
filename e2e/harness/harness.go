@@ -318,7 +318,7 @@ func WaitForHTTP(url string, timeout time.Duration) error {
 			return ctx.Err()
 		default:
 			resp, err := http.Get(url) //nolint:gosec // URL is from trusted test harness
-			if err == nil {
+			if err == nil && resp != nil {
 				resp.Body.Close()
 				return nil
 			}

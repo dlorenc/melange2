@@ -114,6 +114,9 @@ func (g *Generator) GenerateSPDX(ctx context.Context, gc *build.GeneratorContext
 	// Add APK packages to their respective SBOMs
 	for _, sp := range gc.Configuration.Subpackages {
 		spSBOM := sg.Document(sp.Name)
+		if spSBOM == nil {
+			return nil, fmt.Errorf("SBOM document not found for subpackage %s", sp.Name)
+		}
 
 		apkSubPkg := &sbom.Package{
 			Name:            sp.Name,
@@ -144,6 +147,9 @@ func (g *Generator) GenerateSPDX(ctx context.Context, gc *build.GeneratorContext
 	}
 
 	pSBOM := sg.Document(pkg.Name)
+	if pSBOM == nil {
+		return nil, fmt.Errorf("SBOM document not found for package %s", pkg.Name)
+	}
 	apkPkg := &sbom.Package{
 		Name:            pkg.Name,
 		Version:         pkg.FullVersion(),
@@ -186,7 +192,11 @@ func (g *Generator) GenerateSPDX(ctx context.Context, gc *build.GeneratorContext
 
 		// Add to all subpackage SBOMs as well
 		for _, sp := range gc.Configuration.Subpackages {
-			sg.Document(sp.Name).AddUpstreamSourcePackage(upstreamPkg)
+			doc := sg.Document(sp.Name)
+			if doc == nil {
+				return nil, fmt.Errorf("SBOM document not found for subpackage %s", sp.Name)
+			}
+			doc.AddUpstreamSourcePackage(upstreamPkg)
 		}
 	}
 
@@ -201,7 +211,11 @@ func (g *Generator) GenerateSPDX(ctx context.Context, gc *build.GeneratorContext
 
 	// Convert the SBOMs to SPDX and write them
 	for _, sp := range gc.Configuration.Subpackages {
-		out[sp.Name] = sg.Document(sp.Name).ToSPDX(ctx, gc.ReleaseData)
+		doc := sg.Document(sp.Name)
+		if doc == nil {
+			return nil, fmt.Errorf("SBOM document not found for subpackage %s", sp.Name)
+		}
+		out[sp.Name] = doc.ToSPDX(ctx, gc.ReleaseData)
 	}
 
 	out[pkg.Name] = pSBOM.ToSPDX(ctx, gc.ReleaseData)

@@ -32,6 +32,9 @@ const WorkDir = "/home/build"
 
 func (sm *SubstitutionMap) MutateWith(with map[string]string) (map[string]string, error) {
 	nw := maps.Clone(sm.Substitutions)
+	if nw == nil {
+		nw = make(map[string]string)
+	}
 
 	for k, v := range with {
 		// already mutated?
@@ -61,6 +64,9 @@ type SubstitutionMap struct {
 
 func (sm *SubstitutionMap) Subpackage(subpkg *config.Subpackage) *SubstitutionMap {
 	nw := maps.Clone(sm.Substitutions)
+	if nw == nil {
+		nw = make(map[string]string)
+	}
 	nw[config.SubstitutionSubPkgName] = subpkg.Name
 	nw[config.SubstitutionContextName] = subpkg.Name
 	nw[config.SubstitutionSubPkgDir] = fmt.Sprintf("/home/build/melange-out/%s", subpkg.Name)
