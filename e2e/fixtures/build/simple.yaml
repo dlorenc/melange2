@@ -11,4 +11,10 @@ pipeline:
       chmod +x "${{targets.destdir}}/usr/bin/hello"
   - runs: |
       mkdir -p "${{targets.destdir}}/etc"
-      echo "version=1.0.0" > "${{targets.destdir}}/etc/simple.conf"
+      echo "version=${{package.version}}" > "${{targets.destdir}}/etc/simple.conf"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/hello
+        grep -q "version=1.0.0" /etc/simple.conf

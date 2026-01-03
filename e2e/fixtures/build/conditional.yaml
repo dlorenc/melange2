@@ -18,3 +18,10 @@ pipeline:
     if: '"enabled" == "disabled"'
     runs: |
       echo "disabled" > "${{targets.destdir}}/usr/share/conditional-test/disabled.txt"
+
+test:
+  pipeline:
+    - runs: |
+        test -f /usr/share/conditional-test/always.txt
+        test -f /usr/share/conditional-test/enabled.txt
+        test ! -f /usr/share/conditional-test/disabled.txt

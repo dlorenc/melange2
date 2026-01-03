@@ -165,6 +165,73 @@ integration:
 .PHONY: test
 test: integration
 
+##################
+# Coverage
+##################
+
+COVERAGE_DIR ?= .coverage
+COVERAGE_UNIT := $(COVERAGE_DIR)/unit.out
+COVERAGE_E2E := $(COVERAGE_DIR)/e2e.out
+COVERAGE_FULL := $(COVERAGE_DIR)/coverage.out
+
+.PHONY: coverage
+coverage: ## Run all tests with full coverage report
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "==> Running all tests with coverage..."
+	go test -coverprofile=$(COVERAGE_FULL) -coverpkg=./... -timeout 15m ./...
+	@echo ""
+	@echo "==> Coverage Summary:"
+	@go tool cover -func=$(COVERAGE_FULL) | grep "total:"
+	@echo ""
+	@echo "==> Coverage by package (sorted):"
+	@go tool cover -func=$(COVERAGE_FULL) | grep -E "^github.com" | \
+		awk '{print $$NF, $$1}' | sort -rn | head -20
+	@echo ""
+	@echo "==> HTML report: go tool cover -html=$(COVERAGE_FULL)"
+
+.PHONY: coverage-unit
+coverage-unit: ## Run unit tests only with coverage
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "==> Running unit tests with coverage..."
+	go test -short -coverprofile=$(COVERAGE_UNIT) -coverpkg=./... ./...
+	@echo ""
+	@echo "==> Unit Test Coverage:"
+	@go tool cover -func=$(COVERAGE_UNIT) | grep "total:"
+
+.PHONY: coverage-e2e
+coverage-e2e: ## Run e2e tests only with coverage
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "==> Running e2e tests with coverage..."
+	go test -coverprofile=$(COVERAGE_E2E) -coverpkg=./... -timeout 15m ./e2e/...
+	@echo ""
+	@echo "==> E2E Test Coverage:"
+	@go tool cover -func=$(COVERAGE_E2E) | grep "total:"
+
+.PHONY: coverage-html
+coverage-html: coverage ## Generate HTML coverage report and open in browser
+	go tool cover -html=$(COVERAGE_FULL) -o $(COVERAGE_DIR)/coverage.html
+	@echo "==> Opening coverage report..."
+	@open $(COVERAGE_DIR)/coverage.html 2>/dev/null || xdg-open $(COVERAGE_DIR)/coverage.html 2>/dev/null || echo "Open $(COVERAGE_DIR)/coverage.html in your browser"
+
+.PHONY: coverage-report
+coverage-report: ## Show detailed coverage for key packages
+	@if [ ! -f $(COVERAGE_FULL) ]; then \
+		echo "No coverage data found. Run 'make coverage' first."; \
+		exit 1; \
+	fi
+	@echo "==> Coverage for pkg/build:"
+	@go tool cover -func=$(COVERAGE_FULL) | grep "pkg/build/" | grep -v "_test"
+	@echo ""
+	@echo "==> Coverage for pkg/buildkit:"
+	@go tool cover -func=$(COVERAGE_FULL) | grep "pkg/buildkit/" | grep -v "_test"
+	@echo ""
+	@echo "==> Uncovered functions (0.0%):"
+	@go tool cover -func=$(COVERAGE_FULL) | grep "0.0%" | head -20
+
+.PHONY: coverage-clean
+coverage-clean: ## Clean coverage files
+	rm -rf $(COVERAGE_DIR)
+
 ARCH ?= $(shell uname -m)
 ifeq (${ARCH}, arm64)
 	ARCH = aarch64

@@ -18,3 +18,10 @@ pipeline:
 
       # Use relative paths - this proves working directory is set correctly
       cat file1.txt nested/file2.txt > "${{targets.destdir}}/usr/share/workdir-test/combined.txt"
+
+test:
+  pipeline:
+    - runs: |
+        grep -q "/home/build/src/project" /usr/share/workdir-test/workdir.txt
+        grep -q "source file 1" /usr/share/workdir-test/combined.txt
+        grep -q "nested file" /usr/share/workdir-test/combined.txt

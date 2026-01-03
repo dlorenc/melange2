@@ -24,143 +24,99 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dlorenc/melange2/e2e/harness"
+	"github.com/dlorenc/melange2/pkg/build"
 	"github.com/dlorenc/melange2/pkg/buildkit"
 	"github.com/dlorenc/melange2/pkg/config"
 )
 
-// testPipelineContext holds shared resources for test pipeline tests.
-type testPipelineContext struct {
-	t      *testing.T
-	h      *harness.Harness
-	ctx    context.Context
-	outDir string
-}
-
-// newTestPipelineContext creates a new test pipeline context with BuildKit running.
-func newTestPipelineContext(t *testing.T) *testPipelineContext {
-	t.Helper()
-
-	h := harness.New(t)
-
-	outDir := filepath.Join(h.TempDir(), "test-output")
-	require.NoError(t, os.MkdirAll(outDir, 0755))
-
-	return &testPipelineContext{
-		t:      t,
-		h:      h,
-		ctx:    h.Context(),
-		outDir: outDir,
-	}
-}
-
-// loadTestConfig loads a test configuration from the test fixtures directory.
-func (c *testPipelineContext) loadTestConfig(name string) *config.Configuration {
-	c.t.Helper()
-
-	configPath := filepath.Join("fixtures", "test", name)
-	cfg, err := config.ParseConfiguration(c.ctx, configPath)
-	require.NoError(c.t, err, "should parse config %s", name)
-
-	return cfg
-}
-
-// runTests executes test pipelines for the config and returns the output directory.
-func (c *testPipelineContext) runTests(cfg *config.Configuration) (string, error) {
-	builder, err := buildkit.NewBuilder(c.h.BuildKitAddr())
-	if err != nil {
-		return "", err
-	}
-	defer builder.Close()
-
-	// Substitute variables in test pipelines
-	var testPipelines []config.Pipeline
-	if cfg.Test != nil {
-		testPipelines = substituteVars(cfg, cfg.Test.Pipeline, "")
+// TestTestFixtures runs all test fixtures through the test runner.
+// Each fixture is:
+// 1. Compiled using production Build.Compile()
+// 2. Tested using production Builder.TestWithImage()
+//
+// Note: failure.yaml is excluded - it's tested separately in TestTestPipeline_FailureDetection.
+func TestTestFixtures(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e tests in short mode")
 	}
 
-	// Build subpackage test configs
-	var subpackageTests []buildkit.SubpackageTestConfig
-	for _, sp := range cfg.Subpackages {
-		if sp.Test != nil && len(sp.Test.Pipeline) > 0 {
-			subpackageTests = append(subpackageTests, buildkit.SubpackageTestConfig{
-				Name:      sp.Name,
-				Pipelines: substituteVars(cfg, sp.Test.Pipeline, sp.Name),
-			})
+	ctx := context.Background()
+
+	// Load fixtures, excluding failure.yaml (tested separately)
+	fixtures, err := LoadFixtures(ctx, "fixtures/test")
+	require.NoError(t, err)
+
+	var filtered []*Fixture
+	for _, f := range fixtures {
+		if f.Name != "failure" {
+			filtered = append(filtered, f)
 		}
 	}
 
-	// Skip if no tests
-	if len(testPipelines) == 0 && len(subpackageTests) == 0 {
-		return c.outDir, nil
-	}
+	h := harness.New(t)
+	runner := NewRunner(t, h)
 
-	// Configure test
-	testCfg := &buildkit.TestConfig{
-		PackageName:     cfg.Package.Name,
-		Arch:            apko_types.Architecture("amd64"),
-		TestPipelines:   testPipelines,
-		SubpackageTests: subpackageTests,
-		BaseEnv: map[string]string{
-			"HOME": "/home/build",
-		},
-		WorkspaceDir: c.outDir,
+	for _, f := range filtered {
+		f := f
+		t.Run(f.Name, func(t *testing.T) {
+			runner.RunTestOnly(f)
+		})
 	}
-
-	// Run tests using the test base image
-	if err := builder.TestWithImage(c.ctx, harness.TestBaseImage, testCfg); err != nil {
-		return "", err
-	}
-
-	return c.outDir, nil
 }
 
-// =============================================================================
-// Test Pipeline Tests
-// =============================================================================
-
-func TestTestPipeline_Simple(t *testing.T) {
-	c := newTestPipelineContext(t)
-	cfg := c.loadTestConfig("simple-test.yaml")
-
-	outDir, err := c.runTests(cfg)
-	require.NoError(t, err, "test should succeed")
-
-	// Verify test results were exported
-	harness.FileExists(t, outDir, "test-results/simple-test-pkg/status.txt")
-	harness.FileContains(t, outDir, "test-results/simple-test-pkg/status.txt", "PASSED")
-}
-
-func TestTestPipeline_SubpackageIsolation(t *testing.T) {
-	c := newTestPipelineContext(t)
-	cfg := c.loadTestConfig("isolation.yaml")
-
-	outDir, err := c.runTests(cfg)
-	require.NoError(t, err, "all tests should succeed - isolation is maintained")
-
-	// Verify main package test ran
-	harness.FileExists(t, outDir, "test-results/isolation-test/status.txt")
-	harness.FileContains(t, outDir, "test-results/isolation-test/status.txt", "PASSED")
-
-	// Verify sub1 test ran (and passed isolation check)
-	harness.FileExists(t, outDir, "test-results/isolation-test-sub1/status.txt")
-	harness.FileContains(t, outDir, "test-results/isolation-test-sub1/status.txt", "PASSED")
-
-	// Verify sub2 test ran (and passed isolation check)
-	harness.FileExists(t, outDir, "test-results/isolation-test-sub2/status.txt")
-	harness.FileContains(t, outDir, "test-results/isolation-test-sub2/status.txt", "PASSED")
-}
-
+// TestTestPipeline_FailureDetection tests that failing tests are detected.
 func TestTestPipeline_FailureDetection(t *testing.T) {
-	c := newTestPipelineContext(t)
-	cfg := c.loadTestConfig("failure.yaml")
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
 
-	_, err := c.runTests(cfg)
+	h := harness.New(t)
+	ctx := h.Context()
+
+	// Load the failure fixture
+	f, err := LoadFixture(ctx, "fixtures/test/failure.yaml")
+	require.NoError(t, err)
+
+	// Compile using production code
+	b := &build.Build{
+		Configuration:       f.Config,
+		PipelineDirs:        []string{},
+		Arch:                apko_types.Architecture("amd64"),
+		EnabledBuildOptions: []string{},
+		Libc:                "gnu",
+	}
+	require.NoError(t, b.Compile(ctx), "compile")
+
+	// Create output directory
+	outDir := filepath.Join(h.TempDir(), "test-output")
+	require.NoError(t, os.MkdirAll(outDir, 0755))
+
+	// Build using production TestWithImage
+	builder, err := buildkit.NewBuilder(h.BuildKitAddr())
+	require.NoError(t, err)
+	defer builder.Close()
+
+	testCfg := &buildkit.TestConfig{
+		PackageName:   f.Config.Package.Name,
+		Arch:          apko_types.Architecture("amd64"),
+		TestPipelines: f.Config.Test.Pipeline,
+		WorkspaceDir:  outDir,
+	}
+
+	// This should fail
+	err = builder.TestWithImage(ctx, harness.TestBaseImage, testCfg)
 	require.Error(t, err, "test should fail")
 	require.Contains(t, err.Error(), "failed", "error should indicate test failure")
 }
 
+// TestTestPipeline_NoTests tests handling of configs with no test pipelines.
 func TestTestPipeline_NoTests(t *testing.T) {
-	c := newTestPipelineContext(t)
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	h := harness.New(t)
+	ctx := h.Context()
 
 	// Create a config with no test pipelines
 	cfg := &config.Configuration{
@@ -168,29 +124,35 @@ func TestTestPipeline_NoTests(t *testing.T) {
 			Name:    "no-tests",
 			Version: "1.0.0",
 		},
-		// No Test section
 	}
 
-	outDir, err := c.runTests(cfg)
+	// Compile using production code
+	b := &build.Build{
+		Configuration:       cfg,
+		PipelineDirs:        []string{},
+		Arch:                apko_types.Architecture("amd64"),
+		EnabledBuildOptions: []string{},
+		Libc:                "gnu",
+	}
+	require.NoError(t, b.Compile(ctx), "compile")
+
+	// Create output directory
+	outDir := filepath.Join(h.TempDir(), "test-output")
+	require.NoError(t, os.MkdirAll(outDir, 0755))
+
+	// Build using production TestWithImage - should succeed with no tests
+	builder, err := buildkit.NewBuilder(h.BuildKitAddr())
+	require.NoError(t, err)
+	defer builder.Close()
+
+	testCfg := &buildkit.TestConfig{
+		PackageName:   cfg.Package.Name,
+		Arch:          apko_types.Architecture("amd64"),
+		TestPipelines: nil, // No tests
+		WorkspaceDir:  outDir,
+	}
+
+	// Should succeed - no tests means nothing to run
+	err = builder.TestWithImage(ctx, harness.TestBaseImage, testCfg)
 	require.NoError(t, err, "should succeed with no tests")
-
-	// test-results directory should exist but be empty or not exist
-	_, err = os.Stat(filepath.Join(outDir, "test-results"))
-	// It's ok if the directory doesn't exist - no tests means nothing to export
-	require.True(t, err == nil || os.IsNotExist(err))
-}
-
-func TestTestPipeline_ProcessStatePersistence(t *testing.T) {
-	// This test verifies that process state (background processes, files) is
-	// maintained between test steps, matching the old QEMU runner behavior.
-	// Environment variables should NOT leak between steps.
-	c := newTestPipelineContext(t)
-	cfg := c.loadTestConfig("process-state.yaml")
-
-	outDir, err := c.runTests(cfg)
-	require.NoError(t, err, "test should succeed - process state should persist between steps while env vars are isolated")
-
-	// Verify test results were exported
-	harness.FileExists(t, outDir, "test-results/process-state-test/status.txt")
-	harness.FileContains(t, outDir, "test-results/process-state-test/status.txt", "PASSED")
 }

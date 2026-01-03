@@ -18,3 +18,10 @@ pipeline:
 
       # HOME should always be set
       echo "HOME=$HOME" > "${{targets.destdir}}/usr/share/env-test/home.txt"
+
+test:
+  pipeline:
+    - runs: |
+        grep -q "CUSTOM_VAR=custom-env-value" /usr/share/env-test/global-env.txt
+        grep -q "BUILD_TYPE=release" /usr/share/env-test/global-env.txt
+        grep -q "HOME=/home/build" /usr/share/env-test/home.txt

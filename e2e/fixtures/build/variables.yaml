@@ -12,16 +12,23 @@ pipeline:
   - runs: |
       mkdir -p "${{targets.destdir}}/usr/share/var-test"
 
-      # Test package variables
-      cat > "${{targets.destdir}}/usr/share/var-test/package-vars.txt" << 'EOF'
+      cat > "${{targets.destdir}}/usr/share/var-test/package-vars.txt" << EOF
       name=${{package.name}}
       version=${{package.version}}
       epoch=${{package.epoch}}
       full-version=${{package.full-version}}
       EOF
 
-      # Test custom variables
-      cat > "${{targets.destdir}}/usr/share/var-test/custom-vars.txt" << 'EOF'
+      cat > "${{targets.destdir}}/usr/share/var-test/custom-vars.txt" << EOF
       custom-var=${{vars.custom-var}}
       another-var=${{vars.another-var}}
       EOF
+
+test:
+  pipeline:
+    - runs: |
+        grep -q "name=var-test" /usr/share/var-test/package-vars.txt
+        grep -q "version=2.3.4" /usr/share/var-test/package-vars.txt
+        grep -q "epoch=5" /usr/share/var-test/package-vars.txt
+        grep -q "custom-var=custom-value" /usr/share/var-test/custom-vars.txt
+        grep -q "another-var=another-value" /usr/share/var-test/custom-vars.txt

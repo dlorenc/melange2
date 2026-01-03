@@ -557,3 +557,202 @@ func TestBuildsMethodNotAllowed(t *testing.T) {
 
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+// Helper function tests
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		ms       int64
+		expected string
+	}{
+		{
+			name:     "zero returns empty",
+			ms:       0,
+			expected: "",
+		},
+		{
+			name:     "one second",
+			ms:       1000,
+			expected: "1s",
+		},
+		{
+			name:     "one minute",
+			ms:       60000,
+			expected: "1m0s",
+		},
+		{
+			name:     "one hour",
+			ms:       3600000,
+			expected: "1h0m0s",
+		},
+		{
+			name:     "mixed duration",
+			ms:       3661000,
+			expected: "1h1m1s",
+		},
+		{
+			name:     "milliseconds only",
+			ms:       500,
+			expected: "500ms",
+		},
+		{
+			name:     "negative value",
+			ms:       -1000,
+			expected: "-1s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatDuration(tt.ms)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestAverage(t *testing.T) {
+	tests := []struct {
+		name     string
+		values   []int64
+		expected int64
+	}{
+		{
+			name:     "empty slice",
+			values:   []int64{},
+			expected: 0,
+		},
+		{
+			name:     "nil slice",
+			values:   nil,
+			expected: 0,
+		},
+		{
+			name:     "single value",
+			values:   []int64{100},
+			expected: 100,
+		},
+		{
+			name:     "multiple values",
+			values:   []int64{10, 20, 30},
+			expected: 20,
+		},
+		{
+			name:     "integer division",
+			values:   []int64{10, 20, 25},
+			expected: 18, // (10+20+25)/3 = 55/3 = 18 (integer division)
+		},
+		{
+			name:     "large values",
+			values:   []int64{1000000, 2000000, 3000000},
+			expected: 2000000,
+		},
+		{
+			name:     "values with zero",
+			values:   []int64{0, 100, 200},
+			expected: 100,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := average(tt.values)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestPercentile(t *testing.T) {
+	tests := []struct {
+		name     string
+		values   []int64
+		p        int
+		expected int64
+	}{
+		{
+			name:     "empty slice",
+			values:   []int64{},
+			p:        50,
+			expected: 0,
+		},
+		{
+			name:     "nil slice",
+			values:   nil,
+			p:        50,
+			expected: 0,
+		},
+		{
+			name:     "single value",
+			values:   []int64{100},
+			p:        50,
+			expected: 100,
+		},
+		{
+			name:     "50th percentile (median) odd",
+			values:   []int64{10, 20, 30, 40, 50},
+			p:        50,
+			expected: 30, // index = (50*5)/100 = 2
+		},
+		{
+			name:     "50th percentile (median) even",
+			values:   []int64{10, 20, 30, 40},
+			p:        50,
+			expected: 30, // index = (50*4)/100 = 2
+		},
+		{
+			name:     "90th percentile",
+			values:   []int64{10, 20, 30, 40, 50, 60, 70, 80, 90, 100},
+			p:        90,
+			expected: 100, // index = (90*10)/100 = 9
+		},
+		{
+			name:     "95th percentile",
+			values:   []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20},
+			p:        95,
+			expected: 20, // index = (95*20)/100 = 19
+		},
+		{
+			name:     "0th percentile",
+			values:   []int64{10, 20, 30},
+			p:        0,
+			expected: 10, // index = 0
+		},
+		{
+			name:     "100th percentile",
+			values:   []int64{10, 20, 30},
+			p:        100,
+			expected: 30, // index = min(3, 2) = 2
+		},
+		{
+			name:     "unsorted input",
+			values:   []int64{50, 10, 40, 20, 30},
+			p:        50,
+			expected: 30, // should sort first
+		},
+		{
+			name:     "duplicate values",
+			values:   []int64{10, 10, 10, 10, 10},
+			p:        90,
+			expected: 10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Make a copy to ensure original isn't modified (only for non-nil slices)
+			var valuesCopy []int64
+			if tt.values != nil {
+				valuesCopy = make([]int64, len(tt.values))
+				copy(valuesCopy, tt.values)
+			}
+
+			result := percentile(tt.values, tt.p)
+			require.Equal(t, tt.expected, result)
+
+			// Verify original slice wasn't modified
+			if tt.values != nil {
+				require.Equal(t, valuesCopy, tt.values)
+			}
+		})
+	}
+}
