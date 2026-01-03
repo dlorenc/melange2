@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/chainguard-dev/clog"
-	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/dag"
 	svcerrors "github.com/dlorenc/melange2/pkg/service/errors"
 	"github.com/dlorenc/melange2/pkg/service/git"
@@ -37,17 +36,17 @@ import (
 )
 
 // Server is the HTTP API server.
+// In Phase 4+ microservices deployment, the API server only handles build/package
+// state management. Backend management is handled by the orchestrator.
 type Server struct {
 	buildStore store.BuildStore
-	pool       *buildkit.Pool
 	mux        *http.ServeMux
 }
 
 // NewServer creates a new API server.
-func NewServer(buildStore store.BuildStore, pool *buildkit.Pool) *Server {
+func NewServer(buildStore store.BuildStore) *Server {
 	s := &Server{
 		buildStore: buildStore,
-		pool:       pool,
 		mux:        http.NewServeMux(),
 	}
 	s.setupRoutes()
@@ -58,8 +57,6 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/v1/builds", s.handleBuilds)
 	s.mux.HandleFunc("/api/v1/builds/active", s.handleActiveBuilds)
 	s.mux.HandleFunc("/api/v1/builds/", s.handleBuild)
-	s.mux.HandleFunc("/api/v1/backends", s.handleBackends)
-	s.mux.HandleFunc("/api/v1/backends/status", s.handleBackendsStatus)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 }
 
@@ -108,125 +105,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-// handleBackends handles backend management:
-// GET /api/v1/backends - list available backends
-// POST /api/v1/backends - add a new backend
-// DELETE /api/v1/backends - remove a backend
-func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listBackends(w, r)
-	case http.MethodPost:
-		s.addBackend(w, r)
-	case http.MethodDelete:
-		s.removeBackend(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// listBackends lists available backends.
-func (s *Server) listBackends(w http.ResponseWriter, r *http.Request) {
-	// Support optional architecture filter
-	arch := r.URL.Query().Get("arch")
-
-	var backends []buildkit.Backend
-	if arch != "" {
-		backends = s.pool.ListByArch(arch)
-	} else {
-		backends = s.pool.List()
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"backends":      backends,
-		"architectures": s.pool.Architectures(),
-	})
-}
-
-// AddBackendRequest is the request body for adding a backend.
-type AddBackendRequest struct {
-	Addr   string            `json:"addr"`
-	Arch   string            `json:"arch"`
-	Labels map[string]string `json:"labels,omitempty"`
-}
-
-// addBackend adds a new backend to the pool.
-func (s *Server) addBackend(w http.ResponseWriter, r *http.Request) {
-	var req AddBackendRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	backend := buildkit.Backend{
-		Addr:   req.Addr,
-		Arch:   req.Arch,
-		Labels: req.Labels,
-	}
-
-	if err := s.pool.Add(backend); err != nil {
-		// Check if it's a duplicate error vs validation error
-		if errors.Is(err, svcerrors.ErrBackendAlreadyExists) {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(backend)
-}
-
-// RemoveBackendRequest is the request body for removing a backend.
-type RemoveBackendRequest struct {
-	Addr string `json:"addr"`
-}
-
-// removeBackend removes a backend from the pool.
-func (s *Server) removeBackend(w http.ResponseWriter, r *http.Request) {
-	var req RemoveBackendRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if req.Addr == "" {
-		http.Error(w, "addr is required", http.StatusBadRequest)
-		return
-	}
-
-	if err := s.pool.Remove(req.Addr); err != nil {
-		if errors.Is(err, svcerrors.ErrBackendNotFound) {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleBackendsStatus returns detailed status of all backends including
-// active jobs, circuit breaker state, and failure counts.
-// GET /api/v1/backends/status
-func (s *Server) handleBackendsStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	status := s.pool.Status()
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"backends": status,
-	})
 }
 
 // MaxBodySize is the maximum allowed request body size (10MB).

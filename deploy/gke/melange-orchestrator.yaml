@@ -1,0 +1,153 @@
+# Copyright 2024 Chainguard, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Phase 4 Microservices: Standalone Orchestrator
+# This deployment handles build execution, backend management, and job scheduling.
+# Communicates with melange-api for build/package state.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: melange-orchestrator
+  namespace: melange
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: melange-orchestrator
+  template:
+    metadata:
+      labels:
+        app: melange-orchestrator
+    spec:
+      serviceAccountName: melange-server
+      nodeSelector:
+        workload: services
+      containers:
+      - name: melange-orchestrator
+        image: ko://github.com/dlorenc/melange2/cmd/melange-orchestrator
+        args:
+        - --listen-addr=:8081
+        - --api-server=http://melange-api:8080
+        - --backends-config=/etc/melange/backends.yaml
+        - --gcs-bucket=$(GCS_BUCKET)
+        - --enable-tracing
+        - --max-parallel=128
+        env:
+        - name: GCS_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: gcs-bucket
+        - name: CACHE_REGISTRY
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: cache-registry
+        - name: CACHE_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: cache-mode
+        - name: APKO_REGISTRY
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apko-registry
+        - name: APKO_REGISTRY_INSECURE
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apko-registry-insecure
+        - name: POLL_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: poll-interval
+        - name: APKO_SERVICE_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: apko-service-addr
+              optional: true
+        # Server-side secrets injected into all builds
+        - name: SECRET_ENV_GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: build-secrets
+              key: GITHUB_TOKEN
+              optional: true
+        ports:
+        - containerPort: 8081
+          name: http
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "1000m"
+          limits:
+            memory: "8Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 30
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        volumeMounts:
+        - name: backends-config
+          mountPath: /etc/melange
+          readOnly: true
+      volumes:
+      - name: backends-config
+        configMap:
+          name: melange-config
+          items:
+          - key: backends.yaml
+            path: backends.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: melange-orchestrator
+  namespace: melange
+spec:
+  selector:
+    app: melange-orchestrator
+  ports:
+  - port: 8081
+    targetPort: 8081
+    name: http
+  type: ClusterIP
+---
+# Pod Disruption Budget for melange-orchestrator
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: melange-orchestrator-pdb
+  namespace: melange
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: melange-orchestrator
