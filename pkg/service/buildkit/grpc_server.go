@@ -126,7 +126,7 @@ func (s *GRPCServer) RequestWorker(ctx context.Context, req *RequestWorkerReques
 // ReleaseWorker implements the ReleaseWorker RPC.
 func (s *GRPCServer) ReleaseWorker(ctx context.Context, req *ReleaseWorkerRequest) (*ReleaseWorkerResponse, error) {
 	log := clog.FromContext(ctx)
-	ctx, span := otel.Tracer("buildkit-manager-service").Start(ctx, "ReleaseWorker")
+	_, span := otel.Tracer("buildkit-manager-service").Start(ctx, "ReleaseWorker")
 	defer span.End()
 
 	span.SetAttributes(
