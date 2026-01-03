@@ -310,6 +310,42 @@ func ExportWorkspace(state llb.State) llb.State {
 	)
 }
 
+// ExportLicenseFiles creates a state suitable for exporting license files.
+// This extracts files from the workspace directory (e.g., COPYING, LICENSE) that
+// are referenced in package.copyright[].license-path for SBOM generation.
+// The files are exported to the root of the export state, preserving their paths.
+func ExportLicenseFiles(state llb.State, licenseFiles []string) llb.State {
+	if len(licenseFiles) == 0 {
+		return llb.Scratch()
+	}
+
+	exportState := llb.Scratch()
+
+	// Copy license files from the workspace
+	for _, f := range licenseFiles {
+		if f == "" {
+			continue
+		}
+		srcPath := filepath.Join(DefaultWorkDir, f)
+		// Ensure parent directories exist in the export
+		dstDir := filepath.Dir(f)
+		if dstDir != "." && dstDir != "" {
+			exportState = exportState.File(
+				llb.Mkdir("/"+dstDir, 0755, llb.WithParents(true)),
+			)
+		}
+		// Copy the license file preserving its relative path
+		exportState = exportState.File(
+			llb.Copy(state, srcPath, "/"+f, &llb.CopyInfo{
+				CreateDestPath: true,
+			}),
+			llb.WithCustomName(fmt.Sprintf("export license file %s", f)),
+		)
+	}
+
+	return exportState
+}
+
 // CopyCacheToWorkspace copies cache files from a Local mount to /var/cache/melange.
 // This enables pre-populating the cache from the host filesystem.
 func CopyCacheToWorkspace(base llb.State, localName string) llb.State {

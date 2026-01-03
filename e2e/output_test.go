@@ -22,8 +22,7 @@ import (
 	"time"
 
 	apkofs "chainguard.dev/apko/pkg/apk/fs"
-	"github.com/moby/buildkit/client"
-	"github.com/moby/buildkit/client/llb"
+	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -69,68 +68,28 @@ func newOutputTestContext(t *testing.T) *outputTestContext {
 // buildPackageToWorkspace builds a package and exports to the workspace directory.
 // The workspace will contain a melange-out/<pkgname> directory with the build output.
 func (c *outputTestContext) buildPackageToWorkspace(cfg *config.Configuration) error {
-	// Build pipeline
-	pipeline := buildkit.NewPipelineBuilder()
-	pipeline.BaseEnv["HOME"] = "/home/build"
-	for k, v := range cfg.Environment.Environment {
-		pipeline.BaseEnv[k] = v
-	}
-
-	// Start with base image
-	state := llb.Image(harness.TestBaseImage)
-	state = buildkit.SetupBuildUser(state)
-	state = buildkit.PrepareWorkspace(state, cfg.Package.Name)
-
-	// Create subpackage output directories
-	for _, sp := range cfg.Subpackages {
-		state = state.File(
-			llb.Mkdir(buildkit.WorkspaceOutputDir(sp.Name), 0755,
-				llb.WithParents(true),
-				llb.WithUIDGID(buildkit.BuildUserUID, buildkit.BuildUserGID),
-			),
-			llb.WithCustomName("create output directory for "+sp.Name),
-		)
-	}
-
-	// Substitute variables and build main pipelines
-	pipelines := substituteVars(cfg, cfg.Pipeline, "")
-	var err error
-	state, err = pipeline.BuildPipelines(state, pipelines)
-	if err != nil {
+	// Compile configuration using production code path
+	if err := harness.CompileConfiguration(c.ctx, cfg, nil); err != nil {
 		return err
 	}
 
-	// Build subpackage pipelines
-	for _, sp := range cfg.Subpackages {
-		subPipelines := substituteVars(cfg, sp.Pipeline, sp.Name)
-		state, err = pipeline.BuildPipelines(state, subPipelines)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Export workspace
-	export := buildkit.ExportWorkspace(state)
-	def, err := export.Marshal(c.ctx, llb.LinuxAmd64)
+	// Build using production BuildWithImage
+	builder, err := buildkit.NewBuilder(c.h.BuildKitAddr())
 	if err != nil {
 		return err
 	}
+	defer builder.Close()
 
-	// Solve
-	bkClient, err := buildkit.New(c.ctx, c.h.BuildKitAddr())
-	if err != nil {
-		return err
+	buildCfg := &buildkit.BuildConfig{
+		PackageName:  cfg.Package.Name,
+		Arch:         apko_types.Architecture("amd64"),
+		Pipelines:    cfg.Pipeline,
+		Subpackages:  cfg.Subpackages,
+		BaseEnv:      cfg.Environment.Environment,
+		WorkspaceDir: c.workspaceDir,
 	}
-	defer bkClient.Close()
 
-	_, err = bkClient.Client().Solve(c.ctx, def, client.SolveOpt{
-		Exports: []client.ExportEntry{{
-			Type:      client.ExporterLocal,
-			OutputDir: c.workspaceDir,
-		}},
-	}, nil)
-
-	return err
+	return builder.BuildWithImage(c.ctx, harness.TestBaseImage, buildCfg)
 }
 
 // TestOutput_ProcessorSkipsAll tests that the processor respects skip options.
@@ -285,4 +244,68 @@ func TestOutput_NewProcessor(t *testing.T) {
 	assert.False(t, p.Options.SkipSBOM)
 	assert.False(t, p.Options.SkipEmit)
 	assert.False(t, p.Options.SkipIndex)
+}
+
+// TestOutput_LicenseFileExport tests that license files referenced in copyright
+// configuration are exported from BuildKit and available for SBOM generation.
+// This specifically tests the fix for the bug where license files (like COPYING)
+// created during git-checkout were not exported from BuildKit.
+func TestOutput_LicenseFileExport(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	c := newOutputTestContext(t)
+	defer c.h.Close()
+
+	// Load the license-file fixture which creates a LICENSE file in the workspace
+	configPath := filepath.Join("fixtures", "build", "license-file.yaml")
+	cfg, err := config.ParseConfiguration(c.ctx, configPath)
+	require.NoError(t, err)
+
+	// Compile configuration
+	err = harness.CompileConfiguration(c.ctx, cfg, nil)
+	require.NoError(t, err)
+
+	// Build using BuildWithImage with license files specified
+	builder, err := buildkit.NewBuilder(c.h.BuildKitAddr())
+	require.NoError(t, err)
+	defer builder.Close()
+
+	// Collect license files from config (same as production code in build_buildkit.go)
+	var licenseFiles []string
+	for _, cp := range cfg.Package.Copyright {
+		if cp.LicensePath != "" {
+			licenseFiles = append(licenseFiles, cp.LicensePath)
+		}
+	}
+
+	buildCfg := &buildkit.BuildConfig{
+		PackageName:  cfg.Package.Name,
+		Arch:         apko_types.Architecture("amd64"),
+		Pipelines:    cfg.Pipeline,
+		Subpackages:  cfg.Subpackages,
+		BaseEnv:      cfg.Environment.Environment,
+		WorkspaceDir: c.workspaceDir,
+		LicenseFiles: licenseFiles, // This is the key part - export license files
+	}
+
+	err = builder.BuildWithImage(c.ctx, harness.TestBaseImage, buildCfg)
+	require.NoError(t, err, "BuildWithImage should succeed")
+
+	// Verify the LICENSE file was exported to the workspace
+	licensePath := filepath.Join(c.workspaceDir, "LICENSE")
+	_, err = os.Stat(licensePath)
+	require.NoError(t, err, "LICENSE file should exist in workspace after export")
+
+	// Verify the content
+	content, err := os.ReadFile(licensePath)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "MIT License", "LICENSE should contain expected content")
+
+	// Verify LicensingInfos can read the file (this is what SBOM generation does)
+	licensingInfos, err := cfg.Package.LicensingInfos(c.workspaceDir)
+	require.NoError(t, err, "LicensingInfos should be able to read license file")
+	assert.Contains(t, licensingInfos, "MIT", "LicensingInfos should contain MIT license")
+	assert.Contains(t, licensingInfos["MIT"], "MIT License", "License content should be present")
 }

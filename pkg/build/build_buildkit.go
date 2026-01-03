@@ -148,6 +148,14 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 	// Merge in extra environment variables (e.g., GITHUB_TOKEN for private repos)
 	maps.Copy(baseEnv, b.ExtraEnv)
 
+	// Collect license files from copyright configuration for SBOM generation
+	var licenseFiles []string
+	for _, cp := range b.Configuration.Package.Copyright {
+		if cp.LicensePath != "" {
+			licenseFiles = append(licenseFiles, cp.LicensePath)
+		}
+	}
+
 	// Run the build
 	cfg := &buildkit.BuildConfig{
 		PackageName:     b.Configuration.Package.Name,
@@ -161,6 +169,7 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 		Debug:           b.Debug,
 		ExportOnFailure: b.ExportOnFailure,
 		ExportRef:       b.ExportRef,
+		LicenseFiles:    licenseFiles,
 	}
 
 	// Add cache config if registry is configured
