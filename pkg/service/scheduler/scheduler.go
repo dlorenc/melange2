@@ -85,6 +85,9 @@ type Config struct {
 	// client-provided environment variables.
 	// Example: {"GITHUB_TOKEN": "ghp_xxx"}
 	SecretEnv map[string]string
+	// RetryConfig configures retry behavior for transient BuildKit errors.
+	// If nil, default retry configuration is used.
+	RetryConfig *RetryConfig
 }
 
 // Scheduler processes builds.
@@ -101,6 +104,8 @@ type Scheduler struct {
 	buildMu sync.Mutex
 	// activeBuilds tracks which builds are being processed
 	activeBuilds map[string]bool
+	// retryConfig configures retry behavior for transient BuildKit errors
+	retryConfig RetryConfig
 }
 
 // SchedulerOption configures a Scheduler.
@@ -129,6 +134,16 @@ func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buil
 			config.MaxParallel = runtime.NumCPU()
 		}
 	}
+	// Initialize retry config with defaults or provided config
+	retryConfig := DefaultRetryConfig()
+	if config.RetryConfig != nil {
+		retryConfig = *config.RetryConfig
+	}
+	// Ensure minimum values
+	if retryConfig.MaxAttempts < 1 {
+		retryConfig.MaxAttempts = 1
+	}
+
 	s := &Scheduler{
 		buildStore:   buildStore,
 		storage:      storageBackend,
@@ -136,6 +151,7 @@ func New(buildStore store.BuildStore, storageBackend storage.Storage, pool *buil
 		config:       config,
 		sem:          make(chan struct{}, config.MaxParallel),
 		activeBuilds: make(map[string]bool),
+		retryConfig:  retryConfig,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -530,39 +546,6 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 	targetArch := apko_types.ParseArchitecture(arch)
 	span.SetAttributes(attribute.String("arch", arch))
 
-	// Phase 2: Backend selection
-	backendTimer := tracing.NewTimer(ctx, "phase_backend_selection")
-
-	// Atomically select and acquire a backend slot
-	backend, err := s.pool.SelectAndAcquireWithContext(ctx, arch, spec.BackendSelector)
-	if err != nil {
-		return fmt.Errorf("selecting backend: %w", err)
-	}
-
-	backendDuration := backendTimer.Stop()
-	span.AddEvent("backend_selected", trace.WithAttributes(
-		attribute.String("backend_addr", backend.Addr),
-		attribute.String("duration", backendDuration.String()),
-	))
-	if s.metrics != nil {
-		s.metrics.RecordPhaseDuration("backend_selection", backendDuration.Seconds())
-	}
-
-	// Track build success for circuit breaker
-	var buildSuccess bool
-	defer func() {
-		s.pool.Release(backend.Addr, buildSuccess)
-	}()
-
-	pkg.Backend = &types.Backend{
-		Addr:   backend.Addr,
-		Arch:   backend.Arch,
-		Labels: backend.Labels,
-	}
-
-	span.SetAttributes(attribute.String("backend_addr", backend.Addr))
-	log.Infof("building package %s for architecture: %s on backend %s", pkg.Name, targetArch, backend.Addr)
-
 	// Create cache directory
 	cacheDir := filepath.Join(tmpDir, "cache")
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -579,15 +562,14 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		extraEnv[k] = v
 	}
 
-	// Build configuration using the unified BuildConfig
-	buildCfg := build.NewBuildConfigForRemote(build.RemoteBuildParams{
+	// Build configuration template (backend will be set per attempt)
+	buildCfgTemplate := build.RemoteBuildParams{
 		ConfigPath:           configPath,
 		PipelineDir:          func() string { if len(pipelines) > 0 { return pipelineDir }; return "" }(),
 		SourceDir:            func() string { if len(sourceFiles) > 0 { return sourceDir }; return "" }(),
 		OutputDir:            outputDir,
 		CacheDir:             cacheDir,
 		ApkCacheDir:          s.config.ApkCacheDir,
-		BackendAddr:          backend.Addr,
 		Debug:                spec.Debug,
 		JobID:                jobID,
 		CacheRegistry:        s.config.CacheRegistry,
@@ -596,47 +578,143 @@ func (s *Scheduler) executePackageJob(ctx context.Context, jobID string, pkg *ty
 		ApkoRegistryInsecure: s.config.ApkoRegistryInsecure,
 		ApkoServiceAddr:      s.config.ApkoServiceAddr,
 		ExtraEnv:             extraEnv,
-	})
-	buildCfg.Arch = targetArch
-
-	// Phase 3: Build initialization
-	initTimer := tracing.NewTimer(ctx, "phase_build_init")
-
-	// Create the build context directly from BuildConfig
-	bc, err := build.NewFromConfig(ctx, buildCfg)
-	if err != nil {
-		return fmt.Errorf("initializing build: %w", err)
 	}
+
+	// Retry loop for transient BuildKit errors (DNS failures, graceful stops, etc.)
+	var lastErr error
+	var buildkitDuration time.Duration
+	var backendDuration time.Duration
+	var initDuration time.Duration
+	var bc *build.Build
+	var buildSuccess bool
+	var currentBackend *buildkit.Backend
+
+	for attempt := 1; attempt <= s.retryConfig.MaxAttempts; attempt++ {
+		// Phase 2: Backend selection
+		backendTimer := tracing.NewTimer(ctx, "phase_backend_selection")
+
+		// Atomically select and acquire a backend slot
+		backend, err := s.pool.SelectAndAcquireWithContext(ctx, arch, spec.BackendSelector)
+		if err != nil {
+			return fmt.Errorf("selecting backend: %w", err)
+		}
+		currentBackend = backend
+
+		backendDuration = backendTimer.Stop()
+		span.AddEvent("backend_selected", trace.WithAttributes(
+			attribute.String("backend_addr", backend.Addr),
+			attribute.String("duration", backendDuration.String()),
+			attribute.Int("attempt", attempt),
+		))
+		if s.metrics != nil {
+			s.metrics.RecordPhaseDuration("backend_selection", backendDuration.Seconds())
+		}
+
+		pkg.Backend = &types.Backend{
+			Addr:   backend.Addr,
+			Arch:   backend.Arch,
+			Labels: backend.Labels,
+		}
+
+		span.SetAttributes(attribute.String("backend_addr", backend.Addr))
+		log.Infof("building package %s for architecture: %s on backend %s (attempt %d/%d)",
+			pkg.Name, targetArch, backend.Addr, attempt, s.retryConfig.MaxAttempts)
+
+		// Phase 3: Build initialization
+		initTimer := tracing.NewTimer(ctx, "phase_build_init")
+
+		// Set backend address for this attempt
+		buildCfgTemplate.BackendAddr = backend.Addr
+		buildCfg := build.NewBuildConfigForRemote(buildCfgTemplate)
+		buildCfg.Arch = targetArch
+
+		// Create the build context directly from BuildConfig
+		bc, err = build.NewFromConfig(ctx, buildCfg)
+		if err != nil {
+			s.pool.Release(backend.Addr, false)
+			return fmt.Errorf("initializing build: %w", err)
+		}
+
+		initDuration = initTimer.Stop()
+		span.AddEvent("build_initialized", trace.WithAttributes(
+			attribute.String("duration", initDuration.String()),
+		))
+		if s.metrics != nil {
+			s.metrics.RecordPhaseDuration("init", initDuration.Seconds())
+		}
+
+		// Phase 4: BuildKit execution
+		buildkitTimer := tracing.NewTimer(ctx, "phase_buildkit_execution")
+		log.Infof("starting BuildKit execution for package %s (attempt %d/%d)", pkg.Name, attempt, s.retryConfig.MaxAttempts)
+
+		// Execute the build
+		buildErr := bc.BuildPackage(ctx)
+		buildkitDuration = buildkitTimer.Stop()
+
+		if buildErr != nil {
+			bc.Close(ctx)
+
+			// Check if this is a retryable error
+			if s.retryConfig.ShouldRetry(attempt, buildErr) {
+				LogRetryAttempt(ctx, attempt, s.retryConfig.MaxAttempts, buildErr)
+				span.AddEvent("buildkit_retry", trace.WithAttributes(
+					attribute.String("duration", buildkitDuration.String()),
+					attribute.String("error", buildErr.Error()),
+					attribute.Int("attempt", attempt),
+				))
+
+				// Release backend with failure (for circuit breaker tracking)
+				s.pool.Release(backend.Addr, false)
+				lastErr = buildErr
+
+				// Wait before retrying
+				if waitErr := s.retryConfig.WaitForBackoff(ctx, attempt); waitErr != nil {
+					return fmt.Errorf("context cancelled during retry backoff: %w", waitErr)
+				}
+				continue
+			}
+
+			// Non-retryable error - fail immediately
+			span.AddEvent("buildkit_failed", trace.WithAttributes(
+				attribute.String("duration", buildkitDuration.String()),
+				attribute.String("error", buildErr.Error()),
+			))
+			log.Errorf("BuildKit execution failed after %s: %v", buildkitDuration, buildErr)
+
+			if syncErr := s.storage.SyncOutputDir(ctx, jobID, outputDir); syncErr != nil {
+				log.Errorf("failed to sync output on error: %v", syncErr)
+			}
+
+			s.pool.Release(backend.Addr, false)
+			return fmt.Errorf("building package: %w", buildErr)
+		}
+
+		// Success!
+		buildSuccess = true
+		if attempt > 1 {
+			LogRetrySuccess(ctx, attempt)
+		}
+		break
+	}
+
+	// Check if we exhausted all retries
+	if !buildSuccess {
+		if lastErr != nil {
+			LogRetryExhausted(ctx, s.retryConfig.MaxAttempts, lastErr)
+			if syncErr := s.storage.SyncOutputDir(ctx, jobID, outputDir); syncErr != nil {
+				log.Errorf("failed to sync output on error: %v", syncErr)
+			}
+			return fmt.Errorf("building package after %d attempts: %w", s.retryConfig.MaxAttempts, lastErr)
+		}
+		return fmt.Errorf("building package: unknown error")
+	}
+
+	// Release the successful backend
+	defer func() {
+		s.pool.Release(currentBackend.Addr, buildSuccess)
+	}()
 	defer bc.Close(ctx)
 
-	initDuration := initTimer.Stop()
-	span.AddEvent("build_initialized", trace.WithAttributes(
-		attribute.String("duration", initDuration.String()),
-	))
-	if s.metrics != nil {
-		s.metrics.RecordPhaseDuration("init", initDuration.Seconds())
-	}
-
-	// Phase 4: BuildKit execution
-	buildkitTimer := tracing.NewTimer(ctx, "phase_buildkit_execution")
-	log.Infof("starting BuildKit execution for package %s", pkg.Name)
-
-	// Execute the build
-	if err := bc.BuildPackage(ctx); err != nil {
-		buildkitDuration := buildkitTimer.Stop()
-		span.AddEvent("buildkit_failed", trace.WithAttributes(
-			attribute.String("duration", buildkitDuration.String()),
-			attribute.String("error", err.Error()),
-		))
-		log.Errorf("BuildKit execution failed after %s: %v", buildkitDuration, err)
-
-		if syncErr := s.storage.SyncOutputDir(ctx, jobID, outputDir); syncErr != nil {
-			log.Errorf("failed to sync output on error: %v", syncErr)
-		}
-		return fmt.Errorf("building package: %w", err)
-	}
-
-	buildkitDuration := buildkitTimer.Stop()
 	span.AddEvent("buildkit_complete", trace.WithAttributes(
 		attribute.String("duration", buildkitDuration.String()),
 	))
