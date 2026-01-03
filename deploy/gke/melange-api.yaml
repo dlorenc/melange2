@@ -1,0 +1,102 @@
+# Copyright 2024 Chainguard, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Phase 4 Microservices: Standalone API Server
+# This deployment handles HTTP API requests for builds/packages.
+# Backend management is handled by melange-orchestrator.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: melange-api
+  namespace: melange
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: melange-api
+  template:
+    metadata:
+      labels:
+        app: melange-api
+    spec:
+      serviceAccountName: melange-server
+      nodeSelector:
+        workload: services
+      containers:
+      - name: melange-api
+        image: ko://github.com/dlorenc/melange2/cmd/melange-api
+        args:
+        - --listen-addr=:8080
+        - --enable-tracing
+        env:
+        # PostgreSQL connection string for persistent build history
+        - name: POSTGRES_DSN
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: dsn
+              optional: true
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: melange-api
+  namespace: melange
+spec:
+  selector:
+    app: melange-api
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  type: ClusterIP
+---
+# Pod Disruption Budget for melange-api
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: melange-api-pdb
+  namespace: melange
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: melange-api

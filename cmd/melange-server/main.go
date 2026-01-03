@@ -200,9 +200,12 @@ func run(ctx context.Context) error {
 	}
 
 	// Create API server
-	apiServer := api.NewServer(buildStore, pool)
+	apiServer := api.NewServer(buildStore)
 
-	// Create a mux that routes /debug/pprof/ to pprof handlers and everything else to API
+	// Create backend handler for monolith mode
+	backendHandler := newBackendHandler(pool)
+
+	// Create a mux that routes requests appropriately
 	mux := http.NewServeMux()
 	mux.Handle("/debug/pprof/", http.DefaultServeMux) // pprof registers to DefaultServeMux
 	mux.HandleFunc("/debug/apko/stats", handleApkoStats)
@@ -210,9 +213,12 @@ func run(ctx context.Context) error {
 	if melangeMetrics != nil {
 		mux.Handle("/metrics", melangeMetrics.Handler())
 	}
+	// Backend endpoints handled by monolith (not in Phase 4+ microservices API server)
+	mux.HandleFunc("/api/v1/backends", backendHandler.handleBackends)
+	mux.HandleFunc("/api/v1/backends/status", backendHandler.handleBackendsStatus)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Route non-pprof requests to API server
-		if !strings.HasPrefix(r.URL.Path, "/debug/pprof/") && !strings.HasPrefix(r.URL.Path, "/debug/apko/") && r.URL.Path != "/metrics" {
+		if !strings.HasPrefix(r.URL.Path, "/debug/pprof/") && !strings.HasPrefix(r.URL.Path, "/debug/apko/") && r.URL.Path != "/metrics" && !strings.HasPrefix(r.URL.Path, "/api/v1/backends") {
 			apiServer.ServeHTTP(w, r)
 			return
 		}
@@ -512,4 +518,124 @@ func loadSecretEnv() map[string]string {
 	}
 
 	return result
+}
+
+// backendHandler handles backend management endpoints.
+// This is used by the monolith (melange-server) to provide backwards compatibility.
+// In Phase 4+ microservices deployment, backends are managed by the orchestrator.
+type backendHandler struct {
+	pool *buildkit.Pool
+}
+
+func newBackendHandler(pool *buildkit.Pool) *backendHandler {
+	return &backendHandler{pool: pool}
+}
+
+// handleBackends handles backend management:
+// GET /api/v1/backends - list available backends
+// POST /api/v1/backends - add a new backend
+// DELETE /api/v1/backends - remove a backend
+func (h *backendHandler) handleBackends(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.listBackends(w, r)
+	case http.MethodPost:
+		h.addBackend(w, r)
+	case http.MethodDelete:
+		h.removeBackend(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *backendHandler) listBackends(w http.ResponseWriter, r *http.Request) {
+	arch := r.URL.Query().Get("arch")
+
+	var backends []buildkit.Backend
+	if arch != "" {
+		backends = h.pool.ListByArch(arch)
+	} else {
+		backends = h.pool.List()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"backends":      backends,
+		"architectures": h.pool.Architectures(),
+	})
+}
+
+type addBackendRequest struct {
+	Addr   string            `json:"addr"`
+	Arch   string            `json:"arch"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+func (h *backendHandler) addBackend(w http.ResponseWriter, r *http.Request) {
+	var req addBackendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	backend := buildkit.Backend{
+		Addr:   req.Addr,
+		Arch:   req.Arch,
+		Labels: req.Labels,
+	}
+
+	if err := h.pool.Add(backend); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(backend)
+}
+
+type removeBackendRequest struct {
+	Addr string `json:"addr"`
+}
+
+func (h *backendHandler) removeBackend(w http.ResponseWriter, r *http.Request) {
+	var req removeBackendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Addr == "" {
+		http.Error(w, "addr is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.pool.Remove(req.Addr); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *backendHandler) handleBackendsStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	status := h.pool.Status()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"backends": status,
+	})
 }

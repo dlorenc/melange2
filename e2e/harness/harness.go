@@ -185,7 +185,7 @@ func (h *Harness) startServer(cfg *scheduler.Config) {
 	h.scheduler = scheduler.New(h.buildStore, localStorage, h.pool, schedulerCfg)
 
 	// Create API server
-	h.server = api.NewServer(h.buildStore, h.pool)
+	h.server = api.NewServer(h.buildStore)
 
 	// Start HTTP server
 	h.httpServer = httptest.NewServer(h.server)
