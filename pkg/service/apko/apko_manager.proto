@@ -1,0 +1,214 @@
+// Copyright 2024 Chainguard, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package apko.manager.v1;
+
+option go_package = "github.com/dlorenc/melange2/pkg/service/apko";
+
+// ApkoManagerService provides apko instance management as a gRPC service.
+// This enables the orchestrator to communicate with the Apko Manager
+// as a separate microservice, allowing independent scaling and fault isolation.
+//
+// Phase 7 of microservices architecture: See issue #186.
+service ApkoManagerService {
+  // RequestInstance acquires an apko instance for the given build requirements.
+  // The returned instance must be released when the build completes.
+  rpc RequestInstance(RequestInstanceRequest) returns (RequestInstanceResponse);
+
+  // ReleaseInstance returns an instance to the manager and records the build result.
+  // This must be called when a build completes (regardless of outcome).
+  rpc ReleaseInstance(ReleaseInstanceRequest) returns (ReleaseInstanceResponse);
+
+  // GetStatus returns current state of all instances for observability.
+  rpc GetStatus(GetManagerStatusRequest) returns (GetManagerStatusResponse);
+
+  // GetCapacity returns the total build capacity across all instances.
+  rpc GetCapacity(GetManagerCapacityRequest) returns (GetManagerCapacityResponse);
+
+  // Health returns the health status of the service.
+  rpc Health(ManagerHealthRequest) returns (ManagerHealthResponse);
+}
+
+// RequestInstanceRequest specifies requirements for acquiring an apko instance.
+message RequestInstanceRequest {
+  // job_id is the identifier for this build job (for logging/tracing).
+  string job_id = 1;
+
+  // estimated_duration_ms is the estimated build duration in milliseconds.
+  // Used for load balancing decisions.
+  int64 estimated_duration_ms = 2;
+
+  // priority indicates the importance of this build (higher = more important).
+  int32 priority = 3;
+}
+
+// RequestInstanceResponse contains the acquired instance information.
+message RequestInstanceResponse {
+  // instance contains the acquired instance details.
+  InstanceInfo instance = 1;
+}
+
+// InstanceInfo represents an acquired apko instance.
+// Named InstanceInfo to avoid conflict with Go types.
+message InstanceInfo {
+  // id is a unique identifier for this instance.
+  string id = 1;
+
+  // addr is the apko service gRPC address (e.g., "apko-server:9090").
+  string addr = 2;
+
+  // max_concurrent is the maximum concurrent builds this instance supports.
+  int32 max_concurrent = 3;
+
+  // acquired_at_unix is when this instance was acquired (Unix timestamp).
+  int64 acquired_at_unix = 4;
+}
+
+// ReleaseInstanceRequest returns an instance and records the build result.
+message ReleaseInstanceRequest {
+  // instance_id is the ID of the instance to release.
+  string instance_id = 1;
+
+  // result records the outcome of the build.
+  BuildResultInfo result = 2;
+}
+
+// BuildResultInfo records the outcome of a build for tracking and circuit breaking.
+// Named BuildResultInfo to avoid conflict with Go types.
+message BuildResultInfo {
+  // success indicates whether the build completed successfully.
+  bool success = 1;
+
+  // duration_ms is how long the build took in milliseconds.
+  int64 duration_ms = 2;
+
+  // error is the error message if the build failed.
+  string error = 3;
+
+  // cache_hit indicates whether the result was served from cache.
+  bool cache_hit = 4;
+}
+
+// ReleaseInstanceResponse is the response from releasing an instance.
+message ReleaseInstanceResponse {
+  // released indicates whether the instance was successfully released.
+  bool released = 1;
+}
+
+// GetManagerStatusRequest is a request for manager status.
+message GetManagerStatusRequest {}
+
+// GetManagerStatusResponse contains the current state of the manager.
+message GetManagerStatusResponse {
+  // status contains the manager status.
+  ManagerStatusInfo status = 1;
+}
+
+// ManagerStatusInfo represents the current state of the manager for observability.
+// Named ManagerStatusInfo to avoid conflict with Go types.
+message ManagerStatusInfo {
+  // type is the manager implementation type (e.g., "static", "kubernetes").
+  string type = 1;
+
+  // total_instances is the total number of apko instances available.
+  int32 total_instances = 2;
+
+  // total_capacity is the total concurrent build capacity across all instances.
+  int32 total_capacity = 3;
+
+  // active_builds is the total number of builds currently running.
+  int32 active_builds = 4;
+
+  // instances contains status for each individual instance.
+  repeated InstanceStatusInfo instances = 5;
+
+  // cache_hits is the total number of cache hits across all instances.
+  int64 cache_hits = 6;
+
+  // cache_misses is the total number of cache misses across all instances.
+  int64 cache_misses = 7;
+}
+
+// InstanceStatusInfo represents the current state of a single apko instance.
+// Named InstanceStatusInfo to avoid conflict with Go types.
+message InstanceStatusInfo {
+  // id is the instance identifier.
+  string id = 1;
+
+  // addr is the apko service gRPC address.
+  string addr = 2;
+
+  // active_builds is the number of builds currently running on this instance.
+  int32 active_builds = 3;
+
+  // max_concurrent is the maximum concurrent builds this instance supports.
+  int32 max_concurrent = 4;
+
+  // circuit_open indicates if the circuit breaker is open (instance excluded).
+  bool circuit_open = 5;
+
+  // failures is the number of consecutive failures.
+  int32 failures = 6;
+
+  // last_failure_unix is the time of the last failure (Unix timestamp).
+  int64 last_failure_unix = 7;
+
+  // cache_hits is the number of cache hits on this instance.
+  int64 cache_hits = 8;
+
+  // cache_misses is the number of cache misses on this instance.
+  int64 cache_misses = 9;
+}
+
+// GetManagerCapacityRequest is a request for total capacity.
+message GetManagerCapacityRequest {}
+
+// GetManagerCapacityResponse contains the total build capacity.
+message GetManagerCapacityResponse {
+  // total_capacity is the total number of concurrent builds supported.
+  int32 total_capacity = 1;
+
+  // available_capacity is the current available capacity.
+  int32 available_capacity = 2;
+}
+
+// ManagerHealthRequest is an empty request for health checks.
+message ManagerHealthRequest {}
+
+// ManagerHealthResponse contains the health status of the service.
+message ManagerHealthResponse {
+  // Status represents the health status.
+  enum Status {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+
+  // status is the current health status.
+  Status status = 1;
+
+  // manager_type is the type of manager being used.
+  string manager_type = 2;
+
+  // total_instances is the total number of apko instances.
+  int32 total_instances = 3;
+
+  // total_capacity is the total build capacity.
+  int32 total_capacity = 4;
+
+  // active_builds is the number of active builds.
+  int32 active_builds = 5;
+}

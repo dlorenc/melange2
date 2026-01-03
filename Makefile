@@ -93,11 +93,17 @@ generate:
 	go generate ./...
 
 .PHONY: proto
-proto: ## Generate protobuf code for apko service
+proto: ## Generate protobuf code for services
 	@echo "==> Generating protobuf code..."
 	protoc --go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		pkg/service/apko/apko.proto
+	protoc --go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		pkg/service/apko/apko_manager.proto
+	protoc --go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		pkg/service/buildkit/buildkit_manager.proto
 	@echo "==> Protobuf generation complete."
 
 ##########
