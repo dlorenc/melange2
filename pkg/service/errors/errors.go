@@ -39,4 +39,12 @@ var (
 
 	// ErrPackageNotFound is returned when a package job does not exist.
 	ErrPackageNotFound = errors.New("package not found")
+
+	// ErrPackageNotReady is returned when a package cannot be claimed
+	// because its dependencies have not all completed successfully.
+	ErrPackageNotReady = errors.New("package not ready: dependencies not satisfied")
+
+	// ErrPackageAlreadyClaimed is returned when attempting to claim
+	// a package that is already running or completed.
+	ErrPackageAlreadyClaimed = errors.New("package already claimed or completed")
 )
