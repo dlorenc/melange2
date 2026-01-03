@@ -155,6 +155,11 @@ type Build struct {
 	// ExtraEnv contains additional environment variables to inject into all pipeline steps.
 	// This is useful for passing credentials like GITHUB_TOKEN for private repo access.
 	ExtraEnv map[string]string
+
+	// BaseImage is an optional pre-built image reference to use instead of building
+	// apko layers. When set, buildGuestLayers() is skipped and BuildWithImage() is
+	// used instead of BuildWithLayers(). This is primarily useful for testing.
+	BaseImage string
 }
 
 // NewFromConfig creates a new Build from a BuildConfig.
@@ -434,8 +439,13 @@ func (b *Build) loadIgnoreRules(ctx context.Context) ([]*xignore.Pattern, error)
 }
 
 // getBuildConfigPURL determines the package URL for the melange config file
-// itself.
+// itself. Returns nil if the repository URL is not configured.
 func (b Build) getBuildConfigPURL() (*purl.PackageURL, error) {
+	// Return nil if repository URL is not set (e.g., local builds, tests)
+	if b.ConfigFileRepositoryURL == "" {
+		return nil, nil
+	}
+
 	namespace, name, found := strings.Cut(strings.TrimPrefix(b.ConfigFileRepositoryURL, "https://github.com/"), "/")
 	if !found {
 		return nil, fmt.Errorf("extracting namespace and name from %s", b.ConfigFileRepositoryURL)

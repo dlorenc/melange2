@@ -122,17 +122,6 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 		}
 	}
 
-	// Build the guest environment with apko and get the layer(s)
-	log.Info("building guest environment with apko")
-	apkoStart := time.Now()
-	layers, releaseData, layerCleanup, err := b.buildGuestLayers(ctx)
-	apkoDuration := time.Since(apkoStart)
-	if err != nil {
-		return fmt.Errorf("building guest layers: %w", err)
-	}
-	defer layerCleanup()
-	log.Infof("apko_layer_generation took %s (%d layers)", apkoDuration, len(layers))
-
 	// Create BuildKit builder
 	builder, err := buildkit.NewBuilder(b.BuildKitAddr)
 	if err != nil {
@@ -195,10 +184,36 @@ func (b *Build) buildPackageBuildKit(ctx context.Context) error {
 
 	log.Info("running build with BuildKit")
 	buildkitStart := time.Now()
-	if err := builder.BuildWithLayers(ctx, layers, cfg); err != nil {
-		// Capture step timing even on failure for diagnostics
-		b.BuildKitSummary = builder.GetLastSummary()
-		return fmt.Errorf("buildkit build failed: %w", err)
+
+	// releaseData is used for SBOM generation - only available when building with apko layers
+	var releaseData *apko_build.ReleaseData
+
+	// If BaseImage is set, use it directly instead of building apko layers.
+	// This is primarily useful for testing where we want to exercise the build
+	// workflow without needing a full apko environment.
+	if b.BaseImage != "" {
+		log.Infof("using pre-built base image: %s", b.BaseImage)
+		if err := builder.BuildWithImage(ctx, b.BaseImage, cfg); err != nil {
+			b.BuildKitSummary = builder.GetLastSummary()
+			return fmt.Errorf("buildkit build failed: %w", err)
+		}
+	} else {
+		// Build the guest environment with apko and get the layer(s)
+		log.Info("building guest environment with apko")
+		apkoStart := time.Now()
+		layers, rd, layerCleanup, err := b.buildGuestLayers(ctx)
+		apkoDuration := time.Since(apkoStart)
+		if err != nil {
+			return fmt.Errorf("building guest layers: %w", err)
+		}
+		defer layerCleanup()
+		releaseData = rd
+		log.Infof("apko_layer_generation took %s (%d layers)", apkoDuration, len(layers))
+
+		if err := builder.BuildWithLayers(ctx, layers, cfg); err != nil {
+			b.BuildKitSummary = builder.GetLastSummary()
+			return fmt.Errorf("buildkit build failed: %w", err)
+		}
 	}
 	buildkitDuration := time.Since(buildkitStart)
 	log.Infof("buildkit_solve took %s", buildkitDuration)

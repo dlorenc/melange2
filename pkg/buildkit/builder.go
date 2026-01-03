@@ -667,6 +667,192 @@ func (b *Builder) TestWithImage(ctx context.Context, imageRef string, cfg *TestC
 	return b.testWithProvider(ctx, provider, cfg)
 }
 
+// BuildWithImage executes a build using an image reference instead of apko layers.
+// This is useful for e2e tests that use a base image directly without generating
+// apko layers.
+//
+// Unlike BuildWithLayers, this method:
+// - Uses llb.Image() directly instead of loading layers
+// - Does not require apko layer generation
+// - Is ideal for e2e testing with a simple base image
+func (b *Builder) BuildWithImage(ctx context.Context, imageRef string, cfg *BuildConfig) error {
+	log := clog.FromContext(ctx)
+
+	// Create state from image reference
+	state := llb.Image(imageRef, llb.WithCustomName("base image"))
+
+	// Prepare workspace directories
+	state = PrepareWorkspace(state, cfg.PackageName)
+
+	localDirs := make(map[string]string)
+
+	// If we have source files, copy them to the workspace
+	if cfg.SourceDir != "" {
+		if _, err := os.Stat(cfg.SourceDir); err == nil {
+			sourceLocalName := "source"
+			state = CopySourceToWorkspace(state, sourceLocalName)
+			localDirs[sourceLocalName] = cfg.SourceDir
+		}
+	}
+
+	// If we have a cache directory, copy it to /var/cache/melange
+	if cfg.CacheDir != "" {
+		log.Infof("copying cache from %s to %s", cfg.CacheDir, DefaultCacheDir)
+		state = CopyCacheToWorkspace(state, CacheLocalName)
+		localDirs[CacheLocalName] = cfg.CacheDir
+	}
+
+	// Create subpackage output directories
+	for _, sp := range cfg.Subpackages {
+		state = state.File(
+			llb.Mkdir(WorkspaceOutputDir(sp.Name), 0755,
+				llb.WithParents(true),
+			),
+			llb.WithCustomName(fmt.Sprintf("create output directory for %s", sp.Name)),
+		)
+	}
+
+	// Configure the pipeline builder
+	b.pipeline.Debug = cfg.Debug
+	if cfg.BaseEnv != nil {
+		b.pipeline.BaseEnv = MergeEnv(b.pipeline.BaseEnv, cfg.BaseEnv)
+	}
+
+	// Helper to export debug image on failure
+	exportOnFailure := func(lastGoodState llb.State, pipelineErr error, context string) error {
+		if cfg.ExportOnFailure == "" {
+			return fmt.Errorf("%s: %w", context, pipelineErr)
+		}
+
+		log.Warnf("build failed at %s, exporting debug image...", context)
+		exportCfg := &ExportConfig{
+			Type:      ExportType(cfg.ExportOnFailure),
+			Ref:       cfg.ExportRef,
+			Arch:      cfg.Arch,
+			LocalDirs: localDirs,
+		}
+		if exportErr := b.ExportDebugImage(ctx, lastGoodState, exportCfg); exportErr != nil {
+			log.Errorf("failed to export debug image: %v", exportErr)
+		}
+		return fmt.Errorf("%s: %w", context, pipelineErr)
+	}
+
+	// Run main pipelines with recovery support
+	log.Info("running main pipelines")
+	result := b.pipeline.BuildPipelinesWithRecovery(state, cfg.Pipelines)
+	if result.Error != nil {
+		return exportOnFailure(result.State, result.Error, "building main pipelines")
+	}
+	state = result.State
+
+	// Run subpackage pipelines
+	for _, sp := range cfg.Subpackages {
+		log.Infof("running pipelines for subpackage %s", sp.Name)
+		result := b.pipeline.BuildPipelinesWithRecovery(state, sp.Pipeline)
+		if result.Error != nil {
+			return exportOnFailure(result.State, result.Error, fmt.Sprintf("building subpackage %s pipelines", sp.Name))
+		}
+		state = result.State
+	}
+
+	// Export the workspace
+	log.Info("exporting workspace")
+	exportState := ExportWorkspace(state)
+
+	// Marshal to LLB definition
+	ociPlatform := cfg.Arch.ToOCIPlatform()
+	platform := llb.Platform(ocispecs.Platform{
+		OS:           ociPlatform.OS,
+		Architecture: ociPlatform.Architecture,
+		Variant:      ociPlatform.Variant,
+	})
+	def, err := exportState.Marshal(ctx, platform)
+	if err != nil {
+		return fmt.Errorf("marshaling LLB: %w", err)
+	}
+
+	// Ensure output directory exists
+	if err := os.MkdirAll(cfg.WorkspaceDir, 0755); err != nil {
+		return fmt.Errorf("creating workspace dir: %w", err)
+	}
+
+	melangeOutDir := filepath.Join(cfg.WorkspaceDir, "melange-out")
+	if err := os.MkdirAll(melangeOutDir, 0755); err != nil {
+		return fmt.Errorf("creating melange-out dir: %w", err)
+	}
+
+	// Create progress writer
+	progress := NewProgressWriter(os.Stderr, b.ProgressMode, b.ShowLogs)
+
+	// Solve and export with progress tracking
+	log.Info("solving build graph")
+	solveStart := time.Now()
+
+	statusCh := make(chan *client.SolveStatus)
+	eg, egCtx := errgroup.WithContext(ctx)
+
+	// Progress display goroutine
+	eg.Go(func() error {
+		return progress.Write(egCtx, statusCh)
+	})
+
+	// Solve goroutine
+	eg.Go(func() error {
+		solveOpt := client.SolveOpt{
+			LocalDirs: localDirs,
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterLocal,
+				OutputDir: melangeOutDir,
+			}},
+		}
+
+		// Add cache import/export if configured
+		if cfg.CacheConfig != nil && cfg.CacheConfig.Registry != "" {
+			cacheRef := cfg.CacheConfig.Registry
+			mode := cfg.CacheConfig.Mode
+			if mode == "" {
+				mode = "max"
+			}
+
+			log.Infof("using registry cache: %s (mode=%s)", cacheRef, mode)
+
+			solveOpt.CacheImports = []client.CacheOptionsEntry{{
+				Type: "registry",
+				Attrs: map[string]string{
+					"ref": cacheRef,
+				},
+			}}
+
+			solveOpt.CacheExports = []client.CacheOptionsEntry{{
+				Type: "registry",
+				Attrs: map[string]string{
+					"ref":  cacheRef,
+					"mode": mode,
+				},
+			}}
+		}
+
+		_, err := b.client.Client().Solve(ctx, def, solveOpt, statusCh)
+		return err
+	})
+
+	if err := eg.Wait(); err != nil {
+		// Capture summary even on failure for diagnostics
+		summary := progress.GetSummary()
+		b.lastSummary = &summary
+		return fmt.Errorf("solving build: %w", err)
+	}
+	solveDuration := time.Since(solveStart)
+	log.Infof("graph_solve took %s", solveDuration)
+
+	// Capture build summary with step timing
+	summary := progress.GetSummary()
+	b.lastSummary = &summary
+
+	log.Info("build completed successfully")
+	return nil
+}
+
 // isCacheExportError detects if an error is related to cache export.
 // This includes registry connection issues (connection reset, broken pipe, EOF)
 // that occur during the "exporting cache" phase.
