@@ -288,3 +288,52 @@ func TestProgressWriterWriteError(t *testing.T) {
 
 	require.Equal(t, "something went wrong", state.error)
 }
+
+func TestProgressWriterFormatName(t *testing.T) {
+	var buf bytes.Buffer
+	pw := NewProgressWriter(&buf, ProgressModePlain, false)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "empty name",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "internal operation",
+			input:    "[internal] load build context",
+			expected: "",
+		},
+		{
+			name:     "short name",
+			input:    "build step 1",
+			expected: "build step 1",
+		},
+		{
+			name:     "exactly 80 chars",
+			input:    "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+			expected: "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+		},
+		{
+			name:     "long name gets truncated",
+			input:    "123456789012345678901234567890123456789012345678901234567890123456789012345678901",
+			expected: "12345678901234567890123456789012345678901234567890123456789012345678901234567...",
+		},
+		{
+			name:     "very long name",
+			input:    "This is a very long name that exceeds eighty characters and should be truncated with ellipsis at the end",
+			expected: "This is a very long name that exceeds eighty characters and should be truncat...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pw.formatName(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}

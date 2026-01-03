@@ -24,6 +24,7 @@ import (
 	"github.com/chainguard-dev/clog"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/util/entitlements"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 )
@@ -99,6 +100,10 @@ func (b *Builder) ExportDebugImage(ctx context.Context, state llb.State, cfg *Ex
 		_, err := b.client.Client().Solve(ctx, def, client.SolveOpt{
 			LocalDirs: cfg.LocalDirs,
 			Exports:   exports,
+			// Allow insecure mode for full root capabilities (e.g., trusted.* xattrs)
+			AllowedEntitlements: []string{
+				entitlements.EntitlementSecurityInsecure.String(),
+			},
 		}, statusCh)
 		return err
 	})

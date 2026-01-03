@@ -398,6 +398,7 @@ echo "hello" > /home/build/melange-out/test-pkg/result.txt
 			Type:      client.ExporterLocal,
 			OutputDir: melangeOutDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 

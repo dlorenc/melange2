@@ -19,6 +19,8 @@ spec:
         args:
         - --addr
         - tcp://0.0.0.0:1234
+        - --allow-insecure-entitlement
+        - security.insecure
         ports:
         - containerPort: 1234
           name: buildkit

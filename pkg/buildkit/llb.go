@@ -168,10 +168,12 @@ func (b *PipelineBuilder) BuildPipeline(base llb.State, p *config.Pipeline) (llb
 		// Some installers (like Perl's ExtUtils::MakeMaker) set different permissions
 		// when running as root (444/555) vs a regular user (644/755).
 		// The workspace directories are created with proper ownership before this runs.
+		// Use insecure mode for full root capabilities (e.g., trusted.* xattrs).
 		opts := []llb.RunOption{
 			llb.Args([]string{"/bin/sh", "-c", script}),
 			llb.Dir(workdir),
 			llb.User(BuildUserName),
+			llb.Security(llb.SecurityModeInsecure),
 		}
 
 		// Add sorted environment variables for determinism
@@ -256,6 +258,7 @@ chmod 1777 /tmp`,
 
 	return base.Run(
 		llb.Args([]string{"/bin/sh", "-c", script}),
+		llb.Security(llb.SecurityModeInsecure),
 		llb.WithCustomName("setup build environment"),
 	).Root()
 }
@@ -273,6 +276,7 @@ func PrepareWorkspace(base llb.State, pkgName string) llb.State {
 			DefaultWorkDir, DefaultWorkDir,
 			DefaultCacheDir, DefaultCacheDir,
 		)}),
+		llb.Security(llb.SecurityModeInsecure),
 		llb.WithCustomName("create workspace"),
 	).Root()
 
@@ -355,10 +359,12 @@ func (b *PipelineBuilder) BuildTestPipelines(base llb.State, pipelines []config.
 	}
 
 	// Build run options
+	// Use insecure mode for full root capabilities (e.g., trusted.* xattrs).
 	opts := []llb.RunOption{
 		llb.Args([]string{"/bin/sh", "-c", combinedScript}),
 		llb.Dir(DefaultWorkDir),
 		llb.User(BuildUserName),
+		llb.Security(llb.SecurityModeInsecure),
 	}
 
 	// Add sorted environment variables for determinism

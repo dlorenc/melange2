@@ -239,6 +239,7 @@ func TestImageLoaderIntegration(t *testing.T) {
 		LocalDirs: map[string]string{
 			result.LocalName: result.ExtractDir,
 		},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 }
@@ -436,7 +437,8 @@ func TestLoadLayersIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = c.Solve(ctx, def, client.SolveOpt{
-		LocalDirs: result.LocalDirs,
+		LocalDirs:           result.LocalDirs,
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 }
@@ -483,6 +485,7 @@ func TestLoadResultUsage(t *testing.T) {
 		LocalDirs: map[string]string{
 			result.LocalName: result.ExtractDir,
 		},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 }

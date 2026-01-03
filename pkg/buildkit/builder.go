@@ -24,9 +24,10 @@ import (
 
 	apko_types "chainguard.dev/apko/pkg/build/types"
 	"github.com/chainguard-dev/clog"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
-	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/moby/buildkit/util/entitlements"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/errgroup"
 
@@ -346,6 +347,10 @@ func (b *Builder) BuildWithLayers(ctx context.Context, layers []v1.Layer, cfg *B
 				Type:      client.ExporterLocal,
 				OutputDir: melangeOutDir,
 			}},
+			// Allow insecure mode for full root capabilities (e.g., trusted.* xattrs)
+			AllowedEntitlements: []string{
+				entitlements.EntitlementSecurityInsecure.String(),
+			},
 		}
 
 		// Track if cache export is enabled for retry logic
@@ -597,6 +602,7 @@ func (b *Builder) runTestPipelinesWithProvider(ctx context.Context, provider Tes
 			"mkdir -p %s && echo 'PASSED' > %s/status.txt",
 			testResultDir, testResultDir,
 		)}),
+		llb.Security(llb.SecurityModeInsecure),
 		llb.WithCustomName(fmt.Sprintf("mark %s tests as passed", pkgName)),
 	).Root()
 
@@ -648,6 +654,10 @@ func (b *Builder) runTestPipelinesWithProvider(ctx context.Context, provider Tes
 				Type:      client.ExporterLocal,
 				OutputDir: testResultsDir,
 			}},
+			// Allow insecure mode for full root capabilities (e.g., trusted.* xattrs)
+			AllowedEntitlements: []string{
+				entitlements.EntitlementSecurityInsecure.String(),
+			},
 		}, statusCh)
 		return err
 	})
@@ -804,6 +814,10 @@ func (b *Builder) BuildWithImage(ctx context.Context, imageRef string, cfg *Buil
 				Type:      client.ExporterLocal,
 				OutputDir: melangeOutDir,
 			}},
+			// Allow insecure mode for full root capabilities (e.g., trusted.* xattrs)
+			AllowedEntitlements: []string{
+				entitlements.EntitlementSecurityInsecure.String(),
+			},
 		}
 
 		// Add cache import/export if configured

@@ -100,6 +100,8 @@ spec:
         - tcp://0.0.0.0:1234
         - --config
         - /etc/buildkit/buildkit.toml
+        - --allow-insecure-entitlement
+        - security.insecure
         ports:
         - containerPort: 1234
           name: buildkit

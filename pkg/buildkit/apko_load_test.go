@@ -28,10 +28,17 @@ import (
 
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/util/entitlements"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// testAllowedEntitlements returns the entitlements needed for tests.
+// This matches the insecure mode used in production builds.
+func testAllowedEntitlements() []string {
+	return []string{entitlements.EntitlementSecurityInsecure.String()}
+}
 
 // TestBuildKitConnection verifies we can connect to BuildKit via testcontainers.
 // This is the foundational test for the entire BuildKit integration.
@@ -78,7 +85,9 @@ func TestSimpleLLBExecution(t *testing.T) {
 	require.NoError(t, err, "should marshal LLB")
 
 	// Solve (execute) the LLB
-	_, err = c.Solve(ctx, def, client.SolveOpt{}, nil)
+	_, err = c.Solve(ctx, def, client.SolveOpt{
+		AllowedEntitlements: testAllowedEntitlements(),
+	}, nil)
 	require.NoError(t, err, "should solve LLB")
 
 	t.Log("Successfully executed simple LLB")
@@ -148,6 +157,7 @@ func TestLocalFilesystemAsImage(t *testing.T) {
 		LocalDirs: map[string]string{
 			localName: extractDir,
 		},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err, "should execute command with local filesystem overlay")
 
@@ -190,6 +200,7 @@ func TestWorkspaceExport(t *testing.T) {
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -339,6 +350,7 @@ echo "processed" > melange-out/test-pkg/output.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -370,7 +382,7 @@ func startBuildKitContainer(t *testing.T, ctx context.Context) *buildKitContaine
 		Image:        "moby/buildkit:latest",
 		ExposedPorts: []string{"1234/tcp"},
 		Privileged:   true,
-		Cmd:          []string{"--addr", "tcp://0.0.0.0:1234"},
+		Cmd:          []string{"--addr", "tcp://0.0.0.0:1234", "--allow-insecure-entitlement", "security.insecure"},
 		WaitingFor:   wait.ForLog("running server").WithStartupTimeout(60 * time.Second),
 	}
 
