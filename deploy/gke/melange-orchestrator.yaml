@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Phase 4 Microservices: Standalone Orchestrator
+# Phase 4/6 Microservices: Standalone Orchestrator
 # This deployment handles build execution, backend management, and job scheduling.
 # Communicates with melange-api for build/package state.
+#
+# The orchestrator can operate in two modes:
+# 1. Embedded mode: Directly manages BuildKit workers via --backends-config
+# 2. Microservices mode (Phase 6): Uses gRPC to communicate with melange-buildkit-manager
+#
+# To enable microservices mode, set buildkit-manager-addr in the configmap.
 
 apiVersion: apps/v1
 kind: Deployment
@@ -80,6 +86,14 @@ spec:
             configMapKeyRef:
               name: melange-config
               key: apko-service-addr
+              optional: true
+        # BuildKit Manager service address (Phase 6 microservices mode)
+        # When set, orchestrator uses gRPC instead of direct backend management
+        - name: BUILDKIT_MANAGER_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: melange-config
+              key: buildkit-manager-addr
               optional: true
         # Server-side secrets injected into all builds
         - name: SECRET_ENV_GITHUB_TOKEN

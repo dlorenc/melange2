@@ -17,12 +17,17 @@
 //
 // In the microservices deployment:
 //   - melange-api: handles HTTP API requests (builds, packages)
-//   - melange-orchestrator: processes builds, manages backends
+//   - melange-orchestrator: processes builds, coordinates with managers
+//   - melange-buildkit-manager: manages BuildKit workers (Phase 6)
 //
 // The orchestrator communicates with the API server via HTTP to:
 //   - Poll for active builds
 //   - Claim packages for execution
 //   - Update package status
+//
+// The orchestrator can connect to BuildKit workers either:
+//   - Directly via --buildkit-addr or --backends-config (embedded mode)
+//   - Via gRPC to melange-buildkit-manager (microservices mode, Phase 6)
 //
 // For the monolith (backward compatibility), use melange-server instead.
 package main
@@ -51,15 +56,16 @@ import (
 )
 
 var (
-	listenAddr     = flag.String("listen-addr", ":8081", "HTTP listen address for health/metrics")
-	apiServerAddr  = flag.String("api-server", "http://melange-api:8080", "Address of the melange-api server")
-	buildkitAddr   = flag.String("buildkit-addr", "", "BuildKit daemon address (for single-backend mode)")
-	backendsConfig = flag.String("backends-config", "", "Path to backends config file (YAML) for multi-backend mode")
-	defaultArch    = flag.String("default-arch", "x86_64", "Default architecture for single-backend mode")
-	outputDir      = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
-	gcsBucket      = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
-	maxParallel    = flag.Int("max-parallel", 0, "Maximum number of concurrent package builds (0 = use pool capacity)")
-	apkoServiceAddr = flag.String("apko-service-addr", "", "gRPC address of apko service for remote layer generation")
+	listenAddr          = flag.String("listen-addr", ":8081", "HTTP listen address for health/metrics")
+	apiServerAddr       = flag.String("api-server", "http://melange-api:8080", "Address of the melange-api server")
+	buildkitManagerAddr = flag.String("buildkit-manager-addr", "", "gRPC address of BuildKit Manager service (Phase 6 microservices mode)")
+	buildkitAddr        = flag.String("buildkit-addr", "", "BuildKit daemon address (for single-backend embedded mode)")
+	backendsConfig      = flag.String("backends-config", "", "Path to backends config file (YAML) for multi-backend embedded mode")
+	defaultArch         = flag.String("default-arch", "x86_64", "Default architecture for single-backend mode")
+	outputDir           = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
+	gcsBucket           = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
+	maxParallel         = flag.Int("max-parallel", 0, "Maximum number of concurrent package builds (0 = use pool capacity)")
+	apkoServiceAddr     = flag.String("apko-service-addr", "", "gRPC address of apko service for remote layer generation")
 	// Observability flags
 	enableTracing   = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
 	otlpEndpoint    = flag.String("otlp-endpoint", "", "OTLP collector endpoint for traces")
@@ -135,31 +141,47 @@ func run(ctx context.Context) error {
 		storageBackend = localStorage
 	}
 
-	// Create BuildKit manager (Phase 5: Manager interface)
-	var manager *buildkit.StaticManager
+	// Create BuildKit manager (Phase 5/6: Manager interface)
+	// Priority: buildkit-manager-addr (gRPC) > backends-config > buildkit-addr > default
+	// Also check BUILDKIT_MANAGER_ADDR env var for Kubernetes deployments
+	buildkitMgrAddr := *buildkitManagerAddr
+	if buildkitMgrAddr == "" {
+		buildkitMgrAddr = os.Getenv("BUILDKIT_MANAGER_ADDR")
+	}
+
+	var manager buildkit.Manager
 	switch {
+	case buildkitMgrAddr != "":
+		// Phase 6: Connect to remote BuildKit Manager service via gRPC
+		log.Infof("using BuildKit Manager service at %s", buildkitMgrAddr)
+		grpcClient, err := buildkit.NewGRPCClient(ctx, buildkit.DefaultGRPCClientConfig(buildkitMgrAddr))
+		if err != nil {
+			return fmt.Errorf("creating buildkit manager gRPC client: %w", err)
+		}
+		defer grpcClient.Close()
+		manager = grpcClient
 	case *backendsConfig != "":
 		log.Infof("using backends config: %s", *backendsConfig)
-		var err error
-		manager, err = buildkit.NewStaticManagerFromConfigFile(*backendsConfig)
+		staticManager, err := buildkit.NewStaticManagerFromConfigFile(*backendsConfig)
 		if err != nil {
 			return fmt.Errorf("creating buildkit manager from config: %w", err)
 		}
+		manager = staticManager
 	case *buildkitAddr != "":
 		log.Infof("using single buildkit backend: %s (arch: %s)", *buildkitAddr, *defaultArch)
-		var err error
-		manager, err = buildkit.NewStaticManagerFromSingleAddr(*buildkitAddr, *defaultArch)
+		staticManager, err := buildkit.NewStaticManagerFromSingleAddr(*buildkitAddr, *defaultArch)
 		if err != nil {
 			return fmt.Errorf("creating buildkit manager: %w", err)
 		}
+		manager = staticManager
 	default:
 		// Try default
 		log.Infof("using default buildkit backend: tcp://localhost:1234 (arch: %s)", *defaultArch)
-		var err error
-		manager, err = buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", *defaultArch)
+		staticManager, err := buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", *defaultArch)
 		if err != nil {
 			return fmt.Errorf("creating buildkit manager: %w", err)
 		}
+		manager = staticManager
 	}
 
 	// Create API client
@@ -230,9 +252,12 @@ func run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// Use Status() which is available on all Manager implementations
+		status := manager.Status()
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"backends":      manager.List(),
-			"architectures": manager.Architectures(),
+			"total_workers":     status.TotalWorkers,
+			"available_workers": status.AvailableWorkers,
+			"architectures":     manager.Architectures(),
 		})
 	})
 	mux.HandleFunc("/api/v1/backends/status", func(w http.ResponseWriter, r *http.Request) {

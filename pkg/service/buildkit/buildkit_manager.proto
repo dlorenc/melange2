@@ -1,0 +1,240 @@
+// Copyright 2024 Chainguard, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package buildkit.manager.v1;
+
+option go_package = "github.com/dlorenc/melange2/pkg/service/buildkit";
+
+// BuildKitManagerService provides BuildKit worker management as a gRPC service.
+// This enables the orchestrator to communicate with the BuildKit Manager
+// as a separate microservice, allowing independent scaling and fault isolation.
+//
+// Phase 6 of microservices architecture: See issue #186.
+service BuildKitManagerService {
+  // RequestWorker acquires a BuildKit worker for the given build requirements.
+  // The returned worker must be released when the build completes.
+  rpc RequestWorker(RequestWorkerRequest) returns (RequestWorkerResponse);
+
+  // ReleaseWorker returns a worker to the manager and records the build result.
+  // This must be called when a build completes (regardless of outcome).
+  rpc ReleaseWorker(ReleaseWorkerRequest) returns (ReleaseWorkerResponse);
+
+  // GetStatus returns current state of all workers for observability.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // GetCapacity returns the total job capacity across all backends.
+  rpc GetCapacity(GetCapacityRequest) returns (GetCapacityResponse);
+
+  // GetArchitectures returns a list of supported architectures.
+  rpc GetArchitectures(GetArchitecturesRequest) returns (GetArchitecturesResponse);
+
+  // Health returns the health status of the service.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// RequestWorkerRequest specifies requirements for acquiring a BuildKit worker.
+message RequestWorkerRequest {
+  // arch is the target architecture (e.g., "x86_64", "aarch64").
+  // Required.
+  string arch = 1;
+
+  // job_id is the identifier for this build job (for logging/tracing).
+  string job_id = 2;
+
+  // selector is a label selector for filtering backends.
+  // All specified labels must match.
+  map<string, string> selector = 3;
+
+  // resources specifies estimated resource requirements for the build.
+  ResourceRequirementsInfo resources = 4;
+
+  // priority indicates the importance of this build (higher = more important).
+  int32 priority = 5;
+}
+
+// ResourceRequirementsInfo specifies estimated resource needs for a build.
+// Named ResourceRequirementsInfo to avoid conflict with the Go ResourceRequirements type.
+message ResourceRequirementsInfo {
+  // memory_mb is the estimated memory requirement in megabytes.
+  int64 memory_mb = 1;
+
+  // cpu_cores is the estimated CPU requirement in cores.
+  double cpu_cores = 2;
+
+  // disk_gb is the estimated disk requirement in gigabytes.
+  int64 disk_gb = 3;
+
+  // timeout_seconds is the maximum duration for the build in seconds.
+  int64 timeout_seconds = 4;
+}
+
+// RequestWorkerResponse contains the acquired worker information.
+message RequestWorkerResponse {
+  // worker contains the acquired worker details.
+  WorkerInfo worker = 1;
+}
+
+// WorkerInfo represents an acquired BuildKit worker.
+// Named WorkerInfo to avoid conflict with the Go Worker type in manager.go.
+message WorkerInfo {
+  // id is a unique identifier for this worker instance.
+  string id = 1;
+
+  // addr is the BuildKit daemon address (e.g., "tcp://buildkit:1234").
+  string addr = 2;
+
+  // arch is the architecture this worker supports.
+  string arch = 3;
+
+  // labels are arbitrary key-value pairs for the worker.
+  map<string, string> labels = 4;
+
+  // acquired_at_unix is when this worker was acquired (Unix timestamp).
+  int64 acquired_at_unix = 5;
+}
+
+// ReleaseWorkerRequest returns a worker and records the build result.
+message ReleaseWorkerRequest {
+  // worker_id is the ID of the worker to release.
+  string worker_id = 1;
+
+  // result records the outcome of the build.
+  BuildResultInfo result = 2;
+}
+
+// BuildResultInfo records the outcome of a build for tracking and circuit breaking.
+// Named BuildResultInfo to avoid conflict with the Go BuildResult type in manager.go.
+message BuildResultInfo {
+  // success indicates whether the build completed successfully.
+  bool success = 1;
+
+  // duration_ms is how long the build took in milliseconds.
+  int64 duration_ms = 2;
+
+  // error is the error message if the build failed.
+  string error = 3;
+}
+
+// ReleaseWorkerResponse is the response from releasing a worker.
+message ReleaseWorkerResponse {
+  // released indicates whether the worker was successfully released.
+  bool released = 1;
+}
+
+// GetStatusRequest is a request for manager status.
+message GetStatusRequest {}
+
+// GetStatusResponse contains the current state of the manager.
+message GetStatusResponse {
+  // status contains the manager status.
+  ManagerStatusInfo status = 1;
+}
+
+// ManagerStatusInfo represents the current state of the manager for observability.
+// Named ManagerStatusInfo to avoid conflict with the Go ManagerStatus type in manager.go.
+message ManagerStatusInfo {
+  // type is the manager implementation type (e.g., "static", "kubernetes").
+  string type = 1;
+
+  // total_workers is the total number of workers available.
+  int32 total_workers = 2;
+
+  // available_workers is the number of workers currently available.
+  int32 available_workers = 3;
+
+  // active_jobs is the total number of jobs currently running.
+  int32 active_jobs = 4;
+
+  // workers contains status for each individual worker.
+  repeated WorkerStatusInfo workers = 5;
+}
+
+// WorkerStatusInfo represents the current state of a single worker.
+// Named WorkerStatusInfo to avoid conflict with the Go WorkerStatus type in manager.go.
+message WorkerStatusInfo {
+  // id is the worker identifier.
+  string id = 1;
+
+  // addr is the BuildKit daemon address.
+  string addr = 2;
+
+  // arch is the worker's architecture.
+  string arch = 3;
+
+  // labels are the worker's labels.
+  map<string, string> labels = 4;
+
+  // active_jobs is the number of jobs currently running on this worker.
+  int32 active_jobs = 5;
+
+  // max_jobs is the maximum concurrent jobs this worker can handle.
+  int32 max_jobs = 6;
+
+  // circuit_open indicates if the circuit breaker is open (worker excluded).
+  bool circuit_open = 7;
+
+  // failures is the number of consecutive failures.
+  int32 failures = 8;
+
+  // last_failure_unix is the time of the last failure (Unix timestamp).
+  int64 last_failure_unix = 9;
+}
+
+// GetCapacityRequest is a request for total capacity.
+message GetCapacityRequest {}
+
+// GetCapacityResponse contains the total job capacity.
+message GetCapacityResponse {
+  // total_capacity is the total number of concurrent jobs supported.
+  int32 total_capacity = 1;
+}
+
+// GetArchitecturesRequest is a request for supported architectures.
+message GetArchitecturesRequest {}
+
+// GetArchitecturesResponse contains the supported architectures.
+message GetArchitecturesResponse {
+  // architectures is the list of supported architectures.
+  repeated string architectures = 1;
+}
+
+// HealthRequest is an empty request for health checks.
+message HealthRequest {}
+
+// HealthResponse contains the health status of the service.
+message HealthResponse {
+  // Status represents the health status.
+  enum Status {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+
+  // status is the current health status.
+  Status status = 1;
+
+  // manager_type is the type of manager being used.
+  string manager_type = 2;
+
+  // total_workers is the total number of workers.
+  int32 total_workers = 3;
+
+  // available_workers is the number of available workers.
+  int32 available_workers = 4;
+
+  // active_jobs is the number of active jobs.
+  int32 active_jobs = 5;
+}
