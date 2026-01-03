@@ -85,7 +85,7 @@ type Config struct {
 type Orchestrator struct {
 	client  *client.Client
 	storage storage.Storage
-	pool    *buildkit.Pool
+	manager buildkit.Manager
 	config  Config
 	metrics *metrics.MelangeMetrics
 
@@ -109,8 +109,10 @@ func WithMetrics(m *metrics.MelangeMetrics) OrchestratorOption {
 	}
 }
 
-// New creates a new orchestrator.
-func New(apiClient *client.Client, storageBackend storage.Storage, pool *buildkit.Pool, config Config, opts ...OrchestratorOption) *Orchestrator {
+// New creates a new orchestrator with a BuildKit Manager.
+// The manager abstracts backend management, allowing for static pools,
+// Kubernetes autoscaling, or other implementations.
+func New(apiClient *client.Client, storageBackend storage.Storage, manager buildkit.Manager, config Config, opts ...OrchestratorOption) *Orchestrator {
 	if config.PollInterval == 0 {
 		config.PollInterval = time.Second
 	}
@@ -118,7 +120,7 @@ func New(apiClient *client.Client, storageBackend storage.Storage, pool *buildki
 		config.OutputDir = "/var/lib/melange/output"
 	}
 	if config.MaxParallel == 0 {
-		config.MaxParallel = pool.TotalCapacity()
+		config.MaxParallel = manager.TotalCapacity()
 		if config.MaxParallel == 0 {
 			config.MaxParallel = runtime.NumCPU()
 		}
@@ -135,7 +137,7 @@ func New(apiClient *client.Client, storageBackend storage.Storage, pool *buildki
 	o := &Orchestrator{
 		client:       apiClient,
 		storage:      storageBackend,
-		pool:         pool,
+		manager:      manager,
 		config:       config,
 		sem:          make(chan struct{}, config.MaxParallel),
 		activeBuilds: make(map[string]bool),
@@ -189,19 +191,14 @@ func (o *Orchestrator) processBuilds(ctx context.Context) error {
 		}
 		o.metrics.UpdateQueueDepth(pendingCount)
 
-		backendStatuses := o.pool.Status()
-		total := len(backendStatuses)
-		available := 0
+		managerStatus := o.manager.Status()
 		activeJobs := make(map[string]int)
 		archByAddr := make(map[string]string)
-		for _, bs := range backendStatuses {
-			archByAddr[bs.Addr] = bs.Arch
-			activeJobs[bs.Addr] = bs.ActiveJobs
-			if !bs.CircuitOpen {
-				available++
-			}
+		for _, ws := range managerStatus.Workers {
+			archByAddr[ws.Addr] = ws.Arch
+			activeJobs[ws.Addr] = ws.ActiveJobs
 		}
-		o.metrics.UpdateBackendMetrics(total, available, activeJobs, archByAddr)
+		o.metrics.UpdateBackendMetrics(managerStatus.TotalWorkers, managerStatus.AvailableWorkers, activeJobs, archByAddr)
 	}
 
 	for _, build := range builds {
@@ -543,20 +540,25 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 	var initDuration time.Duration
 	var bc *build.Build
 	var buildSuccess bool
-	var currentBackend *buildkit.Backend
+	var currentWorker *buildkit.Worker
 
 	for attempt := 1; attempt <= o.retryConfig.MaxAttempts; attempt++ {
 		backendTimer := tracing.NewTimer(ctx, "phase_backend_selection")
 
-		backend, err := o.pool.SelectAndAcquireWithContext(ctx, arch, spec.BackendSelector)
+		// Use the Manager interface to request a worker
+		worker, err := o.manager.Request(ctx, buildkit.WorkerRequest{
+			Arch:     arch,
+			JobID:    jobID,
+			Selector: spec.BackendSelector,
+		})
 		if err != nil {
 			return fmt.Errorf("selecting backend: %w", err)
 		}
-		currentBackend = backend
+		currentWorker = worker
 
 		backendDuration = backendTimer.Stop()
 		span.AddEvent("backend_selected", trace.WithAttributes(
-			attribute.String("backend_addr", backend.Addr),
+			attribute.String("backend_addr", worker.Addr),
 			attribute.String("duration", backendDuration.String()),
 			attribute.Int("attempt", attempt),
 		))
@@ -565,24 +567,24 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 		}
 
 		pkg.Backend = &types.Backend{
-			Addr:   backend.Addr,
-			Arch:   backend.Arch,
-			Labels: backend.Labels,
+			Addr:   worker.Addr,
+			Arch:   worker.Arch,
+			Labels: worker.Labels,
 		}
 
-		span.SetAttributes(attribute.String("backend_addr", backend.Addr))
+		span.SetAttributes(attribute.String("backend_addr", worker.Addr))
 		log.Infof("building package %s for architecture: %s on backend %s (attempt %d/%d)",
-			pkg.Name, targetArch, backend.Addr, attempt, o.retryConfig.MaxAttempts)
+			pkg.Name, targetArch, worker.Addr, attempt, o.retryConfig.MaxAttempts)
 
 		initTimer := tracing.NewTimer(ctx, "phase_build_init")
 
-		buildCfgTemplate.BackendAddr = backend.Addr
+		buildCfgTemplate.BackendAddr = worker.Addr
 		buildCfg := build.NewBuildConfigForRemote(buildCfgTemplate)
 		buildCfg.Arch = targetArch
 
 		bc, err = build.NewFromConfig(ctx, buildCfg)
 		if err != nil {
-			o.pool.Release(backend.Addr, false)
+			o.manager.Release(worker, buildkit.BuildResult{Success: false, Error: err.Error()})
 			return fmt.Errorf("initializing build: %w", err)
 		}
 
@@ -611,7 +613,7 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 					attribute.Int("attempt", attempt),
 				))
 
-				o.pool.Release(backend.Addr, false)
+				o.manager.Release(worker, buildkit.BuildResult{Success: false, Duration: buildkitDuration, Error: buildErr.Error()})
 				lastErr = buildErr
 
 				if waitErr := o.retryConfig.WaitForBackoff(ctx, attempt); waitErr != nil {
@@ -630,7 +632,7 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 				log.Errorf("failed to sync output on error: %v", syncErr)
 			}
 
-			o.pool.Release(backend.Addr, false)
+			o.manager.Release(worker, buildkit.BuildResult{Success: false, Duration: buildkitDuration, Error: buildErr.Error()})
 			return fmt.Errorf("building package: %w", buildErr)
 		}
 
@@ -653,7 +655,7 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 	}
 
 	defer func() {
-		o.pool.Release(currentBackend.Addr, buildSuccess)
+		o.manager.Release(currentWorker, buildkit.BuildResult{Success: buildSuccess, Duration: buildkitDuration})
 	}()
 	defer bc.Close(ctx)
 

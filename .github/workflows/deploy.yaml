@@ -113,13 +113,23 @@ jobs:
         run: |
           ko apply -f deploy/gke/apko-server.yaml
 
-      - name: Build and Deploy melange-server
+      - name: Build and Deploy melange-server (monolith)
         env:
           KO_DOCKER_REPO: ${{ env.AR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}
         run: |
           cat deploy/gke/melange-server.yaml | \
             sed "s|iam.gke.io/gcp-service-account: \"\"|iam.gke.io/gcp-service-account: melange-server@${{ env.PROJECT_ID }}.iam.gserviceaccount.com|" | \
             ko apply -f -
+
+      - name: Build and Deploy microservices (Phase 4+)
+        env:
+          KO_DOCKER_REPO: ${{ env.AR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}
+        run: |
+          # Deploy melange-api (stateless API server)
+          ko apply -f deploy/gke/melange-api.yaml
+
+          # Deploy melange-orchestrator (build processing)
+          ko apply -f deploy/gke/melange-orchestrator.yaml
 
       - name: Wait for rollout
         run: |
@@ -128,6 +138,8 @@ jobs:
           kubectl rollout status statefulset/buildkit -n melange --timeout=600s
           kubectl rollout status deployment/apko-server -n melange --timeout=180s
           kubectl rollout status deployment/melange-server -n melange --timeout=180s
+          kubectl rollout status deployment/melange-api -n melange --timeout=180s
+          kubectl rollout status deployment/melange-orchestrator -n melange --timeout=180s
 
       - name: Verify deployment
         run: |

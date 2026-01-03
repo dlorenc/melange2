@@ -135,30 +135,30 @@ func run(ctx context.Context) error {
 		storageBackend = localStorage
 	}
 
-	// Create BuildKit pool
-	var pool *buildkit.Pool
+	// Create BuildKit manager (Phase 5: Manager interface)
+	var manager *buildkit.StaticManager
 	switch {
 	case *backendsConfig != "":
 		log.Infof("using backends config: %s", *backendsConfig)
 		var err error
-		pool, err = buildkit.NewPoolFromConfig(*backendsConfig)
+		manager, err = buildkit.NewStaticManagerFromConfigFile(*backendsConfig)
 		if err != nil {
-			return fmt.Errorf("creating buildkit pool from config: %w", err)
+			return fmt.Errorf("creating buildkit manager from config: %w", err)
 		}
 	case *buildkitAddr != "":
 		log.Infof("using single buildkit backend: %s (arch: %s)", *buildkitAddr, *defaultArch)
 		var err error
-		pool, err = buildkit.NewPoolFromSingleAddr(*buildkitAddr, *defaultArch)
+		manager, err = buildkit.NewStaticManagerFromSingleAddr(*buildkitAddr, *defaultArch)
 		if err != nil {
-			return fmt.Errorf("creating buildkit pool: %w", err)
+			return fmt.Errorf("creating buildkit manager: %w", err)
 		}
 	default:
 		// Try default
 		log.Infof("using default buildkit backend: tcp://localhost:1234 (arch: %s)", *defaultArch)
 		var err error
-		pool, err = buildkit.NewPoolFromSingleAddr("tcp://localhost:1234", *defaultArch)
+		manager, err = buildkit.NewStaticManagerFromSingleAddr("tcp://localhost:1234", *defaultArch)
 		if err != nil {
-			return fmt.Errorf("creating buildkit pool: %w", err)
+			return fmt.Errorf("creating buildkit manager: %w", err)
 		}
 	}
 
@@ -200,7 +200,7 @@ func run(ctx context.Context) error {
 	// Determine max parallel jobs
 	maxJobs := *maxParallel
 	if maxJobs <= 0 {
-		maxJobs = pool.TotalCapacity()
+		maxJobs = manager.TotalCapacity()
 	}
 	log.Infof("max parallel jobs: %d", maxJobs)
 
@@ -215,8 +215,8 @@ func run(ctx context.Context) error {
 		ApkoServiceAddr:      apkoService,
 	}
 
-	// Create orchestrator
-	orch := orchestrator.New(apiClient, storageBackend, pool, orchestratorCfg)
+	// Create orchestrator (using Manager interface)
+	orch := orchestrator.New(apiClient, storageBackend, manager, orchestratorCfg)
 
 	// Create health/metrics HTTP server
 	mux := http.NewServeMux()
@@ -231,8 +231,8 @@ func run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"backends":      pool.List(),
-			"architectures": pool.Architectures(),
+			"backends":      manager.List(),
+			"architectures": manager.Architectures(),
 		})
 	})
 	mux.HandleFunc("/api/v1/backends/status", func(w http.ResponseWriter, r *http.Request) {
@@ -241,8 +241,13 @@ func run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		status := manager.Status()
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"backends": pool.Status(),
+			"type":              status.Type,
+			"total_workers":     status.TotalWorkers,
+			"available_workers": status.AvailableWorkers,
+			"active_jobs":       status.ActiveJobs,
+			"workers":           status.Workers,
 		})
 	})
 	if melangeMetrics != nil {
