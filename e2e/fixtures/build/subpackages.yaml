@@ -35,3 +35,10 @@ subpackages:
       - runs: |
           mkdir -p "${{targets.subpkgdir}}/usr/lib"
           echo "libs-marker" > "${{targets.subpkgdir}}/usr/lib/libs-marker.txt"
+
+test:
+  pipeline:
+    - runs: |
+        test -x /usr/bin/multi-app
+        test -f /usr/lib/libmulti.so.2.0.0
+        test -f /usr/include/multi.h

@@ -1569,6 +1569,278 @@ package:
 	}
 }
 
+func TestCPEString(t *testing.T) {
+	tests := []struct {
+		name     string
+		pkg      Package
+		expected string
+		wantErr  bool
+		errMsg   string
+	}{
+		{
+			name: "basic CPE with vendor and product",
+			pkg: Package{
+				Name:    "test-package",
+				Version: "1.0.0",
+				CPE: CPE{
+					Vendor:  "example",
+					Product: "test-package",
+				},
+			},
+			expected: "cpe:2.3:a:example:test-package:1.0.0:*:*:*:*:*:*:*",
+			wantErr:  false,
+		},
+		{
+			name: "CPE with all fields",
+			pkg: Package{
+				Name:    "full-pkg",
+				Version: "2.0.0",
+				CPE: CPE{
+					Part:      "a",
+					Vendor:    "fullvendor",
+					Product:   "fullproduct",
+					Edition:   "enterprise",
+					Language:  "en",
+					SWEdition: "pro",
+					TargetSW:  "linux",
+					TargetHW:  "x64",
+					Other:     "custom",
+				},
+			},
+			expected: "cpe:2.3:a:fullvendor:fullproduct:2.0.0:*:enterprise:en:pro:linux:x64:custom",
+			wantErr:  false,
+		},
+		{
+			name: "CPE with part=h (hardware)",
+			pkg: Package{
+				Name:    "firmware",
+				Version: "1.5.0",
+				CPE: CPE{
+					Part:    "h",
+					Vendor:  "hardwarevendor",
+					Product: "router",
+				},
+			},
+			expected: "cpe:2.3:h:hardwarevendor:router:1.5.0:*:*:*:*:*:*:*",
+			wantErr:  false,
+		},
+		{
+			name: "CPE with part=o (operating system)",
+			pkg: Package{
+				Name:    "os-kernel",
+				Version: "5.0",
+				CPE: CPE{
+					Part:    "o",
+					Vendor:  "linux",
+					Product: "linux_kernel",
+				},
+			},
+			expected: "cpe:2.3:o:linux:linux_kernel:5.0:*:*:*:*:*:*:*",
+			wantErr:  false,
+		},
+		{
+			name: "CPE missing vendor",
+			pkg: Package{
+				Name:    "no-vendor",
+				Version: "1.0.0",
+				CPE: CPE{
+					Product: "test",
+				},
+			},
+			wantErr: true,
+			errMsg:  "vendor value must be exactly specified",
+		},
+		{
+			name: "CPE missing product",
+			pkg: Package{
+				Name:    "no-product",
+				Version: "1.0.0",
+				CPE: CPE{
+					Vendor: "test",
+				},
+			},
+			wantErr: true,
+			errMsg:  "product value must be exactly specified",
+		},
+		{
+			name: "CPE with invalid part",
+			pkg: Package{
+				Name:    "invalid-part",
+				Version: "1.0.0",
+				CPE: CPE{
+					Part:    "x",
+					Vendor:  "test",
+					Product: "test",
+				},
+			},
+			wantErr: true,
+			errMsg:  "part value must be a, h or o",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tt.pkg.CPEString()
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestAllPackageNames(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      Configuration
+		expected []string
+	}{
+		{
+			name: "only main package",
+			cfg: Configuration{
+				Package: Package{Name: "main-pkg"},
+			},
+			expected: []string{"main-pkg"},
+		},
+		{
+			name: "main package with subpackages",
+			cfg: Configuration{
+				Package: Package{Name: "main-pkg"},
+				Subpackages: []Subpackage{
+					{Name: "sub-pkg-1"},
+					{Name: "sub-pkg-2"},
+					{Name: "sub-pkg-3"},
+				},
+			},
+			expected: []string{"main-pkg", "sub-pkg-1", "sub-pkg-2", "sub-pkg-3"},
+		},
+		{
+			name: "empty main package name",
+			cfg: Configuration{
+				Package: Package{Name: ""},
+			},
+			expected: []string{""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result []string
+			for name := range tt.cfg.AllPackageNames() {
+				result = append(result, name)
+			}
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestConfigurationName(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      Configuration
+		expected string
+	}{
+		{
+			name:     "basic package name",
+			cfg:      Configuration{Package: Package{Name: "test-package"}},
+			expected: "test-package",
+		},
+		{
+			name:     "empty package name",
+			cfg:      Configuration{Package: Package{Name: ""}},
+			expected: "",
+		},
+		{
+			name:     "complex package name",
+			cfg:      Configuration{Package: Package{Name: "lib-test_package.so-1.0"}},
+			expected: "lib-test_package.so-1.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.cfg.Name()
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestVersionHandlerInterfaces(t *testing.T) {
+	t.Run("GitMonitor", func(t *testing.T) {
+		gm := &GitMonitor{
+			StripPrefix:       "v",
+			StripSuffix:       "-release",
+			TagFilterPrefix:   "v1.",
+			TagFilterContains: "stable",
+		}
+
+		require.Equal(t, "v", gm.GetStripPrefix())
+		require.Equal(t, "-release", gm.GetStripSuffix())
+		require.Equal(t, "v1.", gm.GetFilterPrefix())
+		require.Equal(t, "stable", gm.GetFilterContains())
+
+		// Verify it implements VersionHandler
+		var _ VersionHandler = gm
+	})
+
+	t.Run("GitHubMonitor", func(t *testing.T) {
+		ghm := &GitHubMonitor{
+			StripPrefix:       "release-",
+			StripSuffix:       "-final",
+			TagFilterPrefix:   "v2.",
+			TagFilterContains: "beta",
+		}
+
+		require.Equal(t, "release-", ghm.GetStripPrefix())
+		require.Equal(t, "-final", ghm.GetStripSuffix())
+		require.Equal(t, "v2.", ghm.GetFilterPrefix())
+		require.Equal(t, "beta", ghm.GetFilterContains())
+
+		// Verify it implements VersionHandler
+		var _ VersionHandler = ghm
+	})
+
+	t.Run("ReleaseMonitor", func(t *testing.T) {
+		rm := &ReleaseMonitor{
+			StripPrefix:           "version-",
+			StripSuffix:           ".tar.gz",
+			VersionFilterPrefix:   "1.0",
+			VersionFilterContains: "rc",
+		}
+
+		require.Equal(t, "version-", rm.GetStripPrefix())
+		require.Equal(t, ".tar.gz", rm.GetStripSuffix())
+		require.Equal(t, "1.0", rm.GetFilterPrefix())
+		require.Equal(t, "rc", rm.GetFilterContains())
+
+		// Verify it implements VersionHandler
+		var _ VersionHandler = rm
+	})
+
+	t.Run("empty values", func(t *testing.T) {
+		gm := &GitMonitor{}
+		require.Equal(t, "", gm.GetStripPrefix())
+		require.Equal(t, "", gm.GetStripSuffix())
+		require.Equal(t, "", gm.GetFilterPrefix())
+		require.Equal(t, "", gm.GetFilterContains())
+
+		ghm := &GitHubMonitor{}
+		require.Equal(t, "", ghm.GetStripPrefix())
+		require.Equal(t, "", ghm.GetStripSuffix())
+		require.Equal(t, "", ghm.GetFilterPrefix())
+		require.Equal(t, "", ghm.GetFilterContains())
+
+		rm := &ReleaseMonitor{}
+		require.Equal(t, "", rm.GetStripPrefix())
+		require.Equal(t, "", rm.GetStripSuffix())
+		require.Equal(t, "", rm.GetFilterPrefix())
+		require.Equal(t, "", rm.GetFilterContains())
+	})
+}
+
 func TestTestResourcesEdgeCases(t *testing.T) {
 	ctx := slogtest.Context(t)
 

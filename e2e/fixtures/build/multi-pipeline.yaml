@@ -29,3 +29,13 @@ pipeline:
     runs: |
       # Count lines to verify all steps ran
       wc -l < "${{targets.destdir}}/usr/share/multi-pipeline/progress.txt" | tr -d ' ' > "${{targets.destdir}}/usr/share/multi-pipeline/count.txt"
+
+test:
+  pipeline:
+    - runs: |
+        grep -q "step1" /usr/share/multi-pipeline/progress.txt
+        grep -q "step2" /usr/share/multi-pipeline/progress.txt
+        grep -q "step3" /usr/share/multi-pipeline/progress.txt
+        grep -q "step4" /usr/share/multi-pipeline/progress.txt
+        grep -q "step5" /usr/share/multi-pipeline/progress.txt
+        grep -q "5" /usr/share/multi-pipeline/count.txt

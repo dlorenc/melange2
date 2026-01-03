@@ -40,8 +40,8 @@ spec:
         - --backends-config=/etc/melange/backends.yaml
         - --gcs-bucket=$(GCS_BUCKET)
         - --enable-tracing
-        # max-parallel=64 means ~4-5 jobs per BuildKit worker (14 workers × 4.5 ≈ 64)
-        - --max-parallel=64
+        # max-parallel=128 means ~8-9 jobs per BuildKit worker (15 workers × 8.5 ≈ 128)
+        - --max-parallel=128
         env:
         - name: GCS_BUCKET
           valueFrom:
