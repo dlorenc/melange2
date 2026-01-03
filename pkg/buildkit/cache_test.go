@@ -241,6 +241,8 @@ cp /cache/data.txt /home/build/melange-out/cache-test/
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -298,6 +300,8 @@ echo "done" > /home/build/melange-out/pkg1/status.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir1,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -335,6 +339,8 @@ fi
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir2,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 

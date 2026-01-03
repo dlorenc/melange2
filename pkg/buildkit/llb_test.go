@@ -314,6 +314,8 @@ echo "hello from pipeline" > /home/build/melange-out/test-pkg/output.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -370,6 +372,8 @@ echo "step1" >> /home/build/melange-out/test-pkg/log.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -424,6 +428,8 @@ echo "LOCAL_VAR=$LOCAL_VAR" >> /home/build/melange-out/test-pkg/env.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -483,6 +489,8 @@ echo "setup done" > /home/build/melange-out/test-pkg/status.txt
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -560,6 +568,8 @@ cat /home/build/subdir/nested.txt >> /home/build/melange-out/test-pkg/from-sourc
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
@@ -573,6 +583,72 @@ cat /home/build/subdir/nested.txt >> /home/build/melange-out/test-pkg/from-sourc
 func TestCacheConstants(t *testing.T) {
 	require.Equal(t, "/var/cache/melange", DefaultCacheDir)
 	require.Equal(t, "cache", CacheLocalName)
+}
+
+func TestSetupBuildUser(t *testing.T) {
+	base := llb.Image(TestBaseImage)
+	state := SetupBuildUser(base)
+
+	// Verify we can marshal the state
+	def, err := state.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NoError(t, err)
+	require.NotEmpty(t, def.Def)
+
+	// State should be different from base (user setup commands ran)
+	baseDef, _ := base.Marshal(context.Background(), llb.LinuxAmd64)
+	require.NotEqual(t, baseDef.Def, def.Def)
+}
+
+func TestSetupBuildUserIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx := context.Background()
+	bk := startBuildKitContainer(t, ctx)
+
+	c, err := client.New(ctx, bk.Addr)
+	require.NoError(t, err)
+	defer c.Close()
+
+	// Build the LLB graph with build user setup
+	base := testBaseState()
+	state := SetupBuildUser(base)
+
+	// Run a pipeline to verify the user exists
+	builder := NewPipelineBuilder()
+	pipeline := config.Pipeline{
+		Name: "check-user",
+		Runs: `
+mkdir -p /home/build/melange-out/test-pkg
+id build > /home/build/melange-out/test-pkg/user.txt
+ls -la /home/build >> /home/build/melange-out/test-pkg/user.txt
+`,
+	}
+
+	state = PrepareWorkspace(state, "test-pkg")
+	state, err = builder.BuildPipeline(state, &pipeline)
+	require.NoError(t, err)
+
+	export := ExportWorkspace(state)
+	def, err := export.Marshal(ctx, llb.LinuxAmd64)
+	require.NoError(t, err)
+
+	exportDir := t.TempDir()
+	_, err = c.Solve(ctx, def, client.SolveOpt{
+		Exports: []client.ExportEntry{{
+			Type:      client.ExporterLocal,
+			OutputDir: exportDir,
+		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
+	}, nil)
+	require.NoError(t, err)
+
+	// Verify the user was created
+	content, err := os.ReadFile(filepath.Join(exportDir, "test-pkg", "user.txt"))
+	require.NoError(t, err)
+	require.Contains(t, string(content), "build")
 }
 
 func TestBuildPipelinesWithRecoverySuccess(t *testing.T) {
@@ -716,6 +792,8 @@ cat /var/cache/melange/cached-artifact.txt > /home/build/melange-out/test-pkg/fr
 			Type:      client.ExporterLocal,
 			OutputDir: exportDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 

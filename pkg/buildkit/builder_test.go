@@ -16,6 +16,7 @@ package buildkit
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -342,6 +343,68 @@ test "$TEST_VAR" = "test_value"
 	require.NoError(t, err)
 }
 
+// TestIsCacheExportError tests the cache export error detection.
+func TestIsCacheExportError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "exporting cache error",
+			err:      fmt.Errorf("failed exporting cache to registry"),
+			expected: true,
+		},
+		{
+			name:     "failed to copy error",
+			err:      fmt.Errorf("failed to copy layer"),
+			expected: true,
+		},
+		{
+			name:     "connection reset by peer",
+			err:      fmt.Errorf("write tcp 10.0.0.1:1234: connection reset by peer"),
+			expected: true,
+		},
+		{
+			name:     "broken pipe error",
+			err:      fmt.Errorf("write: broken pipe"),
+			expected: true,
+		},
+		{
+			name:     "connection refused error",
+			err:      fmt.Errorf("dial tcp 10.0.0.1:5000: connection refused"),
+			expected: true,
+		},
+		{
+			name:     "i/o timeout error",
+			err:      fmt.Errorf("read tcp: i/o timeout"),
+			expected: true,
+		},
+		{
+			name:     "unrelated error",
+			err:      fmt.Errorf("some other error"),
+			expected: false,
+		},
+		{
+			name:     "build failed error",
+			err:      fmt.Errorf("build step 3 failed: exit code 1"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isCacheExportError(tt.err)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // TestBuilderWithRealImage uses a real alpine image to test the full flow
 func TestBuilderWithRealImage(t *testing.T) {
 	if testing.Short() {
@@ -398,6 +461,8 @@ echo "hello" > /home/build/melange-out/test-pkg/result.txt
 			Type:      client.ExporterLocal,
 			OutputDir: melangeOutDir,
 		}},
+	},
+		AllowedEntitlements: testAllowedEntitlements(),
 	}, nil)
 	require.NoError(t, err)
 
