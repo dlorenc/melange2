@@ -38,6 +38,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/dlorenc/melange2/pkg/build"
+	"github.com/dlorenc/melange2/pkg/service/apko"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/client"
 	"github.com/dlorenc/melange2/pkg/service/metrics"
@@ -83,11 +84,12 @@ type Config struct {
 
 // Orchestrator processes builds using HTTP client for state management.
 type Orchestrator struct {
-	client  *client.Client
-	storage storage.Storage
-	manager buildkit.Manager
-	config  Config
-	metrics *metrics.MelangeMetrics
+	client      *client.Client
+	storage     storage.Storage
+	manager     buildkit.Manager
+	apkoManager apko.Manager // Optional: Apko Manager for Phase 7 microservices mode
+	config      Config
+	metrics     *metrics.MelangeMetrics
 
 	// sem is a semaphore for limiting concurrent builds
 	sem chan struct{}
@@ -106,6 +108,15 @@ type OrchestratorOption func(*Orchestrator)
 func WithMetrics(m *metrics.MelangeMetrics) OrchestratorOption {
 	return func(o *Orchestrator) {
 		o.metrics = m
+	}
+}
+
+// WithApkoManager sets the Apko Manager for the orchestrator.
+// When set, the orchestrator will use the manager to acquire/release
+// apko instances for load balancing and circuit breaking.
+func WithApkoManager(m apko.Manager) OrchestratorOption {
+	return func(o *Orchestrator) {
+		o.apkoManager = m
 	}
 }
 
@@ -517,6 +528,40 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 		extraEnv[k] = v
 	}
 
+	// Phase 7: Acquire apko instance from manager if configured
+	var apkoInstance *apko.Instance
+	apkoServiceAddr := o.config.ApkoServiceAddr
+	if o.apkoManager != nil {
+		apkoTimer := tracing.NewTimer(ctx, "phase_apko_instance_request")
+		inst, err := o.apkoManager.Request(ctx, apko.InstanceRequest{
+			JobID: jobID,
+		})
+		if err != nil {
+			return fmt.Errorf("requesting apko instance: %w", err)
+		}
+		apkoDuration := apkoTimer.Stop()
+		apkoInstance = inst
+		apkoServiceAddr = inst.Addr
+		span.AddEvent("apko_instance_acquired", trace.WithAttributes(
+			attribute.String("instance_id", inst.ID),
+			attribute.String("instance_addr", inst.Addr),
+			attribute.String("duration", apkoDuration.String()),
+		))
+		log.Infof("acquired apko instance %s at %s for job %s", inst.ID, inst.Addr, jobID)
+	}
+
+	// Track apko build result for release
+	var apkoBuildSuccess bool
+	defer func() {
+		if apkoInstance != nil && o.apkoManager != nil {
+			o.apkoManager.Release(apkoInstance, apko.BuildResult{
+				Success:  apkoBuildSuccess,
+				Duration: time.Since(apkoInstance.AcquiredAt),
+			})
+			log.Infof("released apko instance %s for job %s (success=%v)", apkoInstance.ID, jobID, apkoBuildSuccess)
+		}
+	}()
+
 	buildCfgTemplate := build.RemoteBuildParams{
 		ConfigPath:           configPath,
 		PipelineDir:          func() string { if len(pipelines) > 0 { return pipelineDir }; return "" }(),
@@ -530,7 +575,7 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 		CacheMode:            o.config.CacheMode,
 		ApkoRegistry:         o.config.ApkoRegistry,
 		ApkoRegistryInsecure: o.config.ApkoRegistryInsecure,
-		ApkoServiceAddr:      o.config.ApkoServiceAddr,
+		ApkoServiceAddr:      apkoServiceAddr,
 		ExtraEnv:             extraEnv,
 	}
 
@@ -707,6 +752,8 @@ func (o *Orchestrator) executePackageJob(ctx context.Context, jobID string, pkg 
 	log.Infof("package %s phase breakdown: setup=%s, backend=%s, init=%s, buildkit=%s, sync=%s",
 		pkg.Name, setupDuration, backendDuration, initDuration, buildkitDuration, syncDuration)
 
+	// Mark apko build as successful for the defer release
+	apkoBuildSuccess = true
 	return nil
 }
 
