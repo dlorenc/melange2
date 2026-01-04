@@ -40,6 +40,14 @@ data:
   apko-service-addr: "apko-server:9090"
   apko-max-concurrent: "16"
 
+  # Apko Manager service configuration (Phase 7)
+  # When set, the orchestrator uses gRPC to communicate with the Apko Manager
+  # service instead of directly connecting to apko-server.
+  # This provides load balancing, circuit breaking, and centralized pool management.
+  # Set to "melange-apko-manager:9091" to enable microservices mode.
+  # Leave empty to use direct connection to apko-service-addr.
+  apko-manager-addr: "melange-apko-manager:9091"
+
   # BuildKit Manager service configuration (Phase 6)
   # When set, the orchestrator uses gRPC to communicate with the BuildKit Manager
   # service instead of directly managing BuildKit workers.
@@ -157,3 +165,21 @@ data:
     defaultMaxJobs: 16       # Default max concurrent jobs per backend
     failureThreshold: 5      # Consecutive failures before circuit opens (increased for scale)
     recoveryTimeout: 30s     # How long circuit stays open
+
+  # Apko instances configuration (Phase 7)
+  # Configuration for the Apko Manager service
+  # Defines the pool of apko-server instances for load balancing
+  apko-instances.yaml: |
+    instances:
+      - id: apko-server-0
+        addr: apko-server:9090
+        max_concurrent: 16
+      - id: apko-server-1
+        addr: apko-server:9090
+        max_concurrent: 16
+      - id: apko-server-2
+        addr: apko-server:9090
+        max_concurrent: 16
+    # Circuit breaker configuration
+    circuit_breaker_threshold: 5    # Failures before opening circuit
+    circuit_breaker_recovery: 30s   # Time before testing failed instance
