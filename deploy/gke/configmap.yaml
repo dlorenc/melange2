@@ -53,7 +53,7 @@ data:
   # service instead of directly managing BuildKit workers.
   # Set to "melange-buildkit-manager:9090" to enable microservices mode.
   # Leave empty to use embedded mode (orchestrator manages workers directly).
-  buildkit-manager-addr: ""
+  buildkit-manager-addr: "melange-buildkit-manager:9090"
 
   # Scaling configuration for large builds
   # Max concurrent GCS uploads (default: 200, was 50)
