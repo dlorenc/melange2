@@ -13,12 +13,13 @@
 // limitations under the License.
 
 // Command melange-orchestrator runs the standalone orchestrator for the melange service.
-// This is part of Phase 4 of the microservices architecture.
+// This is part of Phase 4/6/7 of the microservices architecture.
 //
 // In the microservices deployment:
 //   - melange-api: handles HTTP API requests (builds, packages)
 //   - melange-orchestrator: processes builds, coordinates with managers
 //   - melange-buildkit-manager: manages BuildKit workers (Phase 6)
+//   - melange-apko-manager: manages apko instances (Phase 7)
 //
 // The orchestrator communicates with the API server via HTTP to:
 //   - Poll for active builds
@@ -28,6 +29,10 @@
 // The orchestrator can connect to BuildKit workers either:
 //   - Directly via --buildkit-addr or --backends-config (embedded mode)
 //   - Via gRPC to melange-buildkit-manager (microservices mode, Phase 6)
+//
+// The orchestrator can connect to apko instances either:
+//   - Directly via --apko-service-addr (direct mode)
+//   - Via gRPC to melange-apko-manager (microservices mode, Phase 7)
 //
 // For the monolith (backward compatibility), use melange-server instead.
 package main
@@ -47,6 +52,7 @@ import (
 	"github.com/chainguard-dev/clog"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/dlorenc/melange2/pkg/service/apko"
 	"github.com/dlorenc/melange2/pkg/service/buildkit"
 	"github.com/dlorenc/melange2/pkg/service/client"
 	"github.com/dlorenc/melange2/pkg/service/metrics"
@@ -65,7 +71,8 @@ var (
 	outputDir           = flag.String("output-dir", "/var/lib/melange/output", "Directory for build outputs (local storage)")
 	gcsBucket           = flag.String("gcs-bucket", "", "GCS bucket for build outputs (if set, uses GCS instead of local storage)")
 	maxParallel         = flag.Int("max-parallel", 0, "Maximum number of concurrent package builds (0 = use pool capacity)")
-	apkoServiceAddr     = flag.String("apko-service-addr", "", "gRPC address of apko service for remote layer generation")
+	apkoServiceAddr     = flag.String("apko-service-addr", "", "gRPC address of apko service for remote layer generation (direct mode)")
+	apkoManagerAddr     = flag.String("apko-manager-addr", "", "gRPC address of Apko Manager service (Phase 7 microservices mode)")
 	// Observability flags
 	enableTracing   = flag.Bool("enable-tracing", false, "Enable OpenTelemetry tracing")
 	otlpEndpoint    = flag.String("otlp-endpoint", "", "OTLP collector endpoint for traces")
@@ -210,13 +217,33 @@ func run(ctx context.Context) error {
 	}
 	log.Infof("orchestrator poll interval: %s", pollInterval)
 
-	// Get apko service address
+	// Get apko service configuration
+	// Priority: apko-manager-addr (gRPC to manager) > apko-service-addr (direct to apko-server)
+	apkoMgrAddr := *apkoManagerAddr
+	if apkoMgrAddr == "" {
+		apkoMgrAddr = os.Getenv("APKO_MANAGER_ADDR")
+	}
+
 	apkoService := *apkoServiceAddr
 	if apkoService == "" {
 		apkoService = os.Getenv("APKO_SERVICE_ADDR")
 	}
-	if apkoService != "" {
-		log.Infof("using apko service: %s", apkoService)
+
+	var apkoManager apko.Manager
+	switch {
+	case apkoMgrAddr != "":
+		// Phase 7: Connect to remote Apko Manager service via gRPC
+		log.Infof("using Apko Manager service at %s", apkoMgrAddr)
+		apkoClient, err := apko.NewManagerGRPCClient(ctx, apko.DefaultManagerGRPCClientConfig(apkoMgrAddr))
+		if err != nil {
+			return fmt.Errorf("creating apko manager gRPC client: %w", err)
+		}
+		defer apkoClient.Close()
+		apkoManager = apkoClient
+	case apkoService != "":
+		log.Infof("using direct apko service: %s", apkoService)
+	default:
+		log.Info("no apko service configured, using embedded apko")
 	}
 
 	// Determine max parallel jobs
@@ -238,7 +265,11 @@ func run(ctx context.Context) error {
 	}
 
 	// Create orchestrator (using Manager interface)
-	orch := orchestrator.New(apiClient, storageBackend, manager, orchestratorCfg)
+	var orchestratorOpts []orchestrator.OrchestratorOption
+	if apkoManager != nil {
+		orchestratorOpts = append(orchestratorOpts, orchestrator.WithApkoManager(apkoManager))
+	}
+	orch := orchestrator.New(apiClient, storageBackend, manager, orchestratorCfg, orchestratorOpts...)
 
 	// Create health/metrics HTTP server
 	mux := http.NewServeMux()
@@ -274,6 +305,23 @@ func run(ctx context.Context) error {
 			"active_jobs":       status.ActiveJobs,
 			"workers":           status.Workers,
 		})
+	})
+	// Apko manager status endpoint (Phase 7)
+	mux.HandleFunc("/api/v1/apko/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if apkoManager == nil {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type":    "none",
+				"message": "apko manager not configured",
+			})
+			return
+		}
+		status := apkoManager.Status()
+		_ = json.NewEncoder(w).Encode(status)
 	})
 	if melangeMetrics != nil {
 		mux.Handle("/metrics", melangeMetrics.Handler())
