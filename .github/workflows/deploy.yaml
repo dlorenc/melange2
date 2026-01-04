@@ -131,6 +131,9 @@ jobs:
           # Deploy melange-orchestrator (build processing)
           ko apply -f deploy/gke/melange-orchestrator.yaml
 
+          # Deploy melange-buildkit-manager (Phase 6: BuildKit worker management)
+          ko apply -f deploy/gke/melange-buildkit-manager.yaml
+
           # Deploy melange-apko-manager (Phase 7: apko instance management)
           ko apply -f deploy/gke/melange-apko-manager.yaml
 
@@ -143,6 +146,7 @@ jobs:
           kubectl rollout status deployment/melange-server -n melange --timeout=180s
           kubectl rollout status deployment/melange-api -n melange --timeout=180s
           kubectl rollout status deployment/melange-orchestrator -n melange --timeout=180s
+          kubectl rollout status deployment/melange-buildkit-manager -n melange --timeout=180s
           kubectl rollout status deployment/melange-apko-manager -n melange --timeout=180s
 
       - name: Verify deployment
